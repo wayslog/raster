@@ -2018,3 +2018,291 @@ fn 并发阶段前进与会话确认交错不误报迟到失败() {
         store.shutdown(wait_deadline()).unwrap();
     }
 }
+
+#[test]
+fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出() {
+    use crate::{
+        api::maintenance::MaintenanceTicket,
+        coordination::{Action, Phase},
+    };
+    let store = setup();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let mut idle = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(mut request_ticket) = session
+        .rmw(
+            Serial(7),
+            Add {
+                key: 0,
+                delta: 1,
+                copies: calls.clone(),
+                initials: Rc::new(Cell::new(0)),
+            },
+            RmwOptions::default(),
+        )
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应挂起")
+    };
+    let id = store
+        .inner
+        .coordinator
+        .start_action(Action::CheckpointLog)
+        .unwrap();
+    let (ticket, complete) = MaintenanceTicket::<()>::pair(store.inner.id, id);
+    // 维护线程可以投递设备完成，但不能代替会话执行用户回调或确认阶段。
+    store.maintenance().poll(PollBudget::default()).unwrap();
+    assert_eq!(calls.get(), 0);
+    let deadline = || Deadline(std::time::Instant::now() + std::time::Duration::from_millis(100));
+    assert!(matches!(
+        session.wait_maintenance(&ticket, deadline()),
+        Err(Error::DeadlineExceeded)
+    ));
+    assert_eq!(calls.get(), 1);
+    assert_eq!(
+        store.inner.coordinator.snapshot().unwrap().phase,
+        Phase::Prepare
+    );
+    assert!(matches!(
+        request_ticket.try_take(),
+        Ok(TicketState::Ready(Ok(Outcome::Success(1))))
+    ));
+    idle.close(wait_deadline()).unwrap();
+    assert!(matches!(
+        session.wait_maintenance(&ticket, deadline()),
+        Err(Error::DeadlineExceeded)
+    ));
+    assert_eq!(
+        store.inner.coordinator.snapshot().unwrap().phase,
+        Phase::WaitFlush
+    );
+    assert_eq!(session.runtime.current.version, CheckpointVersion(1));
+    assert!(ticket.try_report().unwrap().is_none());
+    let progress = store.maintenance().poll(PollBudget::default()).unwrap();
+    assert_eq!(progress.remaining, 1);
+    assert_eq!(progress.completed, 0);
+    assert!(!progress.phase_advanced);
+    let cuts = store.inner.coordinator.cuts(id).unwrap();
+    assert!(
+        cuts.iter()
+            .any(|cut| cut.session == session.id() && cut.last_accepted == Some(Serial(7)))
+    );
+    assert!(
+        cuts.iter()
+            .any(|cut| cut.session == idle.id() && cut.last_accepted.is_none())
+    );
+    // 组件测试以失败报告终结；不伪造没有写材料的成功检查点。
+    store
+        .inner
+        .coordinator
+        .fail_action(id, Error::Codec("组件测试终结"))
+        .unwrap();
+    let report = complete.finish(Err(Error::Codec("组件测试终结"))).unwrap();
+    let received = session
+        .wait_maintenance(&ticket, Deadline(std::time::Instant::now()))
+        .unwrap();
+    assert!(Arc::ptr_eq(&report, &received));
+    assert!(matches!(&*received, Err(Error::Codec("组件测试终结"))));
+    assert!(complete.finish(Ok(())).is_err());
+    assert!(Arc::ptr_eq(
+        &received,
+        &session.wait_maintenance(&ticket, wait_deadline()).unwrap()
+    ));
+    session.close(wait_deadline()).unwrap();
+    store.shutdown(wait_deadline()).unwrap();
+}
+#[test]
+fn 错存储维护票据即使已有报告也不能驱动本会话() {
+    use crate::{api::maintenance::MaintenanceTicket, coordination::Action};
+    let first = setup();
+    let second = setup();
+    let first_id = first
+        .inner
+        .coordinator
+        .start_action(Action::CheckpointLog)
+        .unwrap();
+    let (ticket, complete) = MaintenanceTicket::<()>::pair(first.inner.id, first_id);
+    complete.finish(Err(Error::Codec("组件报告"))).unwrap();
+    let mut session = second.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(_request) = session
+        .read(Serial(0), request(0, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应挂起")
+    };
+    assert!(matches!(
+        session.wait_maintenance(&ticket, wait_deadline()),
+        Err(Error::InvalidState(_))
+    ));
+    assert_eq!(calls.get(), 0);
+}
+#[test]
+fn 维护驱动在需要实际材料的阶段停止且完成端放弃给出失败报告() {
+    use crate::{
+        api::maintenance::MaintenanceTicket,
+        coordination::{Action, Phase},
+    };
+    for (action, expected) in [
+        (Action::CheckpointFull, Phase::IndexSnapshot),
+        (Action::CheckpointIndex, Phase::IndexSnapshot),
+        (Action::CheckpointLog, Phase::WaitFlush),
+        (Action::Gc, Phase::GcIo),
+        (Action::GrowIndex, Phase::GrowCopy),
+    ] {
+        let store = setup();
+        let id = store.inner.coordinator.start_action(action).unwrap();
+        let (ticket, complete) = MaintenanceTicket::<()>::pair(store.inner.id, id);
+        store.maintenance().poll(PollBudget::default()).unwrap();
+        assert_eq!(store.inner.coordinator.snapshot().unwrap().phase, expected);
+        assert_eq!(
+            store
+                .maintenance()
+                .poll(PollBudget::default())
+                .unwrap()
+                .remaining,
+            1
+        );
+        assert!(ticket.try_report().unwrap().is_none());
+        drop(complete);
+        assert!(matches!(
+            &*ticket.try_report().unwrap().unwrap(),
+            Err(Error::InvalidState(_))
+        ));
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn 原生文件挂起请求在维护等待中完成并保留旧版本切分() {
+    use crate::{
+        api::maintenance::MaintenanceTicket,
+        coordination::{Action, Phase},
+    };
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let root = Directory(std::env::temp_dir().join(format!(
+        "raster-phase-{:x?}",
+        StoreId::generate().unwrap().0
+    )));
+    let mut config = Config::default();
+    config.storage.root = root.0.clone();
+    config.log.page_bytes = 4096;
+    config.log.memory_pages = 2;
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(thread_pool::ThreadPoolDeviceFactory {
+            workers: 2,
+            queue_capacity: 16,
+        }))
+        .create()
+        .unwrap();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    for key in 0..60 {
+        assert!(matches!(
+            session
+                .upsert(Serial(key), Put(key))
+                .map_err(|r| r.reason)
+                .unwrap(),
+            Submission::Ready(Ok(_))
+        ));
+    }
+    let deadline = wait_deadline();
+    while store.inner.log.frontiers().unwrap().safe_head.0 < 4096 {
+        assert!(!deadline.expired(), "旧页必须被实际写出并淘汰");
+        session.poll(PollBudget::default()).unwrap();
+        std::thread::yield_now();
+    }
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(mut request_ticket) = session
+        .rmw(
+            Serial(60),
+            Add {
+                key: 0,
+                delta: 1,
+                copies: calls.clone(),
+                initials: Rc::new(Cell::new(0)),
+            },
+            RmwOptions::default(),
+        )
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("旧记录应从原生文件读入")
+    };
+    let id = store
+        .inner
+        .coordinator
+        .start_action(Action::CheckpointLog)
+        .unwrap();
+    let (ticket, complete) = MaintenanceTicket::<()>::pair(store.inner.id, id);
+    let overall = wait_deadline();
+    loop {
+        assert!(!overall.expired(), "维护等待应推进原生文件请求");
+        let slice = Deadline(
+            overall
+                .0
+                .min(std::time::Instant::now() + std::time::Duration::from_millis(20)),
+        );
+        assert!(matches!(
+            session.wait_maintenance(&ticket, slice),
+            Err(Error::DeadlineExceeded)
+        ));
+        if store.inner.coordinator.snapshot().unwrap().phase == Phase::WaitFlush {
+            break;
+        }
+    }
+    assert_eq!(
+        store.inner.coordinator.snapshot().unwrap().phase,
+        Phase::WaitFlush
+    );
+    assert_eq!(calls.get(), 1);
+    assert!(matches!(
+        request_ticket.try_take(),
+        Ok(TicketState::Ready(Ok(Outcome::Success(1))))
+    ));
+    assert_eq!(session.runtime.current.version, CheckpointVersion(1));
+    assert!(matches!(
+        session
+            .upsert(
+                Serial(61),
+                CountedPut {
+                    key: 0,
+                    value: 100,
+                    calls: Rc::new(Cell::new(0))
+                }
+            )
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    assert!(
+        matches!(session.read(Serial(62),request(0,&calls),ReadOptions::default()).map_err(|r|r.reason).unwrap(),Submission::Ready(Ok(Outcome::Success(value))) if *value==100)
+    );
+    assert!(
+        store
+            .inner
+            .coordinator
+            .cuts(id)
+            .unwrap()
+            .iter()
+            .any(|cut| cut.session == session.id()
+                && cut.last_accepted == Some(Serial(60))
+                && cut.old_pending == 0)
+    );
+    assert!(ticket.try_report().unwrap().is_none());
+    store
+        .inner
+        .coordinator
+        .fail_action(id, Error::Codec("组件验收终结"))
+        .unwrap();
+    complete.finish(Err(Error::Codec("组件验收终结"))).unwrap();
+    session.close(wait_deadline()).unwrap();
+    store.shutdown(wait_deadline()).unwrap();
+}

@@ -79,10 +79,27 @@ pub struct IndexGrowthReport {
 
 pub type SharedReport<R> = Arc<Result<R, Error>>;
 pub struct MaintenanceTicket<R> {
+    pub(crate) store: StoreId,
     pub(crate) id: MaintenanceId,
     pub(crate) result: Arc<Mutex<Option<SharedReport<R>>>>,
 }
 impl<R> MaintenanceTicket<R> {
+    #[allow(
+        dead_code,
+        reason = "P5.2 的实际材料任务将创建维护票据，当前验证报告协议"
+    )]
+    pub(crate) fn pair(store: StoreId, id: MaintenanceId) -> (Self, MaintenanceCompleter<R>) {
+        let result = Arc::new(Mutex::new(None));
+        (
+            Self {
+                store,
+                id,
+                result: result.clone(),
+            },
+            MaintenanceCompleter { result },
+        )
+    }
+
     pub fn id(&self) -> MaintenanceId {
         self.id
     }
@@ -92,6 +109,35 @@ impl<R> MaintenanceTicket<R> {
             .lock()
             .map_err(|_| Error::InvalidState("维护报告锁已中毒"))?
             .clone())
+    }
+}
+/// 动作持有唯一完成端，报告一旦设置即不可替换。
+#[allow(dead_code, reason = "P5.2 的实际材料任务将持有完成端")]
+pub(crate) struct MaintenanceCompleter<R> {
+    result: Arc<Mutex<Option<SharedReport<R>>>>,
+}
+impl<R> MaintenanceCompleter<R> {
+    #[allow(dead_code, reason = "P5.2 的实际材料任务将发布最终报告")]
+    pub fn finish(&self, report: Result<R, Error>) -> Result<SharedReport<R>, Error> {
+        let mut slot = self
+            .result
+            .lock()
+            .map_err(|_| Error::InvalidState("维护报告锁已中毒"))?;
+        if slot.is_some() {
+            return Err(Error::InvalidState("维护报告已经终结"));
+        }
+        let report = Arc::new(report);
+        *slot = Some(report.clone());
+        Ok(report)
+    }
+}
+impl<R> Drop for MaintenanceCompleter<R> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.result.lock()
+            && slot.is_none()
+        {
+            *slot = Some(Arc::new(Err(Error::InvalidState("维护任务未完成即被放弃"))));
+        }
     }
 }
 pub struct Maintenance<S: Schema> {
@@ -116,7 +162,7 @@ impl<S: Schema> Maintenance<S> {
     pub fn grow_index(&self) -> Result<MaintenanceTicket<IndexGrowthReport>, Error> {
         self.inner.not_ready("index::grow")
     }
-    pub fn poll(&self, _budget: PollBudget) -> Result<Progress, Error> {
-        self.inner.not_ready("maintenance::poll")
+    pub fn poll(&self, budget: PollBudget) -> Result<Progress, Error> {
+        self.inner.poll_maintenance(budget)
     }
 }

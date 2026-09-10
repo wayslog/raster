@@ -154,10 +154,23 @@ impl<S: Schema> Session<S> {
     }
     pub fn wait_maintenance<R>(
         &mut self,
-        _ticket: &MaintenanceTicket<R>,
-        _deadline: Deadline,
+        ticket: &MaintenanceTicket<R>,
+        deadline: Deadline,
     ) -> Result<SharedReport<R>, Error> {
-        Err(Error::unimplemented("maintenance::wait"))
+        if ticket.store != self.engine.id {
+            return Err(Error::InvalidState("维护票据属于其他存储"));
+        }
+        loop {
+            if let Some(report) = ticket.try_report()? {
+                return Ok(report);
+            }
+            if deadline.expired() {
+                return Err(Error::DeadlineExceeded);
+            }
+            self.poll(PollBudget::default())?;
+            self.engine.poll_maintenance(PollBudget::default())?;
+            std::thread::yield_now();
+        }
     }
     /// 超时后保留 Session；成功只代表排空和注销，不自动检查点。
     pub fn close(&mut self, deadline: Deadline) -> Result<CloseReport, Error> {

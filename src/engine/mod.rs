@@ -2,6 +2,7 @@
 mod conditional_copy;
 mod delete;
 pub(crate) mod io_hub;
+mod maintenance;
 mod observe;
 mod pending;
 mod progress;
