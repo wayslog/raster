@@ -124,6 +124,13 @@ impl<S: Schema> Builder<S> {
             });
         }
         let id = StoreId::generate()?;
+        let io_capacity = self
+            .config
+            .session
+            .max_sessions
+            .checked_mul(self.config.session.max_pending)
+            .ok_or(Error::CapacityExceeded)?;
+        let io = crate::engine::io_hub::CompletionHub::new(id, io_capacity)?;
         let schema = Arc::new(self.schema);
         let index = crate::index::MemIndex::new(self.config.index.clone())?;
         let log = crate::log::HybridLog::new(
@@ -148,6 +155,7 @@ impl<S: Schema> Builder<S> {
         Ok(RasterKV {
             inner: Arc::new(Engine {
                 id,
+                io,
                 schema,
                 config: self.config,
                 index,

@@ -1,6 +1,7 @@
 //! 内存四操作编排中心；磁盘 Pending 与持久化路径分阶段实现。
 mod conditional_copy;
 mod delete;
+pub(crate) mod io_hub;
 mod pending;
 mod progress;
 mod read;
@@ -15,6 +16,7 @@ pub(crate) use pending::SessionRuntime;
 
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
+    pub io: io_hub::CompletionHub,
     pub operations: Vec<crate::sync::Mutex<()>>,
     pub failed: std::sync::atomic::AtomicBool,
     pub schema: std::sync::Arc<S>,
