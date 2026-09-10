@@ -8,14 +8,58 @@ pub(crate) struct PageFlush {
     control: Arc<crate::sync::Mutex<LogState>>,
     token: Arc<()>,
     storage: Arc<()>,
+    route: CompletionRoute,
     page: PageId,
     generation: Generation,
     write: SegmentTransfer,
+    opening: Option<crate::storage::open::SegmentOpen>,
+    error: Option<Error>,
     terminal: bool,
 }
 impl PageFlush {
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
         self.check_storage(storage)?;
+        if self.terminal || self.error.is_some() {
+            return Ok(None);
+        }
+        if let Some(opening) = &mut self.opening {
+            if let Some(result) = opening.take_result() {
+                self.error = result.err();
+                self.opening = None;
+                if self.error.is_some() {
+                    return Ok(None);
+                }
+            } else {
+                return opening.submit_next(storage);
+            }
+        }
+        self.write.validate_bindings(storage)?;
+        if let Some(address) = self.write.next_address()? {
+            match storage.resolve(address) {
+                Ok(_) => {}
+                Err(Error::RangeTruncated) => {
+                    let number = address.0 / storage.segment_bytes;
+                    let mut opening = crate::storage::open::SegmentOpen::new(
+                        storage,
+                        number,
+                        storage.generation(number)?,
+                        true,
+                        self.route,
+                    )?;
+                    if let Some(result) = opening.take_result() {
+                        result?;
+                    } else {
+                        self.opening = Some(opening);
+                        return self
+                            .opening
+                            .as_mut()
+                            .expect("刚创建打开任务")
+                            .submit_next(storage);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
         self.write.submit_next(storage)
     }
     fn check_storage(&self, storage: &SegmentedStorage) -> Result<(), Error> {
@@ -36,13 +80,28 @@ impl PageFlush {
                 reason,
             });
         }
-        self.write.accept(storage, completion)
+        if let Some(opening) = &mut self.opening {
+            opening.accept(storage, completion)?;
+            if let Some(result) = opening.take_result() {
+                if let Err(error) = result {
+                    self.error = Some(error);
+                }
+                self.opening = None;
+            }
+            Ok(())
+        } else {
+            self.write.accept(storage, completion)
+        }
     }
 }
 impl Drop for PageFlush {
     fn drop(&mut self) {
         // 在途写入仍由设备持有；未接管其终结前不能放行另一份可能不同版本的页写入。
         if !self.write.has_inflight()
+            && self
+                .opening
+                .as_ref()
+                .is_none_or(|opening| !opening.has_resources())
             && let Ok(mut state) = self.control.lock()
             && state
                 .flush
@@ -97,9 +156,12 @@ impl<V: ValueLayout> HybridLog<V> {
             control: self.state.clone(),
             token,
             storage: storage.identity.clone(),
+            route,
             page,
             generation: encoded.generation,
             write,
+            opening: None,
+            error: None,
             terminal: false,
         })
     }
@@ -116,7 +178,12 @@ impl<V: ValueLayout> HybridLog<V> {
         if task.terminal {
             return Err(Error::InvalidState("刷盘已终结"));
         }
-        let Some(result) = task.write.take_result() else {
+        let Some(result) = task
+            .error
+            .take()
+            .map(Err)
+            .or_else(|| task.write.take_result())
+        else {
             return Ok(false);
         };
         let mut state = self
@@ -467,26 +534,6 @@ mod tests {
         })
         .unwrap();
         let storage = SegmentedStorage::new(Arc::from(device), root.0.clone(), 128).unwrap();
-        execute(
-            &*storage.device,
-            IoOperation::CreateDirectory("segments".into()),
-        )
-        .result
-        .unwrap();
-        for number in 0..3 {
-            let IoOutcome::Opened(file) = execute(
-                &*storage.device,
-                IoOperation::Open {
-                    path: storage.segment_path(number, Generation(0)),
-                    create_new: true,
-                },
-            )
-            .result
-            .unwrap() else {
-                panic!("打开")
-            };
-            storage.bind(number, Generation(0), file).unwrap();
-        }
         let log = log();
         let mut task = log
             .begin_flush(&storage, CompletionRoute(77), CheckpointVersion(0))

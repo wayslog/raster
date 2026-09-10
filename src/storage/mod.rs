@@ -67,6 +67,15 @@ impl SegmentedStorage {
         }
         Ok(slices)
     }
+    pub fn generation(&self, number: u64) -> Result<Generation, Error> {
+        let segments = self
+            .segments
+            .lock()
+            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+        Ok(segments
+            .get(&number)
+            .map_or(Generation(0), |binding| binding.generation))
+    }
     pub fn segment_path(&self, number: u64, generation: Generation) -> PathBuf {
         PathBuf::from("segments").join(format!("{number:016x}-{:016x}.log", generation.0))
     }
@@ -268,4 +277,5 @@ mod tests {
 #[path = "tests.rs"]
 mod native_tests;
 
+pub(crate) mod open;
 pub(crate) mod transfer;

@@ -174,6 +174,12 @@ impl SegmentTransfer {
         }
         Ok(())
     }
+    pub fn next_address(&self) -> Result<Option<LogAddress>, Error> {
+        if self.ended || self.inflight.is_some() {
+            return Ok(None);
+        }
+        self.start.checked_add(self.cursor as u64).map(Some)
+    }
     pub fn has_inflight(&self) -> bool {
         self.inflight.is_some()
     }

@@ -162,3 +162,65 @@ fn 提交材料同步后重命名并重开读取() {
     );
     s.device.shutdown(deadline()).unwrap();
 }
+
+#[test]
+fn 新实例不能覆盖已有段而恢复模式可以显式打开() {
+    use super::open::SegmentOpen;
+    fn drive(storage: &SegmentedStorage, create_new: bool) -> Result<FileId, Error> {
+        let mut task = SegmentOpen::new(storage, 0, Generation(0), create_new, CompletionRoute(9))?;
+        loop {
+            if let Some(result) = task.take_result() {
+                return result;
+            }
+            task.submit_next(storage)?;
+            let mut out = vec![];
+            let until = deadline();
+            while out.is_empty() {
+                assert!(!until.expired());
+                storage.device.poll(PollBudget::default(), &mut out)?;
+                std::thread::yield_now();
+            }
+            task.accept(storage, out.pop().unwrap())
+                .map_err(|r| r.reason)?;
+        }
+    }
+    let (root, first) = storage();
+    let file = drive(&first, true).unwrap();
+    let mut buffer = AlignedBuffer::new_zeroed(3, 8).unwrap();
+    buffer.as_mut_slice().copy_from_slice(b"old");
+    execute(
+        &first,
+        IoOperation::Write {
+            file,
+            offset: 0,
+            buffer,
+        },
+    )
+    .result
+    .unwrap();
+    let device = ThreadPoolDeviceFactory {
+        workers: 1,
+        queue_capacity: 16,
+    }
+    .open(DeviceOpenOptions {
+        root: root.0.clone(),
+        create_new: false,
+    })
+    .unwrap();
+    let second = SegmentedStorage::new(Arc::from(device), root.0.clone(), 16).unwrap();
+    assert!(
+        matches!(drive(&second, true), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists)
+    );
+    let file = drive(&second, false).unwrap();
+    let done = execute(
+        &second,
+        IoOperation::Read {
+            file,
+            offset: 0,
+            buffer: AlignedBuffer::new_zeroed(3, 8).unwrap(),
+        },
+    );
+    assert_eq!(done.buffer.unwrap().as_slice(), b"old");
+    first.device.shutdown(deadline()).unwrap();
+    second.device.shutdown(deadline()).unwrap();
+}
