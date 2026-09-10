@@ -16,6 +16,12 @@ pub(crate) struct ReadPage {
     bytes: Vec<u8>,
 }
 impl ReadPage {
+    /// 检查点复制整个页之前校验全部记录，不能只校验帧外壳。
+    pub fn into_checkpoint_bytes(self) -> Result<Vec<u8>, Error> {
+        PageFrame::decode(&self.bytes, self.page, self.page_bytes)?.records()?;
+        Ok(self.bytes)
+    }
+
     pub fn record(&self, address: LogAddress) -> Result<Record<'_>, Error> {
         if address.page_offset(self.page_bytes as u64)?.0 != self.page {
             return Err(Error::InvalidFormat("记录属于其他页"));
@@ -37,6 +43,10 @@ impl ReadPage {
     }
 }
 impl PageRead {
+    pub fn has_inflight(&self) -> bool {
+        self.transfer.has_inflight()
+    }
+
     pub fn new(page: PageId, page_bytes: usize, route: CompletionRoute) -> Result<Self, Error> {
         let start = PageFrame::physical_offset(page, page_bytes)?;
         let length = PageFrame::encoded_size(page_bytes)?;

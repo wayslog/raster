@@ -61,6 +61,7 @@ impl Device for Controlled {
                 (format!("open:{name}"), Some(name))
             }
             IoOperation::Write { file, .. } => (format!("write:{}", file_name(file)), None),
+            IoOperation::Read { file, .. } => (format!("read:{}", file_name(file)), None),
             IoOperation::SyncFile { file, .. } => (format!("sync:{}", file_name(file)), None),
             IoOperation::Close(file) => (format!("close:{}", file_name(file)), None),
             IoOperation::Rename { .. } => (String::from("rename"), None),
@@ -128,6 +129,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_segment_bytes(4096)
+    }
+    fn with_segment_bytes(segment_bytes: u64) -> Self {
         let root = Directory(std::env::temp_dir().join(format!(
             "raster-publish-{:x?}",
             StoreId::generate().unwrap().0
@@ -145,7 +149,7 @@ impl Fixture {
             inner,
             trace: Mutex::new(Trace::default()),
         });
-        let storage = SegmentedStorage::new(device.clone(), root.0.clone(), 4096).unwrap();
+        let storage = SegmentedStorage::new(device.clone(), root.0.clone(), segment_bytes).unwrap();
         Self {
             storage,
             device,
@@ -214,6 +218,11 @@ macro_rules! task {
 task!(DirectoryPrepare, PreparedDirectory, take_result);
 task!(MaterialWrite, SyncedFile, take_synced);
 task!(CommitPublish, PublishedCommit, take_result);
+task!(
+    super::log_material::LogMaterialWrite,
+    super::log_material::LogMaterialFile,
+    take_result
+);
 fn drive<T: Task>(fixture: &Fixture, task: &mut T) -> Result<T::Output, Error> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -825,4 +834,249 @@ fn 真实索引与日志记录导出材料后可同步发布并精确读取() {
             .unwrap();
     }
     assert!(loaded_manifest.session_progress.is_empty());
+}
+
+fn frozen_log(fixture: &Fixture) -> crate::log::HybridLog<crate::schema::builtin::AtomicU64Value> {
+    use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
+    fixture
+        .storage
+        .device
+        .submit(IoRequest {
+            route: CompletionRoute(90),
+            operation: IoOperation::CreateDirectory("segments".into()),
+        })
+        .unwrap();
+    fixture.completion().result.unwrap();
+    let log = HybridLog::new(
+        LogConfig {
+            page_bytes: 256,
+            memory_pages: 2,
+            mutable_fraction: 0.5,
+        },
+        Arc::new(AtomicU64Value),
+    )
+    .unwrap();
+    for value in [11, 22] {
+        log.finish_initialization(
+            log.reserve_record(&[value as u8], None, value)
+                .unwrap()
+                .with_version(CheckpointVersion(value)),
+        )
+        .unwrap();
+    }
+    let end = log.pad_tail().unwrap();
+    log.advance_read_only(end).unwrap();
+    let mut flush = log
+        .begin_flush(&fixture.storage, CompletionRoute(91), CheckpointVersion(22))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(Instant::now() < deadline);
+        if log.finish_flush(&fixture.storage, &mut flush).unwrap() {
+            break;
+        }
+        if flush.submit_next(&fixture.storage).unwrap().is_some() {
+            flush
+                .accept(&fixture.storage, fixture.completion())
+                .unwrap();
+        }
+    }
+    log
+}
+fn log_material_task(
+    fixture: &Fixture,
+    log: &crate::log::HybridLog<crate::schema::builtin::AtomicU64Value>,
+) -> super::log_material::LogMaterialWrite {
+    super::log_material::LogMaterialWrite::new(
+        &fixture.storage,
+        log,
+        super::log_material::LogMaterialSpec {
+            token: CheckpointToken([2; 16]),
+            page: PageId(0),
+            id: 33,
+            chunk: 17,
+            route: CompletionRoute(92),
+        },
+    )
+    .unwrap()
+}
+#[test]
+fn 原生日志材料复制保留混合版本和页填充并取得同步凭据() {
+    // 292 字节页帧跨越两个 256 字节物理段。
+    let fixture = Fixture::with_segment_bytes(256);
+    let log = frozen_log(&fixture);
+    let _directory = prepare(&fixture).unwrap();
+    let expected = log
+        .encode_page(PageId(0), CheckpointVersion(22))
+        .unwrap()
+        .bytes;
+    // 移除驻留记录并释放页后，材料仍须从已写日志读出，不能依赖内存页。
+    let frame = crate::format::PageFrame::decode(&expected, PageId(0), 256).unwrap();
+    for (address, _) in frame.records().unwrap() {
+        log.retire(address).unwrap();
+    }
+    log.release_page(PageId(0), Generation(0)).unwrap();
+    let mut task = log_material_task(&fixture, &log);
+    assert!(!task.has_resources());
+    let material = drive(&fixture, &mut task).unwrap();
+    assert!(!task.has_resources());
+    assert!(task.take_result().is_none());
+    assert!(task.submit_next(&fixture.storage).unwrap().is_none());
+    assert_eq!(material.descriptor.begin, LogAddress(0));
+    assert_eq!(material.descriptor.end, LogAddress(256));
+    assert_eq!(material.descriptor.kind, crate::format::Kind::Log);
+    let bytes = fixture.read(&material.file.name);
+    assert_eq!(bytes, expected);
+    material.descriptor.verify(&bytes).unwrap();
+    assert_eq!(material.file.digest.bytes, material.descriptor.bytes);
+    let frame = crate::format::PageFrame::decode(&bytes, PageId(0), 256).unwrap();
+    let records = frame.records().unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .map(|(_, r)| r.header.version.0)
+            .collect::<Vec<_>>(),
+        vec![11, 22]
+    );
+}
+#[test]
+fn 日志材料读写失败不返回凭据且忙拒绝可继续() {
+    for (event, mode, success) in [
+        (
+            "read:0000000000000000-0000000000000000.log",
+            FaultMode::Busy,
+            true,
+        ),
+        (
+            "read:0000000000000000-0000000000000000.log",
+            FaultMode::Reject,
+            false,
+        ),
+        (
+            "read:0000000000000000-0000000000000000.log",
+            FaultMode::Complete,
+            false,
+        ),
+        (
+            "write:0000000000000021-0000000000000000.material",
+            FaultMode::Reject,
+            false,
+        ),
+        (
+            "sync:0000000000000021-0000000000000000.material",
+            FaultMode::Complete,
+            false,
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let log = frozen_log(&fixture);
+        let _directory = prepare(&fixture).unwrap();
+        let mut task = log_material_task(&fixture, &log);
+        fixture.reset(Some((event.into(), mode)));
+        assert_eq!(drive(&fixture, &mut task).is_ok(), success, "{event}");
+        assert!(!task.has_resources());
+        assert!(task.take_result().is_none());
+        assert!(task.submit_next(&fixture.storage).unwrap().is_none());
+    }
+}
+#[test]
+fn 日志材料错误路由和存储不会消费在途读取() {
+    let fixture = Fixture::new();
+    let other = Fixture::new();
+    let log = frozen_log(&fixture);
+    let _directory = prepare(&fixture).unwrap();
+    let mut task = log_material_task(&fixture, &log);
+    assert!(task.submit_next(&other.storage).is_err());
+    let id = task.submit_next(&fixture.storage).unwrap().unwrap();
+    assert!(task.has_resources());
+    assert!(task.submit_next(&fixture.storage).unwrap().is_none());
+    let completion = fixture.completion();
+    assert_eq!(completion.id, id);
+    let mut completion = task.accept(&other.storage, completion).unwrap_err().request;
+    completion.route = CompletionRoute(123);
+    let mut completion = task
+        .accept(&fixture.storage, completion)
+        .unwrap_err()
+        .request;
+    assert!(task.has_resources());
+    completion.route = CompletionRoute(92);
+    task.accept(&fixture.storage, completion).unwrap();
+    assert!(!task.has_resources());
+    drive(&fixture, &mut task).unwrap();
+}
+
+#[test]
+fn 日志材料拒绝帧损坏及外壳校验正确但内部记录损坏() {
+    for repair_frame in [false, true] {
+        let fixture = Fixture::new();
+        let log = frozen_log(&fixture);
+        let _directory = prepare(&fixture).unwrap();
+        let mut bytes = log
+            .encode_page(PageId(0), CheckpointVersion(22))
+            .unwrap()
+            .bytes;
+        bytes[32] ^= 1;
+        if repair_frame {
+            let n = bytes.len() - 4;
+            let crc = crate::format::checksum(&bytes[..n]);
+            bytes[n..].copy_from_slice(&crc.to_le_bytes());
+        }
+        std::fs::write(
+            fixture
+                .root
+                .0
+                .join(fixture.storage.segment_path(0, Generation(0))),
+            bytes,
+        )
+        .unwrap();
+        let mut task = log_material_task(&fixture, &log);
+        fixture.reset(None);
+        assert!(drive(&fixture, &mut task).is_err());
+        assert!(!task.has_resources());
+        assert!(
+            fixture
+                .device
+                .trace
+                .lock()
+                .unwrap()
+                .events
+                .iter()
+                .all(|event| !event.starts_with("open:"))
+        );
+    }
+}
+#[test]
+fn 日志材料拒绝尚未冻结或尚未写完的源页() {
+    use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
+    let fixture = Fixture::new();
+    let log = HybridLog::new(
+        LogConfig {
+            page_bytes: 256,
+            memory_pages: 2,
+            mutable_fraction: 0.5,
+        },
+        Arc::new(AtomicU64Value),
+    )
+    .unwrap();
+    assert!(matches!(
+        log.checkpoint_page(PageId(0), CompletionRoute(1)),
+        Err(Error::Busy)
+    ));
+    log.finish_initialization(log.reserve_record(b"key", None, 1).unwrap())
+        .unwrap();
+    let end = log.pad_tail().unwrap();
+    assert!(matches!(
+        log.checkpoint_page(PageId(0), CompletionRoute(1)),
+        Err(Error::Busy)
+    ));
+    log.advance_read_only(end).unwrap();
+    assert!(matches!(
+        log.checkpoint_page(PageId(0), CompletionRoute(1)),
+        Err(Error::Busy)
+    ));
+    assert!(
+        log.checkpoint_page(PageId(u64::MAX), CompletionRoute(1))
+            .is_err()
+    );
+    assert!(fixture.device.trace.lock().unwrap().events.is_empty());
 }

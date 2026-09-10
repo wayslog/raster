@@ -379,6 +379,27 @@ impl<V: ValueLayout> HybridLog<V> {
         state.frontiers.safe_read_only = target;
         Ok(())
     }
+    /// 仅允许复制已冻结且完整写入普通日志的页；上层维护动作须排斥 GC/截断。
+    pub fn checkpoint_page(
+        &self,
+        page: PageId,
+        route: crate::device::CompletionRoute,
+    ) -> Result<(read_page::PageRead, LogAddress, LogAddress), Error> {
+        let start = LogAddress::from_page_offset(page, 0, self.page_bytes as u64)?;
+        let end = start.checked_add(self.page_bytes as u64)?;
+        let frontiers = self.frontiers()?;
+        if end <= frontiers.begin {
+            return Err(Error::RangeTruncated);
+        }
+        if end > frontiers.safe_read_only || end > frontiers.flushed_until {
+            return Err(Error::Busy);
+        }
+        Ok((
+            read_page::PageRead::new(page, self.page_bytes, route)?,
+            start.max(frontiers.begin),
+            end,
+        ))
+    }
     pub fn decode_temporary(&self, encoded: &[u8]) -> Result<value::TemporaryValue<V>, Error> {
         value::TemporaryValue::decode(self.layout.clone(), encoded, self.page_bytes)
     }
