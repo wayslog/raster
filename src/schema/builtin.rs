@@ -1,7 +1,7 @@
 //! 内建键采用显式规范编码与固定版本哈希；值布局仍待实现。
+use super::value::{PreparedValue, ValueCodec};
 use super::{KeyCodec, Schema, ValueLayout};
 use crate::types::{Error, FormatId, HashDescriptor, KeyHash};
-use std::marker::PhantomData;
 
 pub struct SchemaPair<K: KeyCodec, V: ValueLayout> {
     key: K,
@@ -130,10 +130,85 @@ impl KeyCodec for U64Key {
 }
 /// 待实现通用字节槽；必须接入记录独占许可后才能实现 ValueLayout。
 pub struct SerializedValue<C> {
-    _codec: PhantomData<C>,
+    codec: C,
 }
 /// 待实现原子值布局；不能用普通字节转换代替原子初始化和稳定读取。
 pub struct AtomicU64Value;
+
+/// 原始字节值编码；空值与非 UTF-8 数据均合法。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ByteValueCodec;
+impl ValueCodec for ByteValueCodec {
+    type Value = Vec<u8>;
+    fn format_id(&self) -> FormatId {
+        FormatId(*b"raster:valbytes1")
+    }
+    fn encode(&self, value: &Vec<u8>) -> Result<Vec<u8>, Error> {
+        self.decode(value)
+    }
+    fn decode(&self, bytes: &[u8]) -> Result<Vec<u8>, Error> {
+        checked_length(bytes.len())?;
+        let mut value = Vec::new();
+        value
+            .try_reserve_exact(bytes.len())
+            .map_err(|_| Error::OutOfMemory)?;
+        value.extend_from_slice(bytes);
+        Ok(value)
+    }
+}
+/// 普通 u64 值的八字节小端编码。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct U64ValueCodec;
+impl ValueCodec for U64ValueCodec {
+    type Value = u64;
+    fn format_id(&self) -> FormatId {
+        FormatId(*b"raster:valu64le1")
+    }
+    fn encode(&self, value: &u64) -> Result<Vec<u8>, Error> {
+        Ok(value.to_le_bytes().to_vec())
+    }
+    fn decode(&self, bytes: &[u8]) -> Result<u64, Error> {
+        Ok(u64::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| Error::Codec("整数值必须恰好八字节"))?,
+        ))
+    }
+}
+impl<C: ValueCodec> SerializedValue<C> {
+    pub fn new(codec: C) -> Self {
+        Self { codec }
+    }
+    pub fn format_id(&self) -> FormatId {
+        self.codec.format_id()
+    }
+    /// 活跃表示为规范字节槽，记录长度及同步元数据位于槽外。
+    pub fn prepare(&self, value: &C::Value) -> Result<PreparedValue, Error> {
+        let bytes = self.codec.encode(value)?;
+        let len = bytes.len();
+        PreparedValue::new(bytes, len, 1)
+    }
+    pub fn decode_owned(&self, encoded: &[u8]) -> Result<C::Value, Error> {
+        checked_length(encoded.len())?;
+        self.codec.decode(encoded)
+    }
+}
+impl AtomicU64Value {
+    /// 与普通整数编码分离的布局身份；编码内容仍然是逻辑整数。
+    pub fn format_id(&self) -> FormatId {
+        FormatId(*b"raster:atomic641")
+    }
+    pub fn prepare(&self, value: u64) -> Result<PreparedValue, Error> {
+        PreparedValue::new(
+            value.to_le_bytes().to_vec(),
+            std::mem::size_of::<std::sync::atomic::AtomicU64>(),
+            std::mem::align_of::<std::sync::atomic::AtomicU64>(),
+        )
+    }
+    pub fn decode_owned(&self, encoded: &[u8]) -> Result<u64, Error> {
+        U64ValueCodec.decode(encoded)
+    }
+}
 
 #[cfg(test)]
 mod tests {

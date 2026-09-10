@@ -242,3 +242,5 @@ Diagnostics 返回结构化的 `log_span_bytes`、地址边界、会话数、在
 取消 DeepCopy/CallbackContext；转为拥有型请求与结果。取消 public hlog/hash_index 原始字段；转为诊断和受控扩展。Recover 改为返回就绪实例，维护 bool 改为启动结果加完成句柄。条件结果保持含义，错误补充副作用状态，方法名遵循 Rust 的 snake_case，主对象保留用户指定的 RasterKV。
 
 这些调整保留第一阶段功能，减少误用方式；不承诺 C++ ABI、文件格式或调用语法兼容。
+
+P1.3 的值编码辅助接口和尺寸规则见 [值编码契约](acceptance/P1.3值编码契约.md)。ValueCodec 与 PreparedValue 可独立使用；实际页许可和内建 ValueLayout 留到 P2.2。
