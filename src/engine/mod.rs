@@ -2,6 +2,7 @@
 pub(crate) mod checkpoint;
 mod conditional_copy;
 mod delete;
+pub(crate) mod growth;
 pub(crate) mod io_hub;
 mod maintenance;
 mod observe;
@@ -22,6 +23,7 @@ pub(crate) use pending::SessionRuntime;
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
     pub io: io_hub::CompletionHub,
+    pub growth: std::sync::Mutex<growth::GrowthRuntime>,
     pub checkpoints: std::sync::Mutex<checkpoint::CheckpointRuntime>,
     pub storage_progress: std::sync::Mutex<storage_progress::StorageProgress>,
     pub version_permits: version_permit::VersionPermits,

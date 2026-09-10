@@ -154,7 +154,7 @@ impl<S: Schema> Maintenance<S> {
         self.inner.not_ready("maintenance::gc")
     }
     pub fn grow_index(&self) -> Result<MaintenanceTicket<IndexGrowthReport>, Error> {
-        self.inner.not_ready("index::grow")
+        self.inner.start_growth()
     }
     pub fn poll(&self, budget: PollBudget) -> Result<Progress, Error> {
         self.inner.poll_maintenance(budget)

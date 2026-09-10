@@ -1311,3 +1311,6 @@ fn 恢复安装同步失败会排空设备且超时后可以重新恢复() {
 
 #[path = "checkpoint_safety_tests.rs"]
 mod safety;
+
+#[path = "growth_tests.rs"]
+mod growth;

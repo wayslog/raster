@@ -50,6 +50,7 @@ impl MemIndex {
             .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
         state.route(hash).prepare(hash)
     }
+    #[cfg(test)]
     pub fn locate(&self, hash: KeyHash) -> Result<Option<EntrySnapshot>, Error> {
         let entry = self.prepare(hash)?;
         Ok((entry.head != IndexHead::Empty).then_some(entry))

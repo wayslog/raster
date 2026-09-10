@@ -10,6 +10,7 @@ static NEXT_INDEX: AtomicU64 = AtomicU64::new(0);
 pub(crate) enum IndexHead {
     Empty,
     Log(LogAddress),
+    #[cfg_attr(not(test), expect(dead_code, reason = "P6.2 接入读缓存时构造缓存头"))]
     Cache(CacheAddress),
 }
 #[derive(Clone, Copy, Debug)]
@@ -71,6 +72,13 @@ impl IndexImage {
 #[derive(Debug)]
 pub(crate) enum PublishResult {
     Published,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "当前引擎重新 prepare，冲突快照由索引协议测试验证并供后续条件复制使用"
+        )
+    )]
     Conflict(EntrySnapshot),
 }
 #[derive(Clone, Copy)]
@@ -136,10 +144,6 @@ impl Table {
             .lock()
             .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
         Ok(self.entry(bucket, hash, &entries))
-    }
-    pub fn locate(&self, hash: KeyHash) -> Result<Option<EntrySnapshot>, Error> {
-        let entry = self.prepare(hash)?;
-        Ok((entry.head != IndexHead::Empty).then_some(entry))
     }
     /// 调用者先完成值初始化和日志发布；替换时还需持有源记录仲裁。
     pub fn compare_publish(
@@ -276,7 +280,7 @@ impl Table {
     }
 }
 
-mod growth;
+pub(crate) mod growth;
 pub(crate) use growth::MemIndex;
 
 #[cfg(test)]

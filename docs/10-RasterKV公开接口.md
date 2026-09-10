@@ -247,3 +247,10 @@ Diagnostics 返回结构化的 `log_span_bytes`、地址边界、会话数、在
 这些调整保留第一阶段功能，减少误用方式；不承诺 C++ ABI、文件格式或调用语法兼容。
 
 P1.3 的值编码辅助接口和尺寸规则见 [值编码契约](acceptance/P1.3值编码契约.md)。ValueCodec 与 PreparedValue 可独立使用；实际页许可和内建 ValueLayout 留到 P2.2。
+
+
+## 在线索引扩容实施说明
+
+Maintenance::grow_index 将当前桶数加倍，返回的票据通过维护 poll 或 Session::wait_maintenance 推进。参与会话须 refresh/poll 观察阶段；维护轮询不执行其他会话的业务回调。只有全部桶完成迁移并安全释放旧表后，IndexGrowthReport 才报告 old_buckets、new_buckets 和 generation。重复或冲突动作返回 Busy，丢弃票据不取消扩容。
+
+扩容保持日志检查点版本和逻辑记录地址不变。恢复仍要求 Config.index.buckets 与所选索引材料一致，调用方应保存报告的 new_buckets；初始配置值不等于在线扩容后的当前容量。P6.1 的实现与证据见 [索引扩容交付记录](acceptance/P6.1索引扩容交付记录.md)。

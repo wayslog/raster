@@ -8,6 +8,7 @@ impl<S: Schema> Engine<S> {
         if result.is_err() {
             self.failed.store(true, Ordering::SeqCst);
             self.fail_checkpoint()?;
+            self.fail_growth()?;
             let state = self.coordinator.snapshot()?;
             if let Some(id) = state.id
                 && state.phase != Phase::Failed
@@ -28,6 +29,9 @@ impl<S: Schema> Engine<S> {
         let mut completed = 0;
         for _ in 0..budget.0.get() {
             let (checkpoint_progress, checkpoint_completed) = self.progress_checkpoint()?;
+            let (growth_progress, growth_completed) = self.progress_growth()?;
+            advanced |= growth_progress;
+            completed += usize::from(growth_completed);
             advanced |= checkpoint_progress;
             completed += usize::from(checkpoint_completed);
             let state = self.coordinator.snapshot()?;

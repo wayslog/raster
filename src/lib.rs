@@ -21,7 +21,6 @@ mod engine;
 mod epoch;
 #[allow(dead_code)]
 mod format;
-#[allow(dead_code)]
 mod index;
 #[allow(dead_code)]
 mod log;

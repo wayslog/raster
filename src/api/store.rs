@@ -208,6 +208,7 @@ impl<S: Schema> Builder<S> {
             inner: Arc::new(Engine {
                 id,
                 io,
+                growth: std::sync::Mutex::new(Default::default()),
                 checkpoints: std::sync::Mutex::new(Default::default()),
                 storage_progress: std::sync::Mutex::new(Default::default()),
                 schema,

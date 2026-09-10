@@ -53,15 +53,32 @@ impl<S: Schema> Session<S> {
         request: R,
         options: ReadOptions,
     ) -> Result<Submission<R::Output>, Rejected<R>> {
-        self.engine
-            .read(&mut self.runtime, serial, request, options)
+        let engine = self.engine.clone();
+        let _guard = match self
+            .participant
+            .ok_or(Error::InvalidState("会话已关闭"))
+            .and_then(|participant| engine.epoch.enter(participant))
+        {
+            Ok(guard) => guard,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
+        engine.read(&mut self.runtime, serial, request, options)
     }
     pub fn upsert<U: UpsertOperation<S>>(
         &mut self,
         serial: Serial,
         request: U,
     ) -> Result<Submission<U::Output>, Rejected<U>> {
-        self.engine.upsert(&mut self.runtime, serial, request)
+        let engine = self.engine.clone();
+        let _guard = match self
+            .participant
+            .ok_or(Error::InvalidState("会话已关闭"))
+            .and_then(|participant| engine.epoch.enter(participant))
+        {
+            Ok(guard) => guard,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
+        engine.upsert(&mut self.runtime, serial, request)
     }
     pub fn rmw<M: RmwOperation<S>>(
         &mut self,
@@ -69,7 +86,16 @@ impl<S: Schema> Session<S> {
         request: M,
         options: RmwOptions,
     ) -> Result<Submission<M::Output>, Rejected<M>> {
-        self.engine.rmw(&mut self.runtime, serial, request, options)
+        let engine = self.engine.clone();
+        let _guard = match self
+            .participant
+            .ok_or(Error::InvalidState("会话已关闭"))
+            .and_then(|participant| engine.epoch.enter(participant))
+        {
+            Ok(guard) => guard,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
+        engine.rmw(&mut self.runtime, serial, request, options)
     }
     pub fn delete<D: DeleteOperation<S>>(
         &mut self,
@@ -77,8 +103,16 @@ impl<S: Schema> Session<S> {
         request: D,
         options: DeleteOptions,
     ) -> Result<Submission<D::Output>, Rejected<D>> {
-        self.engine
-            .delete(&mut self.runtime, serial, request, options)
+        let engine = self.engine.clone();
+        let _guard = match self
+            .participant
+            .ok_or(Error::InvalidState("会话已关闭"))
+            .and_then(|participant| engine.epoch.enter(participant))
+        {
+            Ok(guard) => guard,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
+        engine.delete(&mut self.runtime, serial, request, options)
     }
     pub fn refresh(&mut self) -> Result<Progress, Error> {
         if self.participant.is_none() {
@@ -95,7 +129,11 @@ impl<S: Schema> Session<S> {
         if self.participant.is_none() {
             return Ok(Progress::default());
         }
-        self.engine.poll_session(&mut self.runtime, budget)
+        let engine = self.engine.clone();
+        let _guard = engine
+            .epoch
+            .enter(self.participant.expect("已确认参与者存在"))?;
+        engine.poll_session(&mut self.runtime, budget)
     }
     pub fn try_take<T: 'static>(
         &mut self,
@@ -172,6 +210,7 @@ impl<S: Schema> Session<S> {
                 .and_then(|_| self.engine.poll_maintenance(PollBudget::default()))
             {
                 self.engine.fail_checkpoint()?;
+                self.engine.fail_growth()?;
                 if let Some(report) = ticket.try_report()? {
                     return Ok(report);
                 }
