@@ -119,6 +119,8 @@ fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材�
     drop(session);
     store.shutdown(deadline()).unwrap();
     drop(store);
+    // 删去已经关闭的工作段，确认两代恢复只依赖各自材料副本。
+    std::fs::remove_dir_all(config.storage.root.join("segments")).unwrap();
     for (report, value, other, cut) in [(first, 0, Some(1), 30), (second, 3, None, 60)] {
         let set = crate::api::maintenance::RecoverySet {
             store: store_id,
