@@ -75,3 +75,5 @@ impl HybridLog {
 mod gate;
 
 mod page;
+
+mod value;

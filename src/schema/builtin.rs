@@ -1,4 +1,4 @@
-//! 内建键采用显式规范编码与固定版本哈希；值布局仍待实现。
+//! 内建键采用规范编码与稳定哈希；值布局依赖页所有者提供真实许可。
 use super::value::{PreparedValue, ValueCodec};
 use super::{KeyCodec, Schema, ValueLayout};
 use crate::types::{Error, FormatId, HashDescriptor, KeyHash};
@@ -128,11 +128,11 @@ impl KeyCodec for U64Key {
         Ok(u64::from_le_bytes(bytes))
     }
 }
-/// 待实现通用字节槽；必须接入记录独占许可后才能实现 ValueLayout。
+/// 带长度前缀的通用字节槽，访问需要记录独占许可。
 pub struct SerializedValue<C> {
     codec: C,
 }
-/// 待实现原子值布局；不能用普通字节转换代替原子初始化和稳定读取。
+/// 原子整数布局，以逻辑数值编码，访问受页许可约束。
 pub struct AtomicU64Value;
 
 /// 原始字节值编码；空值与非 UTF-8 数据均合法。
@@ -182,11 +182,11 @@ impl<C: ValueCodec> SerializedValue<C> {
     pub fn format_id(&self) -> FormatId {
         self.codec.format_id()
     }
-    /// 活跃表示为规范字节槽，记录长度及同步元数据位于槽外。
+    /// 活跃字节槽含八字节长度前缀；稳定编码不包含该进程内前缀。
     pub fn prepare(&self, value: &C::Value) -> Result<PreparedValue, Error> {
         let bytes = self.codec.encode(value)?;
-        let len = bytes.len();
-        PreparedValue::new(bytes, len, 1)
+        let len = bytes.len().checked_add(8).ok_or(Error::CapacityExceeded)?;
+        PreparedValue::new(bytes, len, 8)
     }
     pub fn decode_owned(&self, encoded: &[u8]) -> Result<C::Value, Error> {
         checked_length(encoded.len())?;
@@ -225,3 +225,6 @@ mod tests {
         }
     }
 }
+
+mod layout;
+pub use layout::SerializedUpdate;

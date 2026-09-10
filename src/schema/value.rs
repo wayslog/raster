@@ -118,6 +118,10 @@ pub unsafe trait ValueLayout: Send + Sync + 'static {
     type Update<'a>
     where
         Self: 'a;
+    /// 返回 true 的专家布局必须保证多个 Update 视图同时访问安全。
+    fn concurrent_updates(&self) -> bool {
+        false
+    }
     fn format_id(&self) -> FormatId;
     fn plan(&self, value: &Self::Owned) -> Result<ValuePlan, Error>;
     fn initialize(&self, permit: InitPermit<'_>, value: Self::Owned) -> Result<(), Error>;

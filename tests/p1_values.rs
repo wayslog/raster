@@ -10,11 +10,11 @@ fn 普通字节值覆盖空值非文本及变长槽() {
     for value in [vec![], vec![0, 255, 128], vec![42; 65537]] {
         let prepared = layout.prepare(&value).unwrap();
         assert_eq!(prepared.bytes(), value);
-        assert_eq!(prepared.plan().live_bytes, value.len());
+        assert_eq!(prepared.plan().live_bytes, value.len() + 8);
         assert_eq!(layout.decode_owned(prepared.bytes()).unwrap(), value);
-        prepared.fits(value.len(), 1).unwrap();
+        prepared.fits(value.len() + 8, 8).unwrap();
         if !value.is_empty() {
-            assert!(prepared.fits(value.len() - 1, 1).is_err());
+            assert!(prepared.fits(value.len() + 7, 8).is_err());
         }
     }
 }
