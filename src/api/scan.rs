@@ -20,7 +20,9 @@ pub struct ScanOptions {
 pub struct ScannedRecord<S: Schema> {
     pub address: LogAddress,
     pub version: CheckpointVersion,
+    /// 规范解码的拥有型键；invalid 记录也必须具有可解码键，否则扫描报错。
     pub key: OwnedKeyOf<S>,
+    /// 普通记录返回拥有型值；墓碑或 invalid 记录返回 None，不调用值解码。
     pub value: Option<OwnedValueOf<S>>,
     pub tombstone: bool,
     pub invalid: bool,

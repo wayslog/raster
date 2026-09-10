@@ -16,6 +16,15 @@ pub(crate) struct ReadPage {
     bytes: Vec<u8>,
 }
 impl ReadPage {
+    /// 消费完成页并交给扫描器；游标保留完整拥有缓冲，不借用设备或日志槽位。
+    pub fn into_scan(
+        self,
+        begin: LogAddress,
+        end: LogAddress,
+    ) -> Result<crate::scan::page::PageCursor, Error> {
+        crate::scan::page::PageCursor::new(self.bytes, self.page, self.page_bytes, begin, end)
+    }
+
     /// 检查点复制整个页之前校验全部记录，不能只校验帧外壳。
     pub fn into_checkpoint_bytes(self) -> Result<Vec<u8>, Error> {
         PageFrame::decode(&self.bytes, self.page, self.page_bytes)?.records()?;

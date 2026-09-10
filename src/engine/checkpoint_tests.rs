@@ -1317,3 +1317,6 @@ mod growth;
 
 #[path = "cache_tests.rs"]
 mod cache;
+
+#[path = "scan_page_tests.rs"]
+mod scan_page;
