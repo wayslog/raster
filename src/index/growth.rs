@@ -43,6 +43,14 @@ impl MemIndex {
             }),
         })
     }
+    pub fn identity(&self) -> Result<u64, Error> {
+        Ok(self
+            .state
+            .read()
+            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?
+            .active
+            .owner)
+    }
     pub fn prepare(&self, hash: KeyHash) -> Result<EntrySnapshot, Error> {
         let state = self
             .state
