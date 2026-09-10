@@ -487,3 +487,188 @@ fn 多线程推进检查点只报告一次完成且动作期间拒绝关闭() {
     );
     store.shutdown(deadline()).unwrap();
 }
+
+#[test]
+fn 恢复计划逐材料验证且同一完整检查点不重复计数() {
+    use crate::checkpoint::recovery::{RecoveryPlan, ValidatedMaterial};
+    let (_root, store) = setup(None);
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    put(&mut session, 7, 19);
+    let ticket = store
+        .maintenance()
+        .checkpoint(CheckpointKind::Full)
+        .unwrap();
+    let report = wait(&mut session, &ticket);
+    let manifest = manifest(&store, &report);
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: report.token,
+        log: report.token,
+    };
+    let mut plan = RecoveryPlan::new(
+        &set,
+        manifest.clone(),
+        manifest.clone(),
+        &*store.inner.schema,
+        &store.inner.config,
+    )
+    .unwrap();
+    assert_eq!(plan.remaining(), manifest.materials.len());
+    let requests: Vec<_> = plan
+        .requests()
+        .map(|(token, material)| (token, material.clone()))
+        .collect();
+    for (token, material) in requests {
+        let name = crate::storage::SegmentedStorage::checkpoint_material_name(
+            material.id,
+            material.generation,
+        );
+        let bytes = std::fs::read(
+            store
+                .inner
+                .storage
+                .root
+                .join(store.inner.storage.checkpoint_path(token, &name).unwrap()),
+        )
+        .unwrap();
+        let before = plan.remaining();
+        let mut bad = bytes.clone();
+        bad[0] ^= 1;
+        assert!(plan.verify_material(token, material.id, &bad).is_err());
+        assert!(
+            plan.verify_material(CheckpointToken([99; 16]), material.id, &bytes)
+                .is_err()
+        );
+        assert_eq!(plan.remaining(), before);
+        match plan.verify_material(token, material.id, &bytes).unwrap() {
+            ValidatedMaterial::Index(index) => assert_eq!(index.entries.len(), 1),
+            ValidatedMaterial::Log(frame) => {
+                assert_eq!(frame.records().unwrap()[0].1.value, 19u64.to_le_bytes())
+            }
+        }
+        assert_eq!(plan.remaining(), before - 1);
+        assert!(plan.verify_material(token, material.id, &bytes).is_err());
+    }
+    assert_eq!(plan.remaining(), 0);
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+#[test]
+fn 恢复计划拒绝错配语义页布局和越界索引链头() {
+    use crate::checkpoint::recovery::RecoveryPlan;
+    let (_root, store) = setup(None);
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    put(&mut session, 7, 19);
+    let ticket = store
+        .maintenance()
+        .checkpoint(CheckpointKind::Index)
+        .unwrap();
+    let index_report = wait(&mut session, &ticket);
+    let index = manifest(&store, &index_report);
+    let ticket = store.maintenance().checkpoint(CheckpointKind::Log).unwrap();
+    let report = wait(&mut session, &ticket);
+    let log = manifest(&store, &report);
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: index.token,
+        log: log.token,
+    };
+    assert!(
+        RecoveryPlan::new(
+            &set,
+            index.clone(),
+            log.clone(),
+            &*store.inner.schema,
+            &store.inner.config
+        )
+        .is_ok()
+    );
+    let mut bad = log.clone();
+    bad.base_index = CheckpointToken([99; 16]);
+    assert!(
+        RecoveryPlan::new(
+            &set,
+            index.clone(),
+            bad,
+            &*store.inner.schema,
+            &store.inner.config
+        )
+        .is_err()
+    );
+    for which in 0..3 {
+        let mut a = index.clone();
+        let mut b = log.clone();
+        match which {
+            0 => {
+                a.key_format = FormatId([99; 16]);
+                b.key_format = a.key_format;
+            }
+            1 => {
+                a.hash.seed[0] ^= 1;
+                b.hash = a.hash.clone();
+            }
+            _ => {
+                a.value_format = FormatId([99; 16]);
+                b.value_format = a.value_format;
+            }
+        }
+        assert!(RecoveryPlan::new(&set, a, b, &*store.inner.schema, &store.inner.config).is_err());
+    }
+    let mut config = store.inner.config.clone();
+    config.log.page_bytes *= 2;
+    assert!(
+        RecoveryPlan::new(
+            &set,
+            index.clone(),
+            log.clone(),
+            &*store.inner.schema,
+            &config
+        )
+        .is_err()
+    );
+    let mut image = IndexSnapshot {
+        buckets: store.inner.config.index.buckets as u64,
+        generation: Generation(0),
+        entries: vec![crate::format::IndexEntry {
+            bucket: 0,
+            tag: 0,
+            address: index.end,
+        }],
+    };
+    let bytes = image.encode().unwrap();
+    let mut bad_index = index.clone();
+    bad_index.materials[0].bytes = bytes.len() as u64;
+    bad_index.materials[0].checksum = crate::format::checksum(&bytes);
+    let mut plan = RecoveryPlan::new(
+        &set,
+        bad_index,
+        log.clone(),
+        &*store.inner.schema,
+        &store.inner.config,
+    )
+    .unwrap();
+    assert!(
+        plan.verify_material(index.token, index.materials[0].id, &bytes)
+            .is_err()
+    );
+    image.entries[0].address = LogAddress(0);
+    image.buckets *= 2;
+    let bytes = image.encode().unwrap();
+    let mut bad_index = index;
+    bad_index.materials[0].bytes = bytes.len() as u64;
+    bad_index.materials[0].checksum = crate::format::checksum(&bytes);
+    let mut plan = RecoveryPlan::new(
+        &set,
+        bad_index.clone(),
+        log,
+        &*store.inner.schema,
+        &store.inner.config,
+    )
+    .unwrap();
+    assert!(
+        plan.verify_material(bad_index.token, bad_index.materials[0].id, &bytes)
+            .is_err()
+    );
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
