@@ -106,7 +106,7 @@ P2 暂不需要完整刷盘或在线扩容，但索引快照必须已有表代�
 
 | 编号 / 状态 | 依赖 | 交付与主要文件 | 验收条件 |
 | --- | --- | --- | --- |
-| P3.1 / 进行中 | P2 | `api/store.rs`、`api/session.rs`、`engine/mod.rs`、`coordination/`：create、clone、会话身份/序号、注册/注销、基础关闭与 shutdown | 已就绪才返回实例；拒绝不消费序号；重复会话处理确定；shutdown 立即报告活跃会话，不等待同线程自己的 Session |
+| P3.1 / 待验收 | P2 | `api/store.rs`、`api/session.rs`、`engine/mod.rs`、`coordination/`：create、clone、会话身份/序号、注册/注销、基础关闭与 shutdown | 已就绪才返回实例；拒绝不消费序号；重复会话处理确定；shutdown 立即报告活跃会话，不等待同线程自己的 Session |
 | P3.2 / 未开始 | P3.1 | `engine/read.rs`、`upsert.rs`、`rmw.rs`、`delete.rs`：同步四操作、墓碑选项、条件创建、原地更新和追加回退 | 与顺序模型一致；值增长触发追加；同键多线程 RMW 不丢更新；替换路径与原地修改共同仲裁，不能只依赖索引 CAS |
 | P3.3 / 未开始 | P3.2 | 请求接受/终结路径、用户函数错误策略；新增可执行内存示例和并发历史测试 | 普通值与原子值都可用；错误/恐慌后的 NotApplied/Applied/Unknown 符合契约；可能已修改的请求不盲重试；!Send 用户上下文仍在原线程 |
 

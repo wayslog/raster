@@ -26,3 +26,20 @@ pub(crate) struct SessionRuntime {
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
 }
+
+impl SessionRuntime {
+    pub fn new(last_accepted: Option<Serial>) -> Self {
+        Self {
+            current: ExecutionContext {
+                version: CheckpointVersion(0),
+                last_accepted,
+                tasks: BTreeMap::new(),
+            },
+            previous: None,
+            closing: false,
+        }
+    }
+    pub fn pending(&self) -> usize {
+        self.current.tasks.len() + self.previous.as_ref().map_or(0, |old| old.tasks.len())
+    }
+}

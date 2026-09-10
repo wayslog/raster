@@ -99,7 +99,7 @@ impl DeviceFactory for SpyFactory {
 }
 
 #[test]
-fn 未实现的创建和恢复不会打开设备() {
+fn 创建传递设备失败且未实现恢复不打开设备() {
     let calls = Arc::new(AtomicUsize::new(0));
     let build = || {
         RasterKV::builder(SchemaPair::new(TestKey, TestLayout))
@@ -108,7 +108,7 @@ fn 未实现的创建和恢复不会打开设备() {
     assert!(matches!(
         build().create(),
         Err(Error::NotImplemented {
-            module: "engine::create"
+            module: "测试设备"
         })
     ));
     let set = RecoverySet {
@@ -122,7 +122,7 @@ fn 未实现的创建和恢复不会打开设备() {
             module: "checkpoint::recover"
         })
     ));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 struct LocalRead {

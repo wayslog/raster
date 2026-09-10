@@ -36,6 +36,7 @@ pub struct CloseReport {
 pub struct Session<S: Schema> {
     pub(crate) engine: Arc<Engine<S>>,
     pub(crate) id: SessionId,
+    pub(crate) participant: Option<crate::epoch::ParticipantId>,
     pub(crate) runtime: SessionRuntime,
     pub(crate) local: PhantomData<Rc<()>>,
 }
@@ -112,7 +113,33 @@ impl<S: Schema> Session<S> {
         Err(Error::unimplemented("maintenance::wait"))
     }
     /// 超时后保留 Session；成功只代表排空和注销，不自动检查点。
-    pub fn close(&mut self, _deadline: Deadline) -> Result<CloseReport, Error> {
-        Err(Error::unimplemented("coordination::close"))
+    pub fn close(&mut self, deadline: Deadline) -> Result<CloseReport, Error> {
+        if self.participant.is_some() {
+            self.runtime.closing = true;
+            if self.runtime.pending() != 0 {
+                return Err(if deadline.expired() {
+                    Error::DeadlineExceeded
+                } else {
+                    Error::Busy
+                });
+            }
+            let participant = self.participant.expect("参与者存在");
+            self.engine.epoch.unregister(participant)?;
+            self.engine.coordinator.leave(self.id)?;
+            self.participant = None;
+        }
+        Ok(CloseReport {
+            session: self.id,
+            drained: true,
+        })
+    }
+}
+
+impl<S: Schema> Drop for Session<S> {
+    fn drop(&mut self) {
+        if let Some(participant) = self.participant.take() {
+            let _ = self.engine.epoch.unregister(participant);
+            let _ = self.engine.coordinator.leave(self.id);
+        }
     }
 }

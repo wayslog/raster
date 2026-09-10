@@ -1,4 +1,4 @@
-//! 创建/恢复只在引擎完全就绪后返回实例；骨架不会创建文件或伪造就绪状态。
+//! 创建完成内存组件与设备初始化后返回；恢复仍待检查点协议接入。
 use super::{
     maintenance::{Maintenance, RecoveryReport, RecoverySet},
     scan::{RecordScanner, ScanOptions},
@@ -42,8 +42,27 @@ impl<S: Schema> RasterKV<S> {
             device: None,
         }
     }
-    pub fn start_session(&self, _options: SessionOptions) -> Result<Session<S>, Error> {
-        Err(Error::unimplemented("coordination::start_session"))
+    pub fn start_session(&self, options: SessionOptions) -> Result<Session<S>, Error> {
+        let id = match options.id {
+            Some(id) => id,
+            None => SessionId::generate()?,
+        };
+        self.inner.coordinator.enroll(id)?;
+        let participant = match self.inner.epoch.register() {
+            Ok(id) => id,
+            Err(error) => {
+                let _ = self.inner.coordinator.leave(id);
+                return Err(error);
+            }
+        };
+        let last_accepted = self.inner.coordinator.last_accepted(id)?;
+        Ok(Session {
+            engine: self.inner.clone(),
+            id,
+            participant: Some(participant),
+            runtime: crate::engine::SessionRuntime::new(last_accepted),
+            local: std::marker::PhantomData,
+        })
     }
     pub fn continue_session(&self, _id: SessionId) -> Result<ResumedSession<S>, Error> {
         Err(Error::unimplemented("coordination::continue_session"))
@@ -59,9 +78,21 @@ impl<S: Schema> RasterKV<S> {
     pub fn scan(&self, _options: ScanOptions) -> Result<RecordScanner<S>, Error> {
         Err(Error::unimplemented("scan::open"))
     }
-    /// 未来须立即报告活跃会话，不能阻塞等待本线程自己的 Session。
-    pub fn shutdown(&self, _deadline: Deadline) -> Result<ShutdownReport, Error> {
-        Err(Error::unimplemented("engine::shutdown"))
+    /// 立即拒绝仍有活跃会话的关闭，不等待本线程自己的 Session。
+    pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, Error> {
+        let mut done = self
+            .inner
+            .shutdown_state
+            .lock()
+            .map_err(|_| Error::InvalidState("关闭锁中毒"))?;
+        if !*done {
+            self.inner.coordinator.shutdown()?;
+            self.inner.storage.device.shutdown(deadline)?;
+            *done = true;
+        }
+        Ok(ShutdownReport {
+            device_drained: true,
+        })
     }
 }
 impl<S: Schema> Builder<S> {
@@ -81,9 +112,52 @@ impl<S: Schema> Builder<S> {
                 reason: "必须提供设备工厂",
             });
         }
-        let _schema = self.schema;
-        Err(Error::unimplemented("engine::create"))
+        if self.config.cache.enabled
+            || self.config.maintenance.auto_compaction
+            || self.config.storage.pre_allocate_log
+        {
+            return Err(Error::NotImplemented {
+                module: "engine::高级配置",
+            });
+        }
+        let id = StoreId::generate()?;
+        let schema = Arc::new(self.schema);
+        let index = crate::index::MemIndex::new(self.config.index.clone())?;
+        let log = crate::log::HybridLog::new(
+            self.config.log.clone(),
+            Arc::new(crate::schema::SharedValue(schema.clone())),
+        )?;
+        let epoch = crate::epoch::EpochManager::new()?;
+        let coordinator = crate::coordination::Coordinator::new(self.config.session.max_sessions)?;
+        let device =
+            self.device
+                .expect("设备工厂已检查")
+                .open(crate::device::DeviceOpenOptions {
+                    root: self.config.storage.root.clone(),
+                    create_new: true,
+                })?;
+        let storage = crate::storage::SegmentedStorage {
+            device: Arc::from(device),
+            root: self.config.storage.root.clone(),
+            segment_bytes: self.config.storage.segment_bytes,
+        };
+        let cache = crate::cache::ReadCache::new(self.config.cache.clone());
+        Ok(RasterKV {
+            inner: Arc::new(Engine {
+                id,
+                schema,
+                config: self.config,
+                index,
+                log,
+                epoch,
+                coordinator,
+                storage,
+                cache,
+                shutdown_state: crate::sync::Mutex::new(false),
+            }),
+        })
     }
+
     pub fn recover(self, _set: RecoverySet) -> Result<(RasterKV<S>, RecoveryReport), Error> {
         self.config.validate()?;
         if self.device.is_none() {

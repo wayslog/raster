@@ -15,10 +15,11 @@ pub(crate) use pending::SessionRuntime;
 
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
-    pub schema: S,
+    pub schema: std::sync::Arc<S>,
     pub config: Config,
     pub index: MemIndex,
-    pub log: HybridLog<S::Value>,
+    pub log: HybridLog<crate::schema::SharedValue<S>>,
+    pub shutdown_state: crate::sync::Mutex<bool>,
     pub cache: ReadCache,
     pub epoch: EpochManager,
     pub coordinator: Coordinator,

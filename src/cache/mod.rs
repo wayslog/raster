@@ -11,6 +11,12 @@ pub(crate) struct ReadCache {
     allocated_bytes: crate::sync::AtomicU64,
 }
 impl ReadCache {
+    pub fn new(config: CacheConfig) -> Self {
+        Self {
+            config,
+            allocated_bytes: crate::sync::AtomicU64::new(0),
+        }
+    }
     pub fn lookup(&self, _entry: EntrySnapshot) -> Result<Option<CacheEntry>, Error> {
         Err(Error::unimplemented("cache::lookup"))
     }
