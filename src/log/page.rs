@@ -96,6 +96,23 @@ impl PagePool {
             }),
         })
     }
+    pub fn tail(&self) -> Result<LogAddress, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+        let Some(id) = state.next_id.checked_sub(1) else {
+            return Ok(LogAddress(0));
+        };
+        let entry = state
+            .entries
+            .iter()
+            .find(|entry| entry.id.0 == id)
+            .ok_or(Error::InvalidState("最新逻辑页不存在"))?;
+        // 满页的尾部是下一页起点，不能使用要求页内偏移小于页长的转换。
+        LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
+            .checked_add(entry.next as u64)
+    }
     pub fn reserve(&self, len: usize, alignment: usize) -> Result<PageRange, Error> {
         if len == 0 || len > self.bytes || !alignment.is_power_of_two() || alignment > self.bytes {
             return Err(Error::CapacityExceeded);

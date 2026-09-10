@@ -12,15 +12,18 @@ pub(crate) struct Frontiers {
     pub flushed_until: LogAddress,
     pub tail: LogAddress,
 }
-/// 共享引擎的运行期边界；Frontiers 是读取后的逻辑快照。
-pub(crate) struct AtomicFrontiers {
-    begin: crate::sync::AtomicU64,
-    head: crate::sync::AtomicU64,
-    safe_head: crate::sync::AtomicU64,
-    read_only: crate::sync::AtomicU64,
-    safe_read_only: crate::sync::AtomicU64,
-    flushed_until: crate::sync::AtomicU64,
-    tail: crate::sync::AtomicU64,
+/// 同一控制锁维护边界快照与未发布预留，避免观察到互相矛盾的边界。
+#[derive(Default)]
+struct LogState {
+    frontiers: Frontiers,
+    reservations: usize,
+}
+struct ReservationActivity<'a>(&'a crate::sync::Mutex<LogState>);
+impl Drop for ReservationActivity<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.lock().expect("预留计数锁未中毒");
+        state.reservations -= 1;
+    }
 }
 pub(crate) struct PageState {
     pub id: PageId,
@@ -35,6 +38,7 @@ pub(crate) struct PageState {
 pub(crate) struct RecordReservation<'a, V: ValueLayout> {
     owner: &'a HybridLog<V>,
     value: value::PageValue<V>,
+    _activity: ReservationActivity<'a>,
 }
 impl<V: ValueLayout> RecordReservation<'_, V> {
     pub fn address(&self) -> Result<LogAddress, Error> {
@@ -71,6 +75,8 @@ impl<V: ValueLayout> RecordLease<V> {
 }
 pub(crate) struct HybridLog<V: ValueLayout> {
     pool: page::PagePool,
+    page_bytes: usize,
+    state: crate::sync::Mutex<LogState>,
     layout: Arc<V>,
     records: crate::sync::Mutex<BTreeMap<LogAddress, Arc<value::PageValue<V>>>>,
 }
@@ -78,12 +84,36 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn new(config: LogConfig, layout: Arc<V>) -> Result<Self, Error> {
         Ok(Self {
             pool: page::PagePool::new(config.page_bytes, config.memory_pages)?,
+            page_bytes: config.page_bytes,
+            state: crate::sync::Mutex::new(LogState::default()),
             layout,
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
     }
+    fn enter_reservation(&self) -> Result<ReservationActivity<'_>, Error> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        state.reservations = state
+            .reservations
+            .checked_add(1)
+            .ok_or(Error::CapacityExceeded)?;
+        Ok(ReservationActivity(&self.state))
+    }
+    pub fn frontiers(&self) -> Result<Frontiers, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        let mut result = state.frontiers;
+        result.tail = self.pool.tail()?;
+        Ok(result)
+    }
     pub fn reserve(&self, value: V::Owned) -> Result<RecordReservation<'_, V>, Error> {
+        let activity = self.enter_reservation()?;
         Ok(RecordReservation {
+            _activity: activity,
             owner: self,
             value: value::PageValue::initialize(&self.pool, self.layout.clone(), value)?,
         })
@@ -93,7 +123,9 @@ impl<V: ValueLayout> HybridLog<V> {
         key: &[u8],
         previous: Option<LogAddress>,
     ) -> Result<RecordReservation<'_, V>, Error> {
+        let activity = self.enter_reservation()?;
         Ok(RecordReservation {
+            _activity: activity,
             owner: self,
             value: value::PageValue::tombstone(&self.pool, self.layout.clone(), key, previous)?,
         })
@@ -104,7 +136,9 @@ impl<V: ValueLayout> HybridLog<V> {
         previous: Option<LogAddress>,
         value: V::Owned,
     ) -> Result<RecordReservation<'_, V>, Error> {
+        let activity = self.enter_reservation()?;
         Ok(RecordReservation {
+            _activity: activity,
             owner: self,
             value: value::PageValue::initialize_record(
                 &self.pool,
@@ -196,8 +230,33 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn release_page(&self, page: PageId, generation: Generation) -> Result<(), Error> {
         self.pool.release(page, generation)
     }
-    pub fn advance_read_only(&self, _target: LogAddress) -> Result<(), Error> {
-        Err(Error::unimplemented("log::advance"))
+    pub fn advance_read_only(&self, target: LogAddress) -> Result<(), Error> {
+        target.validate()?;
+        if !target.0.is_multiple_of(self.page_bytes as u64) {
+            return Err(Error::InvalidFormat("只读边界必须对齐到页"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        if target < state.frontiers.read_only || target > self.pool.tail()? {
+            return Err(Error::InvalidState("只读边界不能倒退或超过尾部"));
+        }
+        // 包括正在初始化、初始化完毕但尚未发布的预留。不能仅检查地址表。
+        if state.reservations != 0 {
+            return Err(Error::Busy);
+        }
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+        state.frontiers.read_only = target;
+        for (_, value) in records.range(..target) {
+            value.seal()?;
+        }
+        // 每条记录的 seal 与更新许可仲裁；失败时保留目标，但不推进安全边界。
+        state.frontiers.safe_read_only = target;
+        Ok(())
     }
     pub fn flush_step(&self, _budget: PollBudget) -> Result<Progress, Error> {
         Err(Error::unimplemented("log::flush"))
@@ -291,6 +350,67 @@ mod tests {
             unsafe { std::ptr::drop_in_place(p.as_ptr().cast::<Box<Resource>>().as_ptr()) };
             Ok(())
         }
+    }
+    #[test]
+    fn 未发布预留阻止冻结且放弃后可以推进() {
+        let log = log();
+        let pending = log.reserve(1).unwrap();
+        for value in 2..=8 {
+            log.finish_initialization(log.reserve(value).unwrap())
+                .unwrap();
+        }
+        assert_eq!(log.frontiers().unwrap().tail, LogAddress(64));
+        assert!(matches!(
+            log.advance_read_only(LogAddress(64)),
+            Err(Error::Busy)
+        ));
+        assert_eq!(log.frontiers().unwrap().safe_read_only, LogAddress(0));
+        drop(pending);
+        log.advance_read_only(LogAddress(64)).unwrap();
+        let frontiers = log.frontiers().unwrap();
+        assert_eq!(frontiers.read_only, LogAddress(64));
+        assert_eq!(frontiers.safe_read_only, LogAddress(64));
+        assert_eq!(frontiers.flushed_until, LogAddress(0));
+        assert!(log.advance_read_only(LogAddress(0)).is_err());
+        assert!(log.advance_read_only(LogAddress(65)).is_err());
+        assert!(log.advance_read_only(LogAddress(128)).is_err());
+        let lease = log.lease(LogAddress(8)).unwrap();
+        assert_eq!(lease.read(|value| value).unwrap(), 2);
+        assert!(lease.update(|_| Ok(())).is_err());
+    }
+    #[test]
+    fn 正在更新时冻结不推进安全边界且重试可完成() {
+        use std::sync::Barrier;
+        let log = log();
+        for value in 0..8 {
+            log.finish_initialization(log.reserve(value).unwrap())
+                .unwrap();
+        }
+        let entered = Barrier::new(2);
+        let leave = Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let lease = log.lease(LogAddress(0)).unwrap();
+                lease
+                    .update(|_| {
+                        entered.wait();
+                        leave.wait();
+                        Ok(())
+                    })
+                    .unwrap();
+            });
+            entered.wait();
+            assert!(matches!(
+                log.advance_read_only(LogAddress(64)),
+                Err(Error::Busy)
+            ));
+            let frontiers = log.frontiers().unwrap();
+            assert_eq!(frontiers.read_only, LogAddress(64));
+            assert_eq!(frontiers.safe_read_only, LogAddress(0));
+            leave.wait();
+        });
+        log.advance_read_only(LogAddress(64)).unwrap();
+        assert_eq!(log.frontiers().unwrap().safe_read_only, LogAddress(64));
     }
     #[test]
     fn 部分初始化失败自行清理且成功值仅销毁一次() {
