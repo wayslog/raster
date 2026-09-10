@@ -134,6 +134,43 @@ impl<V: ValueLayout> HybridLog<V> {
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
     }
+    /// 调用者须先验证并安装旧日志材料；这里只建立冷日志边界，不执行恢复 I/O。
+    pub fn from_checkpoint(
+        config: LogConfig,
+        layout: Arc<V>,
+        begin: LogAddress,
+        end: LogAddress,
+    ) -> Result<Self, Error> {
+        begin.validate()?;
+        end.validate()?;
+        if begin > end || config.page_bytes == 0 || !end.0.is_multiple_of(config.page_bytes as u64)
+        {
+            return Err(Error::InvalidFormat("恢复日志范围或尾部对齐无效"));
+        }
+        let pool = page::PagePool::new_at(
+            config.page_bytes,
+            config.memory_pages,
+            PageId(end.0 / config.page_bytes as u64),
+        )?;
+        Ok(Self {
+            pool,
+            page_bytes: config.page_bytes,
+            layout,
+            state: Arc::new(crate::sync::Mutex::new(LogState {
+                frontiers: Frontiers {
+                    begin,
+                    head: end,
+                    safe_head: end,
+                    read_only: end,
+                    safe_read_only: end,
+                    flushed_until: end,
+                    tail: end,
+                },
+                ..Default::default()
+            })),
+            records: crate::sync::Mutex::new(BTreeMap::new()),
+        })
+    }
     fn enter_reservation(&self) -> Result<ReservationActivity<'_>, Error> {
         let mut state = self
             .state
@@ -622,6 +659,58 @@ mod tests {
         drop(decoded);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         assert_eq!(destructors.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn 冷恢复日志边界一致且拒绝无效尾部() {
+        let config = LogConfig {
+            page_bytes: 256,
+            memory_pages: 2,
+            mutable_fraction: 0.5,
+        };
+        for (begin, end) in [(256, 0), (0, 255), (0, u64::MAX)] {
+            assert!(
+                HybridLog::from_checkpoint(
+                    config.clone(),
+                    Arc::new(AtomicU64Value),
+                    LogAddress(begin),
+                    LogAddress(end)
+                )
+                .is_err()
+            );
+        }
+        let log = HybridLog::from_checkpoint(
+            config,
+            Arc::new(AtomicU64Value),
+            LogAddress(128),
+            LogAddress(2048),
+        )
+        .unwrap();
+        let f = log.frontiers().unwrap();
+        assert_eq!(f.begin, LogAddress(128));
+        for boundary in [
+            f.tail,
+            f.head,
+            f.safe_head,
+            f.read_only,
+            f.safe_read_only,
+            f.flushed_until,
+        ] {
+            assert_eq!(boundary, LogAddress(2048));
+        }
+        assert!(log.lease(LogAddress(256)).is_err());
+        assert!(matches!(log.evict_next(), Err(Error::Busy)));
+        let address = log
+            .finish_initialization(
+                log.reserve_record(b"key", Some(LogAddress(256)), 17)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(address, LogAddress(2048));
+        assert_eq!(log.lease(address).unwrap().read(|v| v).unwrap(), 17);
+        assert_eq!(
+            log.lease(address).unwrap().previous(),
+            Some(LogAddress(256))
+        );
     }
     #[test]
     fn 检查点填充尾页不创建记录且后续分配不回填() {

@@ -1360,3 +1360,59 @@ fn 恢复清单解析阶段仍拒绝其他存储且损坏提交不会触发清�
             .contains(&"open:manifest".to_owned())
     );
 }
+
+#[test]
+fn 冷日志继续追加和刷盘不覆盖已安装的旧页帧() {
+    use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
+    let fixture = Fixture::new();
+    let old = frozen_log(&fixture);
+    let path = fixture
+        .root
+        .0
+        .join(fixture.storage.segment_path(0, Generation(0)));
+    let before = std::fs::read(&path).unwrap();
+    drop(old);
+    let log = HybridLog::from_checkpoint(
+        LogConfig {
+            page_bytes: 256,
+            memory_pages: 2,
+            mutable_fraction: 0.5,
+        },
+        Arc::new(AtomicU64Value),
+        LogAddress(0),
+        LogAddress(256),
+    )
+    .unwrap();
+    let next = log
+        .finish_initialization(
+            log.reserve_record(b"new", Some(LogAddress(0)), 29)
+                .unwrap()
+                .with_version(CheckpointVersion(23)),
+        )
+        .unwrap();
+    assert_eq!(next, LogAddress(256));
+    let end = log.pad_tail().unwrap();
+    log.advance_read_only(end).unwrap();
+    let mut flush = log
+        .begin_flush(&fixture.storage, CompletionRoute(97), CheckpointVersion(23))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !log.finish_flush(&fixture.storage, &mut flush).unwrap() {
+        assert!(Instant::now() < deadline);
+        if flush.submit_next(&fixture.storage).unwrap().is_some() {
+            flush
+                .accept(&fixture.storage, fixture.completion())
+                .unwrap();
+        }
+    }
+    let after = std::fs::read(path).unwrap();
+    assert_eq!(&after[..before.len()], before);
+    let frame = crate::format::PageFrame::decode(&after[before.len()..], PageId(1), 256).unwrap();
+    let records = frame.records().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].0, next);
+    assert_eq!(records[0].1.header.previous, Some(LogAddress(0)));
+    assert_eq!(records[0].1.header.version, CheckpointVersion(23));
+    assert_eq!(records[0].1.value, 29u64.to_le_bytes());
+    assert_eq!(log.frontiers().unwrap().flushed_until, LogAddress(512));
+}

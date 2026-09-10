@@ -96,6 +96,16 @@ impl PagePool {
             }),
         })
     }
+    /// 恢复时旧页全部由磁盘提供，首个内存页从给定逻辑页号开始。
+    pub fn new_at(bytes: usize, max_pages: usize, first: PageId) -> Result<Self, Error> {
+        let mut pool = Self::new(bytes, max_pages)?;
+        LogAddress::from_page_offset(first, 0, bytes as u64)?;
+        pool.state
+            .get_mut()
+            .map_err(|_| Error::InvalidState("页池锁中毒"))?
+            .next_id = first.0;
+        Ok(pool)
+    }
     pub fn generation(&self, page: PageId) -> Result<Generation, Error> {
         let state = self
             .state
@@ -113,9 +123,13 @@ impl PagePool {
             .state
             .lock()
             .map_err(|_| Error::InvalidState("页池锁中毒"))?;
-        let Some(id) = state.next_id.checked_sub(1) else {
-            return Ok(LogAddress(0));
-        };
+        if state.entries.is_empty() {
+            return LogAddress::from_page_offset(PageId(state.next_id), 0, self.bytes as u64);
+        }
+        let id = state
+            .next_id
+            .checked_sub(1)
+            .ok_or(Error::InvalidState("已分配页缺少逻辑编号"))?;
         let entry = state
             .entries
             .iter()
@@ -131,9 +145,13 @@ impl PagePool {
             .state
             .lock()
             .map_err(|_| Error::InvalidState("页池锁中毒"))?;
-        let Some(id) = state.next_id.checked_sub(1) else {
-            return Ok(LogAddress(0));
-        };
+        if state.entries.is_empty() {
+            return LogAddress::from_page_offset(PageId(state.next_id), 0, self.bytes as u64);
+        }
+        let id = state
+            .next_id
+            .checked_sub(1)
+            .ok_or(Error::InvalidState("已分配页缺少逻辑编号"))?;
         let entry = state
             .entries
             .iter_mut()
@@ -241,6 +259,23 @@ impl PagePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn 冷启动页号不占内存预算且尾部不会回到零() {
+        let pool = PagePool::new_at(64, 1, PageId(100)).unwrap();
+        assert_eq!(pool.tail().unwrap(), LogAddress(6400));
+        assert_eq!(pool.pad_tail().unwrap(), LogAddress(6400));
+        assert!(pool.generation(PageId(99)).is_err());
+        let range = pool.reserve(64, 8).unwrap();
+        assert_eq!(range.address().unwrap(), LogAddress(6400));
+        assert!(pool.reserve(8, 8).is_err());
+        let generation = range.generation();
+        drop(range);
+        pool.release(PageId(100), generation).unwrap();
+        let next = pool.reserve(8, 8).unwrap();
+        assert_eq!(next.address().unwrap(), LogAddress(6464));
+        assert_eq!(next.generation(), Generation(1));
+        assert!(PagePool::new_at(64, 1, PageId(u64::MAX)).is_err());
+    }
     #[test]
     fn 跨页后小记录也不能回填旧页且释放尾页不倒退() {
         let pool = PagePool::new(64, 2).unwrap();
