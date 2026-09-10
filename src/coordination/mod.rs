@@ -1,8 +1,10 @@
 //! 会话登记、双版本上下文与顶层动作仲裁；与安全回收 epoch 分开。
 use crate::types::*;
 use std::collections::BTreeMap;
+mod action;
+use action::ActiveAction;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     CheckpointFull,
     CheckpointIndex,
@@ -11,7 +13,7 @@ pub(crate) enum Action {
     Gc,
     GrowIndex,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     Rest,
     PrepareIndex,
@@ -27,11 +29,14 @@ pub(crate) enum Phase {
     GrowCopy,
     Failed,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SystemState {
+    pub id: Option<MaintenanceId>,
     pub action: Option<Action>,
     pub phase: Phase,
     pub version: CheckpointVersion,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SessionCut {
     pub session: SessionId,
     pub last_accepted: Option<Serial>,
@@ -42,11 +47,13 @@ struct Registration {
     last_accepted: Option<Serial>,
 }
 struct Registry {
+    system: SystemState,
+    action: Option<ActiveAction>,
+    next_action: u64,
     sessions: BTreeMap<SessionId, Registration>,
     closed: bool,
 }
 pub(crate) struct Coordinator {
-    state: crate::sync::Mutex<SystemState>,
     registry: crate::sync::Mutex<Registry>,
     max_sessions: usize,
 }
@@ -59,12 +66,15 @@ impl Coordinator {
             });
         }
         Ok(Self {
-            state: crate::sync::Mutex::new(SystemState {
-                action: None,
-                phase: Phase::Rest,
-                version: CheckpointVersion(0),
-            }),
             registry: crate::sync::Mutex::new(Registry {
+                system: SystemState {
+                    id: None,
+                    action: None,
+                    phase: Phase::Rest,
+                    version: CheckpointVersion(0),
+                },
+                action: None,
+                next_action: 0,
                 sessions: BTreeMap::new(),
                 closed: false,
             }),
@@ -89,8 +99,8 @@ impl Coordinator {
             .registry
             .lock()
             .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
-        if registry.closed {
-            return Err(Error::InvalidState("存储已关闭"));
+        if registry.closed || registry.system.phase == Phase::Failed {
+            return Err(Error::InvalidState("存储已关闭或协调动作失败"));
         }
         let entry = registry
             .sessions
@@ -111,21 +121,24 @@ impl Coordinator {
         if registry.sessions.values().any(|e| e.active) {
             return Err(Error::Busy);
         }
+        if registry.action.is_some() && registry.system.phase != Phase::Failed {
+            return Err(Error::Busy);
+        }
         registry.closed = true;
         Ok(())
     }
 
-    pub fn start_action(&self, _action: Action) -> Result<MaintenanceId, Error> {
-        Err(Error::unimplemented("coordination::start_action"))
-    }
     pub fn enroll(&self, session: SessionId) -> Result<(), Error> {
         session.validate()?;
         let mut registry = self
             .registry
             .lock()
             .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
-        if registry.closed {
-            return Err(Error::InvalidState("存储已关闭"));
+        if registry.closed || registry.system.phase == Phase::Failed {
+            return Err(Error::InvalidState("存储已关闭或协调动作失败"));
+        }
+        if registry.action.is_some() {
+            return Err(Error::Busy);
         }
         if registry
             .sessions
@@ -147,12 +160,6 @@ impl Coordinator {
             });
         Ok(())
     }
-    pub fn acknowledge(&self, _cut: SessionCut, _phase: Phase) -> Result<(), Error> {
-        Err(Error::unimplemented("coordination::acknowledge"))
-    }
-    pub fn fail_action(&self, _cause: Error) -> Result<(), Error> {
-        Err(Error::unimplemented("coordination::fail"))
-    }
     pub fn leave(&self, session: SessionId) -> Result<(), Error> {
         let mut registry = self
             .registry
@@ -164,6 +171,14 @@ impl Coordinator {
             .filter(|e| e.active)
             .ok_or(Error::InvalidState("会话未注册"))?;
         entry.active = false;
+        if let Some(action) = &mut registry.action
+            && action.participants.contains_key(&session)
+        {
+            action
+                .failure
+                .get_or_insert_with(|| std::sync::Arc::new(Error::SessionAbandoned));
+            registry.system.phase = Phase::Failed;
+        }
         Ok(())
     }
 }
