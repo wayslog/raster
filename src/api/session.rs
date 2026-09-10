@@ -157,8 +157,18 @@ impl<S: Schema> Session<S> {
             self.runtime.closing = true;
             self.complete_pending(WaitMode::Until(deadline))?;
             let participant = self.participant.expect("参与者存在");
+            let current = (
+                self.runtime.current.version,
+                self.runtime.cut(self.runtime.current.version)?,
+            );
+            let previous = self
+                .runtime
+                .previous
+                .as_ref()
+                .map(|old| self.runtime.cut(old.version).map(|cut| (old.version, cut)))
+                .transpose()?;
+            self.engine.coordinator.leave_drained(current, previous)?;
             self.engine.epoch.unregister(participant)?;
-            self.engine.coordinator.leave(self.id)?;
             self.participant = None;
         }
         Ok(CloseReport {

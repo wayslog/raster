@@ -128,7 +128,7 @@ impl Coordinator {
         Ok(())
     }
 
-    pub fn enroll(&self, session: SessionId) -> Result<(), Error> {
+    pub fn enroll(&self, session: SessionId) -> Result<CheckpointVersion, Error> {
         session.validate()?;
         let mut registry = self
             .registry
@@ -158,7 +158,7 @@ impl Coordinator {
                 active: true,
                 last_accepted: None,
             });
-        Ok(())
+        Ok(registry.system.version)
     }
     pub fn leave(&self, session: SessionId) -> Result<(), Error> {
         let mut registry = self

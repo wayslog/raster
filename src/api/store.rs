@@ -50,7 +50,7 @@ impl<S: Schema> RasterKV<S> {
             Some(id) => id,
             None => SessionId::generate()?,
         };
-        self.inner.coordinator.enroll(id)?;
+        let version = self.inner.coordinator.enroll(id)?;
         let participant = match self.inner.epoch.register() {
             Ok(id) => id,
             Err(error) => {
@@ -63,7 +63,7 @@ impl<S: Schema> RasterKV<S> {
             engine: self.inner.clone(),
             id,
             participant: Some(participant),
-            runtime: crate::engine::SessionRuntime::new(id, last_accepted),
+            runtime: crate::engine::SessionRuntime::new(id, last_accepted, version),
             local: std::marker::PhantomData,
         })
     }

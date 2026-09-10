@@ -1254,3 +1254,255 @@ fn 并发关闭只允许一个推进者且另一调用立即返回繁忙() {
     assert_eq!(probe.shutdowns.load(SeqCst), 1);
     assert_eq!(probe.submitted.load(SeqCst), probe.returned.load(SeqCst));
 }
+
+#[test]
+fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成() {
+    let mut store = setup();
+    let config = &mut Arc::get_mut(&mut store.inner).unwrap().config;
+    config.session.max_pending = 2;
+    config.session.max_results = 2;
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(mut old_ticket) = session
+        .read(Serial(7), request(0, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应挂起")
+    };
+    let old_id = old_ticket.id();
+    assert!(
+        session
+            .runtime
+            .switch_version(CheckpointVersion(1))
+            .unwrap()
+    );
+    let old = session.runtime.previous.as_ref().unwrap();
+    let task = old.tasks.values().next().unwrap();
+    assert_eq!(task.id(), old_id);
+    assert_eq!(task.version(), CheckpointVersion(0));
+    assert_eq!(task.serial(), Serial(7));
+    assert_eq!(old.last_accepted, Some(Serial(7)));
+    assert!(session.runtime.current.tasks.is_empty());
+    assert!(matches!(
+        session.runtime.switch_version(CheckpointVersion(2)),
+        Err(Error::Busy)
+    ));
+    assert_eq!(session.runtime.current.version, CheckpointVersion(1));
+    let Submission::Pending(mut new_ticket) = session
+        .read(Serial(9), request(1, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应挂起")
+    };
+    assert_eq!(
+        session
+            .runtime
+            .current
+            .tasks
+            .values()
+            .next()
+            .unwrap()
+            .version(),
+        CheckpointVersion(1)
+    );
+    assert_eq!(
+        session
+            .runtime
+            .cut(CheckpointVersion(0))
+            .unwrap()
+            .last_accepted,
+        Some(Serial(7))
+    );
+    assert_eq!(session.last_accepted(), Some(Serial(9)));
+    assert_eq!(session.runtime.pending(), 2);
+    assert!(
+        matches!(session.wait(&mut new_ticket,wait_deadline()).unwrap(),Ok(Outcome::Success(value)) if *value==1)
+    );
+    assert!(
+        matches!(session.wait(&mut old_ticket,wait_deadline()).unwrap(),Ok(Outcome::Success(value)) if *value==0)
+    );
+    assert_eq!(calls.get(), 2);
+    assert_eq!(
+        session
+            .runtime
+            .cut(CheckpointVersion(0))
+            .unwrap()
+            .old_pending,
+        0
+    );
+    assert_eq!(
+        session
+            .runtime
+            .cut(CheckpointVersion(0))
+            .unwrap()
+            .last_accepted,
+        Some(Serial(7))
+    );
+    assert!(
+        !session
+            .runtime
+            .switch_version(CheckpointVersion(1))
+            .unwrap()
+    );
+    assert!(
+        session
+            .runtime
+            .switch_version(CheckpointVersion(3))
+            .is_err()
+    );
+    assert!(
+        session
+            .runtime
+            .switch_version(CheckpointVersion(2))
+            .unwrap()
+    );
+    assert_eq!(
+        session.runtime.previous.as_ref().unwrap().version,
+        CheckpointVersion(1)
+    );
+    assert_eq!(
+        session
+            .runtime
+            .cut(CheckpointVersion(1))
+            .unwrap()
+            .last_accepted,
+        Some(Serial(9))
+    );
+    assert!(session.runtime.cut(CheckpointVersion(0)).is_err());
+    session.close(wait_deadline()).unwrap();
+    store.shutdown(wait_deadline()).unwrap();
+}
+#[test]
+fn 维护版本前进后新注册会话继承原子返回的版本() {
+    use crate::coordination::{Action, Phase};
+    let store = setup();
+    let coordinator = &store.inner.coordinator;
+    let id = coordinator.start_action(Action::CheckpointLog).unwrap();
+    for phase in [
+        Phase::Prepare,
+        Phase::InProgress,
+        Phase::WaitPending,
+        Phase::WaitFlush,
+    ] {
+        coordinator.advance(id, phase).unwrap();
+    }
+    coordinator.finish_action(id).unwrap();
+    // 此处只驱动协调器组件，没有写出检查点，也没有公开成功检查点 API。
+    let session = store.start_session(SessionOptions::default()).unwrap();
+    assert_eq!(session.runtime.current.version, CheckpointVersion(1));
+    assert!(session.runtime.previous.is_none());
+}
+
+#[test]
+fn 正常关闭保留动作前和动作中的会话切分且不伪造放弃失败() {
+    use crate::coordination::{Action, Phase};
+    let store = setup();
+    let mut first = store.start_session(SessionOptions::default()).unwrap();
+    let first_id = first.id();
+    let calls = Rc::new(Cell::new(0));
+    first
+        .read(Serial(7), request(59, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    first.close(wait_deadline()).unwrap();
+    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let second_id = second.id();
+    second
+        .read(Serial(11), request(59, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    let coordinator = &store.inner.coordinator;
+    let id = coordinator.start_action(Action::CheckpointLog).unwrap();
+    assert!(matches!(
+        coordinator.advance(id, Phase::Prepare),
+        Err(Error::Busy)
+    ));
+    second.close(wait_deadline()).unwrap();
+    assert!(coordinator.action_failure(id).unwrap().is_none());
+    for phase in [Phase::Prepare, Phase::InProgress, Phase::WaitPending] {
+        coordinator.advance(id, phase).unwrap();
+    }
+    let cuts = coordinator.cuts(id).unwrap();
+    assert!(cuts.iter().any(|cut| cut.session == first_id
+        && cut.last_accepted == Some(Serial(7))
+        && cut.old_pending == 0));
+    assert!(cuts.iter().any(|cut| cut.session == second_id
+        && cut.last_accepted == Some(Serial(11))
+        && cut.old_pending == 0));
+    coordinator.advance(id, Phase::WaitFlush).unwrap();
+    coordinator.finish_action(id).unwrap();
+    store.shutdown(wait_deadline()).unwrap();
+}
+
+#[test]
+fn 切分后接受的新序号不进入旧检查点关闭切分() {
+    use crate::coordination::{Action, Phase};
+    let mut store = setup();
+    let config = &mut Arc::get_mut(&mut store.inner).unwrap().config;
+    config.session.max_pending = 2;
+    config.session.max_results = 2;
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(mut ticket) = session
+        .read(Serial(7), request(0, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应挂起")
+    };
+    let coordinator = &store.inner.coordinator;
+    let id = coordinator.start_action(Action::CheckpointLog).unwrap();
+    coordinator
+        .acknowledge(
+            id,
+            session.runtime.cut(CheckpointVersion(0)).unwrap(),
+            Phase::Prepare,
+        )
+        .unwrap();
+    coordinator.advance(id, Phase::Prepare).unwrap();
+    session
+        .runtime
+        .switch_version(CheckpointVersion(1))
+        .unwrap();
+    coordinator
+        .acknowledge(
+            id,
+            session.runtime.cut(CheckpointVersion(0)).unwrap(),
+            Phase::InProgress,
+        )
+        .unwrap();
+    coordinator.advance(id, Phase::InProgress).unwrap();
+    assert!(matches!(
+        session
+            .read(Serial(9), request(59, &calls), ReadOptions::default())
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    session.close(wait_deadline()).unwrap();
+    assert!(
+        matches!(session.wait(&mut ticket,wait_deadline()).unwrap(),Ok(Outcome::Success(value)) if *value==0)
+    );
+    coordinator.advance(id, Phase::WaitPending).unwrap();
+    assert!(
+        coordinator
+            .cuts(id)
+            .unwrap()
+            .iter()
+            .any(|cut| cut.session == session.id()
+                && cut.last_accepted == Some(Serial(7))
+                && cut.old_pending == 0)
+    );
+    coordinator.advance(id, Phase::WaitFlush).unwrap();
+    coordinator.finish_action(id).unwrap();
+    let next = coordinator.start_action(Action::CheckpointLog).unwrap();
+    assert!(
+        coordinator
+            .cuts(next)
+            .unwrap()
+            .iter()
+            .any(|cut| cut.session == session.id() && cut.last_accepted == Some(Serial(9)))
+    );
+}

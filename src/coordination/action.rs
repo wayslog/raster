@@ -3,6 +3,7 @@ use super::*;
 use std::sync::Arc;
 #[derive(Default)]
 pub(super) struct Participant {
+    departed: bool,
     acknowledged: Option<Phase>,
     cut: Option<SessionCut>,
 }
@@ -10,6 +11,7 @@ pub(super) struct ActiveAction {
     id: MaintenanceId,
     pub participants: BTreeMap<SessionId, Participant>,
     pub failure: Option<Arc<Error>>,
+    completed: Vec<SessionCut>,
 }
 fn barrier(phase: Phase) -> bool {
     matches!(
@@ -72,10 +74,21 @@ impl Coordinator {
             .filter(|(_, s)| s.active)
             .map(|(id, _)| (*id, Participant::default()))
             .collect();
+        let completed = registry
+            .sessions
+            .iter()
+            .filter(|(_, s)| !s.active)
+            .map(|(id, s)| SessionCut {
+                session: *id,
+                last_accepted: s.last_accepted,
+                old_pending: 0,
+            })
+            .collect();
         registry.action = Some(ActiveAction {
             id,
             participants,
             failure: None,
+            completed,
         });
         registry.next_action = next;
         registry.system.id = Some(id);
@@ -154,7 +167,7 @@ impl Coordinator {
             && action
                 .participants
                 .values()
-                .any(|p| p.acknowledged != Some(expected))
+                .any(|p| !p.departed && p.acknowledged != Some(expected))
         {
             return Err(Error::Busy);
         }
@@ -223,6 +236,79 @@ impl Coordinator {
             .failure
             .clone())
     }
+    /// 只有拥有会话的线程排空两个上下文后调用；退出参与者保留切分而不删除。
+    pub fn leave_drained(
+        &self,
+        current: (CheckpointVersion, SessionCut),
+        previous: Option<(CheckpointVersion, SessionCut)>,
+    ) -> Result<(), Error> {
+        let mut registry = self
+            .registry
+            .lock()
+            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+        let session = current.1.session;
+        if current.1.old_pending != 0
+            || previous.is_some_and(|(_, cut)| cut.old_pending != 0 || cut.session != session)
+        {
+            return Err(Error::Busy);
+        }
+        let registered = registry
+            .sessions
+            .get(&session)
+            .filter(|s| s.active)
+            .ok_or(Error::InvalidState("会话未注册"))?;
+        if current.1.last_accepted != registered.last_accepted {
+            return Err(Error::InvalidState("关闭会话的已接受序号不匹配"));
+        }
+        let system = registry.system;
+        if let Some(action) = &mut registry.action {
+            let participant = action
+                .participants
+                .get_mut(&session)
+                .ok_or(Error::InvalidState("会话不属于动作参与集合"))?;
+            if action.failure.is_none() {
+                let version = if matches!(
+                    system.action,
+                    Some(Action::CheckpointFull | Action::CheckpointLog)
+                ) && matches!(
+                    system.phase,
+                    Phase::InProgress | Phase::WaitPending | Phase::WaitFlush | Phase::Publish
+                ) {
+                    CheckpointVersion(
+                        system
+                            .version
+                            .0
+                            .checked_sub(1)
+                            .ok_or(Error::InvalidState("检查点旧版本不存在"))?,
+                    )
+                } else {
+                    system.version
+                };
+                let cut = if current.0 == version {
+                    current.1
+                } else {
+                    previous
+                        .filter(|(v, _)| *v == version)
+                        .ok_or(Error::InvalidState("关闭会话缺少旧版本切分"))?
+                        .1
+                };
+                if participant
+                    .cut
+                    .is_some_and(|old| old.last_accepted != cut.last_accepted)
+                {
+                    return Err(Error::InvalidState("关闭会话改变已固定切分"));
+                }
+                participant.cut = Some(cut);
+            }
+            participant.departed = true;
+        }
+        registry
+            .sessions
+            .get_mut(&session)
+            .expect("已验证会话存在")
+            .active = false;
+        Ok(())
+    }
     pub fn cuts(&self, id: MaintenanceId) -> Result<Vec<SessionCut>, Error> {
         let registry = self
             .registry
@@ -233,11 +319,12 @@ impl Coordinator {
             .as_ref()
             .filter(|a| a.id == id)
             .ok_or(Error::InvalidState("维护动作不匹配"))?;
-        action
-            .participants
-            .values()
-            .map(|p| p.cut.ok_or(Error::Busy))
-            .collect()
+        let mut cuts = action.completed.clone();
+        for participant in action.participants.values() {
+            cuts.push(participant.cut.ok_or(Error::Busy)?);
+        }
+        cuts.sort_unstable_by_key(|cut| cut.session);
+        Ok(cuts)
     }
 }
 
