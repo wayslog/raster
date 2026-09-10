@@ -45,12 +45,14 @@ impl<S: Schema> Engine<S> {
                 .filter(|lease| !lease.is_tombstone())
             {
                 effect = Effect::Unknown;
-                match lease.update(|view| request.update_in_place(ValueUpdate { view }))? {
-                    UpdateDecision::Updated(output) => {
+                match lease
+                    .update_if_mutable(|view| request.update_in_place(ValueUpdate { view }))?
+                {
+                    Some(UpdateDecision::Updated(output)) => {
                         effect = Effect::Applied;
                         return Ok(Outcome::Success(output));
                     }
-                    UpdateDecision::Append => effect = Effect::NotApplied,
+                    Some(UpdateDecision::Append) | None => effect = Effect::NotApplied,
                 }
                 lease.read(|view| request.copy_update(ValueRead { view }))??
             } else {

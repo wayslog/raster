@@ -104,3 +104,6 @@ impl<S: Schema> Engine<S> {
         }
     }
 }
+
+#[cfg(test)]
+mod frozen_tests;

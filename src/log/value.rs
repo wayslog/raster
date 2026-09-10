@@ -218,9 +218,17 @@ impl<V: ValueLayout> PageValue<V> {
         &self,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
     ) -> Result<R, Error> {
+        self.update_if_mutable(f)?
+            .ok_or(Error::InvalidState("记录已停止更新"))
+    }
+    /// None 表示在用户回调执行前已冻结；检查与 seal 使用同一个仲裁门。
+    pub fn update_if_mutable<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
+    ) -> Result<Option<R>, Error> {
         self.ready()?;
         if self.sealed.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("记录已停止更新"));
+            return Ok(None);
         }
         let _shared;
         let _exclusive;
@@ -233,13 +241,13 @@ impl<V: ValueLayout> PageValue<V> {
         }
         self.ready()?;
         if self.sealed.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("记录已停止更新"));
+            return Ok(None);
         }
         let result = catch_unwind(AssertUnwindSafe(|| {
             f(self.layout.update(permit!(self, UpdatePermit))?)
         }));
         match result {
-            Ok(value) => value,
+            Ok(value) => value.map(Some),
             Err(panic) => {
                 self.failed.store(true, Ordering::SeqCst);
                 resume_unwind(panic)

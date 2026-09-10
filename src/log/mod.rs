@@ -60,6 +60,12 @@ impl<V: ValueLayout> RecordLease<V> {
     ) -> Result<R, Error> {
         self.value.update(f)
     }
+    pub fn update_if_mutable<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
+    ) -> Result<Option<R>, Error> {
+        self.value.update_if_mutable(f)
+    }
     pub fn is_tombstone(&self) -> bool {
         self.value.is_tombstone()
     }
