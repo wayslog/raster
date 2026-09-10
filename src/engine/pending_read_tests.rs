@@ -1167,3 +1167,90 @@ fn 原生文件存储关闭排空已启动页并保留可校验帧() {
         LogAddress(4096)
     );
 }
+
+#[test]
+fn 单位预算公平推进多请求且排空后未收结果仍施加背压() {
+    let mut store = setup();
+    let config = &mut Arc::get_mut(&mut store.inner).unwrap().config;
+    config.session.max_pending = 3;
+    config.session.max_results = 3;
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let mut tickets = Vec::new();
+    for key in 0..3 {
+        let Submission::Pending(ticket) = session
+            .read(
+                Serial(key * 2),
+                request(key, &calls),
+                ReadOptions::default(),
+            )
+            .map_err(|r| r.reason)
+            .unwrap()
+        else {
+            panic!("应挂起")
+        };
+        tickets.push(ticket);
+    }
+    assert!(
+        session
+            .read(Serial(6), request(3, &calls), ReadOptions::default())
+            .is_err()
+    );
+    assert_eq!(session.last_accepted(), Some(Serial(4)));
+    let budget = PollBudget(std::num::NonZeroUsize::new(1).unwrap());
+    let deadline = wait_deadline();
+    let mut completed = 0;
+    while completed != 3 {
+        assert!(!deadline.expired(), "单位预算不得饿死其他请求");
+        let progress = session.poll(budget).unwrap();
+        assert!(progress.completed <= 1);
+        completed += progress.completed;
+        assert_eq!(progress.remaining, 3 - completed);
+    }
+    assert_eq!(calls.get(), 3);
+    assert_eq!(
+        session
+            .complete_pending(WaitMode::Until(wait_deadline()))
+            .unwrap(),
+        DrainReport::Drained
+    );
+    assert!(
+        session
+            .read(Serial(6), request(59, &calls), ReadOptions::default())
+            .is_err()
+    );
+    assert_eq!(session.last_accepted(), Some(Serial(4)));
+    assert!(
+        matches!(tickets[0].try_take(), Ok(TicketState::Ready(Ok(Outcome::Success(value)))) if *value == 0)
+    );
+    assert!(
+        matches!(session.read(Serial(6), request(59, &calls), ReadOptions::default()).map_err(|r|r.reason).unwrap(), Submission::Ready(Ok(Outcome::Success(value))) if *value == 59)
+    );
+    session.close(wait_deadline()).unwrap();
+    for (key, ticket) in tickets.iter_mut().enumerate().skip(1) {
+        assert!(
+            matches!(session.wait(ticket, wait_deadline()).unwrap(), Ok(Outcome::Success(value)) if *value == key as u64)
+        );
+    }
+    store.shutdown(wait_deadline()).unwrap();
+}
+
+#[test]
+fn 并发关闭只允许一个推进者且另一调用立即返回繁忙() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (store, probe, _) = shutdown_setup();
+    probe.paused.store(true, SeqCst);
+    let worker_store = store.clone();
+    let worker = std::thread::spawn(move || worker_store.shutdown(wait_deadline()));
+    let deadline = wait_deadline();
+    while probe.submitted.load(SeqCst) == 0 {
+        assert!(!deadline.expired(), "关闭线程应开始提交后台 I/O");
+        std::thread::yield_now();
+    }
+    let concurrent = store.shutdown(wait_deadline());
+    probe.paused.store(false, SeqCst);
+    assert!(matches!(concurrent, Err(Error::Busy)));
+    assert!(worker.join().unwrap().unwrap().device_drained);
+    assert_eq!(probe.shutdowns.load(SeqCst), 1);
+    assert_eq!(probe.submitted.load(SeqCst), probe.returned.load(SeqCst));
+}
