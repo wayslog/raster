@@ -103,6 +103,15 @@ permit!(DropPermit, "最后访问和设备引用已结束后的独占销毁许�
 
 /// 活跃值表示与磁盘格式的转换接口。
 ///
+/// 原子更新视图不能超出许可寿命：
+/// ```compile_fail
+/// use raster::schema::{ValueLayout, builtin::AtomicU64Value, value::UpdatePermit};
+/// fn escape<'a>(layout: &'a AtomicU64Value, permit: UpdatePermit<'a>)
+///     -> &'static std::sync::atomic::AtomicU64 {
+///     layout.update(permit).unwrap()
+/// }
+/// ```
+///
 /// # Safety
 /// 实现必须校验尺寸与对齐，只在许可范围内访问；返回视图不得超过许可寿命。
 /// 并发原子访问不得混用普通字节读取；初始化失败须可清理，销毁不得重复。

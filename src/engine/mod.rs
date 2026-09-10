@@ -18,7 +18,7 @@ pub(crate) struct Engine<S: Schema> {
     pub schema: S,
     pub config: Config,
     pub index: MemIndex,
-    pub log: HybridLog,
+    pub log: HybridLog<S::Value>,
     pub cache: ReadCache,
     pub epoch: EpochManager,
     pub coordinator: Coordinator,

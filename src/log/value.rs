@@ -19,6 +19,7 @@ pub(crate) struct PageValue<V: ValueLayout> {
     initialized: bool,
     gate: MutationGate,
     failed: AtomicBool,
+    sealed: AtomicBool,
 }
 macro_rules! permit {
     ($owner:expr,$name:ident) => {{
@@ -42,6 +43,7 @@ impl<V: ValueLayout> PageValue<V> {
             initialized: false,
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
+            sealed: AtomicBool::new(false),
         };
         owner.layout.initialize(permit!(owner, InitPermit), value)?;
         owner.initialized = true;
@@ -64,12 +66,16 @@ impl<V: ValueLayout> PageValue<V> {
             initialized: false,
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
+            sealed: AtomicBool::new(false),
         };
         owner
             .layout
             .decode_initialize(encoded, permit!(owner, InitPermit))?;
         owner.initialized = true;
         Ok(owner)
+    }
+    pub fn generation(&self) -> Generation {
+        self.range.as_ref().expect("值范围存在").generation()
     }
     pub fn address(&self) -> Result<LogAddress, Error> {
         self.range.as_ref().expect("值范围存在").address()
@@ -92,6 +98,9 @@ impl<V: ValueLayout> PageValue<V> {
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
     ) -> Result<R, Error> {
         self.ready()?;
+        if self.sealed.load(Ordering::SeqCst) {
+            return Err(Error::InvalidState("记录已停止更新"));
+        }
         let _shared;
         let _exclusive;
         if self.layout.concurrent_updates() {
@@ -102,6 +111,9 @@ impl<V: ValueLayout> PageValue<V> {
             _shared = None;
         }
         self.ready()?;
+        if self.sealed.load(Ordering::SeqCst) {
+            return Err(Error::InvalidState("记录已停止更新"));
+        }
         let result = catch_unwind(AssertUnwindSafe(|| {
             f(self.layout.update(permit!(self, UpdatePermit))?)
         }));
@@ -112,6 +124,11 @@ impl<V: ValueLayout> PageValue<V> {
                 resume_unwind(panic)
             }
         }
+    }
+    pub fn seal(&self) -> Result<(), Error> {
+        let _gate = self.gate.try_replace()?;
+        self.sealed.store(true, Ordering::SeqCst);
+        Ok(())
     }
     pub fn encode(&self, output: &mut [u8]) -> Result<(), Error> {
         self.ready()?;
