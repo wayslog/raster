@@ -47,6 +47,12 @@ impl<S: Schema> Engine<S> {
                 Err(error) => Err(error),
             };
         }
+        if self
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(false);
+        }
         let frontiers = self.log.frontiers()?;
         if frontiers.head < frontiers.flushed_until || frontiers.safe_head < frontiers.head {
             match self.log.evict_next() {
@@ -94,5 +100,45 @@ impl<S: Schema> Engine<S> {
                 }
             }
         }
+    }
+}
+
+impl<S: Schema> Engine<S> {
+    /// 关闭已阻止注册新会话；只完成已启动的后台页，不编码新的页。
+    pub(crate) fn drain_storage(&self, deadline: Deadline) -> Result<(), Error> {
+        loop {
+            let active = match self.storage_progress.try_lock() {
+                Ok(state) => state.flush.is_some(),
+                Err(std::sync::TryLockError::WouldBlock) => true,
+                Err(_) => return Err(Error::InvalidState("后台日志推进锁中毒")),
+            };
+            if !active || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(());
+            }
+            if deadline.expired() {
+                return Err(Error::DeadlineExceeded);
+            }
+            self.io.poll(&*self.storage.device, PollBudget::default())?;
+            self.progress_storage()?;
+            std::thread::yield_now();
+        }
+    }
+    /// 仅在设备 shutdown 成功、所有在途缓冲归还后调用。
+    pub(crate) fn release_stopped_storage(&self) -> Result<(), Error> {
+        let mut state = self
+            .storage_progress
+            .try_lock()
+            .map_err(|error| match error {
+                std::sync::TryLockError::WouldBlock => Error::Busy,
+                std::sync::TryLockError::Poisoned(_) => Error::InvalidState("后台日志推进锁中毒"),
+            })?;
+        if let Some((id, task)) = &mut state.flush {
+            task.discard_after_device_shutdown()?;
+            self.io.release(*id)?;
+            state.flush = None;
+        }
+        // 会话放弃的历史路由仍可能有完成；返回的拥有型缓冲在此释放。
+        while self.io.poll(&*self.storage.device, PollBudget::default())? != 0 {}
+        Ok(())
     }
 }

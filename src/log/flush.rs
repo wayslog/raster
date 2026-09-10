@@ -62,6 +62,22 @@ impl PageFlush {
         }
         self.write.submit_next(storage)
     }
+    /// 调用者必须先确认设备 shutdown 已排空；丢弃失败任务不推进刷盘边界。
+    pub(crate) fn discard_after_device_shutdown(&mut self) -> Result<(), Error> {
+        let mut state = self
+            .control
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        if state
+            .flush
+            .as_ref()
+            .is_some_and(|token| Arc::ptr_eq(token, &self.token))
+        {
+            state.flush = None;
+        }
+        self.terminal = true;
+        Ok(())
+    }
     fn check_storage(&self, storage: &SegmentedStorage) -> Result<(), Error> {
         if !Arc::ptr_eq(&self.storage, &storage.identity) {
             return Err(Error::InvalidState("刷盘属于其他存储"));

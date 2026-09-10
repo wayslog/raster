@@ -21,6 +21,7 @@ pub(crate) struct Engine<S: Schema> {
     pub storage_progress: std::sync::Mutex<storage_progress::StorageProgress>,
     pub operations: Vec<crate::sync::Mutex<()>>,
     pub failed: std::sync::atomic::AtomicBool,
+    pub shutdown_requested: std::sync::atomic::AtomicBool,
     pub schema: std::sync::Arc<S>,
     pub config: Config,
     pub index: MemIndex,

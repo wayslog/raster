@@ -86,12 +86,32 @@ impl<S: Schema> RasterKV<S> {
         let mut done = self
             .inner
             .shutdown_state
-            .lock()
-            .map_err(|_| Error::InvalidState("关闭锁中毒"))?;
+            .try_lock()
+            .map_err(|error| match error {
+                std::sync::TryLockError::WouldBlock => Error::Busy,
+                std::sync::TryLockError::Poisoned(_) => Error::InvalidState("关闭锁中毒"),
+            })?;
         if !*done {
             self.inner.coordinator.shutdown()?;
+            self.inner
+                .shutdown_requested
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let failure = match self.inner.drain_storage(deadline) {
+                Ok(()) => None,
+                Err(Error::DeadlineExceeded) => return Err(Error::DeadlineExceeded),
+                Err(error) => {
+                    self.inner
+                        .failed
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    Some(error)
+                }
+            };
             self.inner.storage.device.shutdown(deadline)?;
+            self.inner.release_stopped_storage()?;
             *done = true;
+            if let Some(error) = failure {
+                return Err(error);
+            }
         }
         Ok(ShutdownReport {
             device_drained: true,
@@ -169,6 +189,7 @@ impl<S: Schema> Builder<S> {
                 shutdown_state: crate::sync::Mutex::new(false),
                 operations: (0..64).map(|_| crate::sync::Mutex::new(())).collect(),
                 failed: std::sync::atomic::AtomicBool::new(false),
+                shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             }),
         })
     }

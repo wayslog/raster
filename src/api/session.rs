@@ -84,6 +84,9 @@ impl<S: Schema> Session<S> {
         Err(Error::unimplemented("coordination::refresh"))
     }
     pub fn poll(&mut self, budget: PollBudget) -> Result<Progress, Error> {
+        if self.participant.is_none() {
+            return Ok(Progress::default());
+        }
         self.engine.poll_session(&mut self.runtime, budget)
     }
     pub fn try_take<T: 'static>(
@@ -95,15 +98,51 @@ impl<S: Schema> Session<S> {
         }
         ticket.try_take()
     }
+    /// 已完成结果可立即收取；截止时间只限制等待，不消费仍在途的票据。
     pub fn wait<T: 'static>(
         &mut self,
-        _ticket: &mut Ticket<T>,
-        _deadline: Deadline,
+        ticket: &mut Ticket<T>,
+        deadline: Deadline,
     ) -> Result<OperationResult<T>, Error> {
-        Err(Error::unimplemented("engine::wait"))
+        loop {
+            match self.try_take(ticket).map_err(|error| match error {
+                TicketError::WrongSession => Error::InvalidState("票据不属于该存储或会话"),
+                TicketError::AlreadyTaken => Error::InvalidState("票据结果已收取"),
+                TicketError::AlreadyCompleted => Error::InvalidState("票据已经完成"),
+                TicketError::BorrowConflict => Error::InvalidState("票据存在借用冲突"),
+            })? {
+                TicketState::Ready(result) => return Ok(result),
+                TicketState::Pending => {}
+            }
+            if deadline.expired() {
+                return Err(Error::DeadlineExceeded);
+            }
+            self.poll(PollBudget::default())?;
+            std::thread::yield_now();
+        }
     }
-    pub fn complete_pending(&mut self, _mode: WaitMode) -> Result<DrainReport, Error> {
-        Err(Error::unimplemented("engine::drain"))
+    /// 只排空会话请求；Drained 不声明后台刷盘或检查点完成。
+    pub fn complete_pending(&mut self, mode: WaitMode) -> Result<DrainReport, Error> {
+        match mode {
+            WaitMode::Once => {
+                let progress = self.poll(PollBudget::default())?;
+                Ok(if progress.remaining == 0 {
+                    DrainReport::Drained
+                } else {
+                    DrainReport::Pending(progress)
+                })
+            }
+            WaitMode::Until(deadline) => {
+                while self.runtime.pending() != 0 {
+                    if deadline.expired() {
+                        return Err(Error::DeadlineExceeded);
+                    }
+                    self.poll(PollBudget::default())?;
+                    std::thread::yield_now();
+                }
+                Ok(DrainReport::Drained)
+            }
+        }
     }
     pub fn wait_maintenance<R>(
         &mut self,
@@ -116,13 +155,7 @@ impl<S: Schema> Session<S> {
     pub fn close(&mut self, deadline: Deadline) -> Result<CloseReport, Error> {
         if self.participant.is_some() {
             self.runtime.closing = true;
-            if self.runtime.pending() != 0 {
-                return Err(if deadline.expired() {
-                    Error::DeadlineExceeded
-                } else {
-                    Error::Busy
-                });
-            }
+            self.complete_pending(WaitMode::Until(deadline))?;
             let participant = self.participant.expect("参与者存在");
             self.engine.epoch.unregister(participant)?;
             self.engine.coordinator.leave(self.id)?;
