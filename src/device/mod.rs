@@ -112,5 +112,4 @@ pub enum IoOutcome {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[allow(dead_code)] // P4.2 工作线程队列正在接入。
 mod local_files;

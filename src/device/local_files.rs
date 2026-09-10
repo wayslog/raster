@@ -150,12 +150,15 @@ impl LocalFiles {
             }
             IoOperation::SyncDirectory(path) => {
                 let directory = if path.as_os_str().is_empty() {
-                    self.root.open_dir(".")?
+                    self.root.open(".")?
                 } else {
                     valid(&path)?;
-                    self.root.open_dir(path)?
+                    self.root.open(path)?
                 };
-                directory.into_std_file().sync_all()?;
+                if !directory.metadata()?.is_dir() {
+                    return Err(Error::InvalidFormat("同步目标不是目录"));
+                }
+                directory.sync_all()?;
                 Ok(IoOutcome::Done)
             }
             IoOperation::Rename {
