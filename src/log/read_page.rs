@@ -8,7 +8,6 @@ use crate::{
 pub(crate) struct PageRead {
     page: PageId,
     page_bytes: usize,
-    version: CheckpointVersion,
     transfer: SegmentTransfer,
 }
 pub(crate) struct ReadPage {
@@ -38,18 +37,12 @@ impl ReadPage {
     }
 }
 impl PageRead {
-    pub fn new(
-        page: PageId,
-        page_bytes: usize,
-        version: CheckpointVersion,
-        route: CompletionRoute,
-    ) -> Result<Self, Error> {
+    pub fn new(page: PageId, page_bytes: usize, route: CompletionRoute) -> Result<Self, Error> {
         let start = PageFrame::physical_offset(page, page_bytes)?;
         let length = PageFrame::encoded_size(page_bytes)?;
         Ok(Self {
             page,
             page_bytes,
-            version,
             transfer: SegmentTransfer::read(start, length, route)?,
         })
     }
@@ -70,10 +63,8 @@ impl PageRead {
             return Ok(None);
         };
         let bytes = result?;
-        let frame = PageFrame::decode(&bytes, self.page, self.page_bytes)?;
-        if frame.version > self.version {
-            return Err(Error::InvalidFormat("磁盘页版本超过读取版本"));
-        }
+        // 页帧上界不等于请求版本；新旧记录可共页，操作先后关系由引擎版本许可保证。
+        PageFrame::decode(&bytes, self.page, self.page_bytes)?;
         Ok(Some(ReadPage {
             page: self.page,
             page_bytes: self.page_bytes,

@@ -1640,3 +1640,167 @@ fn 新版本替换与读改写不原地修改旧记录但同版本仍可更新()
     assert_eq!(old_put.read(|v| v).unwrap(), 59);
     assert_eq!(old_rmw.read(|v| v).unwrap(), 58);
 }
+
+#[test]
+fn 四操作等待同键旧版本终结且读取在许可后重新取得链头() {
+    struct NumberRead {
+        key: u64,
+        calls: Rc<Cell<usize>>,
+    }
+    impl Keyed<Schema> for NumberRead {
+        fn key(&self) -> &u64 {
+            &self.key
+        }
+    }
+    impl ReadOperation<Schema> for NumberRead {
+        type Output = u64;
+        fn read(&mut self, value: ValueRead<'_, Schema>) -> Result<u64, Error> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(*value.view())
+        }
+    }
+    for operation in 0..4 {
+        let store = setup();
+        let mut old = store.start_session(SessionOptions::default()).unwrap();
+        let mut new = store.start_session(SessionOptions::default()).unwrap();
+        let old_calls = Rc::new(Cell::new(0));
+        let new_calls = Rc::new(Cell::new(0));
+        let Submission::Pending(mut old_ticket) = old
+            .rmw(
+                Serial(0),
+                Add {
+                    key: 0,
+                    delta: 1,
+                    copies: old_calls.clone(),
+                    initials: Rc::new(Cell::new(0)),
+                },
+                RmwOptions::default(),
+            )
+            .map_err(|r| r.reason)
+            .unwrap()
+        else {
+            panic!("旧请求应等待读盘")
+        };
+        new.runtime.switch_version(CheckpointVersion(1)).unwrap();
+        let submission = match operation {
+            0 => new
+                .read(
+                    Serial(0),
+                    NumberRead {
+                        key: 0,
+                        calls: new_calls.clone(),
+                    },
+                    ReadOptions::default(),
+                )
+                .map_err(|r| r.reason),
+            1 => new
+                .upsert(
+                    Serial(0),
+                    CountedPut {
+                        key: 0,
+                        value: 100,
+                        calls: new_calls.clone(),
+                    },
+                )
+                .map_err(|r| r.reason),
+            2 => new
+                .rmw(
+                    Serial(0),
+                    Add {
+                        key: 0,
+                        delta: 2,
+                        copies: new_calls.clone(),
+                        initials: Rc::new(Cell::new(0)),
+                    },
+                    RmwOptions::default(),
+                )
+                .map_err(|r| r.reason),
+            _ => new
+                .delete(
+                    Serial(0),
+                    Erase {
+                        key: 0,
+                        calls: new_calls.clone(),
+                        panic: false,
+                    },
+                    DeleteOptions::default(),
+                )
+                .map_err(|r| r.reason),
+        }
+        .unwrap();
+        let Submission::Pending(mut ticket) = submission else {
+            panic!("新版本必须等待旧版本许可")
+        };
+        for _ in 0..5 {
+            new.poll(PollBudget::default()).unwrap();
+        }
+        assert_eq!(old_calls.get(), 0);
+        assert_eq!(new_calls.get(), 0);
+        assert!(matches!(ticket.try_take(), Ok(TicketState::Pending)));
+        assert!(matches!(
+            old.wait(&mut old_ticket, wait_deadline()).unwrap(),
+            Ok(Outcome::Success(1))
+        ));
+        assert_eq!(old_calls.get(), 1);
+        let old_head = super::Engine::<Schema>::head(
+            store
+                .inner
+                .index
+                .prepare(crate::schema::KeyCodec::hash(&U64Key, &0))
+                .unwrap(),
+        )
+        .unwrap();
+        let old_value = store
+            .inner
+            .log
+            .find(&U64Key, &0, old_head)
+            .unwrap()
+            .unwrap();
+        let expected = [1, 100, 3, 0][operation];
+        assert!(
+            matches!(new.wait(&mut ticket,wait_deadline()).unwrap(),Ok(Outcome::Success(value)) if value==expected)
+        );
+        assert_eq!(new_calls.get(), 1);
+        assert_eq!(old_value.read(|v| v).unwrap(), 1);
+    }
+}
+#[test]
+fn 丢弃旧票据不释放版本许可而会话放弃会释放() {
+    let store = setup();
+    let mut old = store.start_session(SessionOptions::default()).unwrap();
+    let mut new = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(ticket) = old
+        .read(Serial(0), request(0, &calls), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应挂起")
+    };
+    drop(ticket);
+    new.runtime.switch_version(CheckpointVersion(1)).unwrap();
+    let replacements = Rc::new(Cell::new(0));
+    let Submission::Pending(mut ticket) = new
+        .upsert(
+            Serial(0),
+            CountedPut {
+                key: 0,
+                value: 9,
+                calls: replacements.clone(),
+            },
+        )
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应等待旧请求")
+    };
+    new.poll(PollBudget::default()).unwrap();
+    assert_eq!(replacements.get(), 0);
+    drop(old);
+    assert!(matches!(
+        new.wait(&mut ticket, wait_deadline()).unwrap(),
+        Ok(Outcome::Success(9))
+    ));
+    assert_eq!(calls.get(), 0);
+    assert_eq!(replacements.get(), 1);
+}

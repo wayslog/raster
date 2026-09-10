@@ -32,6 +32,7 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     id: RequestId,
     serial: Serial,
     version: CheckpointVersion,
+    permit: super::version_permit::VersionPermit,
 }
 impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
     fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
@@ -45,7 +46,6 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
                     &engine.storage,
                     self.key.clone(),
                     Engine::<S>::head(entry)?,
-                    self.version,
                     super::io_hub::CompletionHub::route(self.id),
                 )?;
                 self.lookup = Some((entry, lookup));
@@ -125,6 +125,17 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
                 effect: self.effect,
             });
             return TaskStep::Complete;
+        }
+        match self.permit.ready() {
+            Ok(true) => {}
+            Ok(false) => return TaskStep::Retry,
+            Err(cause) => {
+                self.abandon(OperationError {
+                    cause,
+                    effect: self.effect,
+                });
+                return TaskStep::Complete;
+            }
         }
         let result = match catch_unwind(AssertUnwindSafe(|| self.advance(budget))) {
             Ok(result) => result,
@@ -234,6 +245,13 @@ impl<S: Schema> Engine<S> {
             Ok(id) => id,
             Err(reason) => return Err(Rejected { request, reason }),
         };
+        let permit = match self.version_permits.reserve(hash, session.current.version) {
+            Ok(permit) => permit,
+            Err(reason) => {
+                let _ = self.io.release(id);
+                return Err(Rejected { request, reason });
+            }
+        };
         if let Err(reason) = self.admit(session, serial) {
             let _ = self.io.release(id);
             return Err(Rejected { request, reason });
@@ -252,6 +270,7 @@ impl<S: Schema> Engine<S> {
             id,
             serial,
             version: session.current.version,
+            permit,
         };
         if matches!(task.run_locked(PollBudget::default()), TaskStep::Complete) {
             let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")

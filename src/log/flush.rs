@@ -320,6 +320,79 @@ mod tests {
         }
     }
     #[test]
+    fn 磁盘混合版本页仍能沿新版本异键链头读取旧记录() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let first = log
+            .finish_initialization(log.reserve_record(b"a", None, 10).unwrap())
+            .unwrap();
+        let second = log
+            .finish_initialization(
+                log.reserve_record(b"b", Some(first), 20)
+                    .unwrap()
+                    .with_version(CheckpointVersion(1)),
+            )
+            .unwrap();
+        let head = log
+            .finish_initialization(
+                log.reserve_tombstone(b"b", Some(second))
+                    .unwrap()
+                    .with_version(CheckpointVersion(2)),
+            )
+            .unwrap();
+        log.finish_initialization(log.reserve_record(b"c", None, 30).unwrap())
+            .unwrap();
+        log.advance_read_only(LogAddress(256)).unwrap();
+        let (device, storage, _) = storage_with_size(4096);
+        let mut write = log
+            .begin_flush(&storage, CompletionRoute(31), CheckpointVersion(2))
+            .unwrap();
+        loop {
+            write.submit_next(&storage).unwrap();
+            write
+                .accept(&storage, complete(&*device))
+                .map_err(|r| r.reason)
+                .unwrap();
+            if log.finish_flush(&storage, &mut write).unwrap() {
+                break;
+            }
+        }
+        log.evict_next().unwrap();
+        let mut lookup = log
+            .lookup(&storage, b"a".to_vec(), Some(head), CompletionRoute(32))
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            assert!(std::time::Instant::now() < deadline);
+            match lookup
+                .step(
+                    &log,
+                    &storage,
+                    PollBudget(std::num::NonZeroUsize::new(1).unwrap()),
+                )
+                .unwrap()
+            {
+                crate::log::lookup::LookupStep::Continue => {}
+                crate::log::lookup::LookupStep::AwaitingIo => lookup
+                    .accept(&storage, complete(&*device))
+                    .map_err(|r| r.reason)
+                    .unwrap(),
+                crate::log::lookup::LookupStep::Decoded(value) => {
+                    assert_eq!(value.read(|v| v).unwrap(), 10);
+                    break;
+                }
+                _ => panic!("必须从混合版本磁盘页读出旧记录"),
+            }
+        }
+    }
+    #[test]
     fn 同页不同记录版本在刷盘中保留且超范围版本拒绝() {
         let log = HybridLog::new(
             LogConfig {
@@ -407,13 +480,7 @@ mod tests {
             (99, None, 2),
         ] {
             let mut lookup = log
-                .lookup(
-                    &storage,
-                    vec![key],
-                    head,
-                    CheckpointVersion(0),
-                    CompletionRoute(77),
-                )
+                .lookup(&storage, vec![key], head, CompletionRoute(77))
                 .unwrap();
             let mut reads = 0;
             let mut ended = false;
@@ -471,8 +538,7 @@ mod tests {
         assert_eq!(log.evict_next().unwrap().completed, 1);
         assert!(log.lease(LogAddress(0)).is_err());
         let read = |device: &MemoryDevice| -> Result<ReadPage, Error> {
-            let mut task =
-                PageRead::new(PageId(0), 256, CheckpointVersion(0), CompletionRoute(19))?;
+            let mut task = PageRead::new(PageId(0), 256, CompletionRoute(19))?;
             loop {
                 task.submit_next(&storage)?;
                 task.accept(&storage, complete(device))

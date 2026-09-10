@@ -22,12 +22,15 @@ use std::{
 struct ReadTask<S: Schema, O: ReadOperation<S>> {
     engine: Arc<Engine<S>>,
     request: Option<O>,
-    lookup: LogLookup,
+    lookup: Option<LogLookup>,
+    key: Vec<u8>,
+    hash: KeyHash,
     options: ReadOptions,
     complete: Completer<O::Output>,
     id: RequestId,
     serial: Serial,
     version: CheckpointVersion,
+    permit: super::version_permit::VersionPermit,
 }
 impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
     fn finish(&mut self, result: OperationResult<O::Output>) {
@@ -54,6 +57,8 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
     }
     fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
         self.lookup
+            .as_mut()
+            .ok_or(Error::InvalidState("读取没有等待磁盘查询"))?
             .accept(&self.engine.storage, completion)
             .map_err(|rejected| rejected.reason)
     }
@@ -68,13 +73,34 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
             });
             return TaskStep::Complete;
         }
+        match self.permit.ready() {
+            Ok(true) => {}
+            Ok(false) => return TaskStep::Retry,
+            Err(cause) => {
+                self.abandon(OperationError {
+                    cause,
+                    effect: Effect::NotApplied,
+                });
+                return TaskStep::Complete;
+            }
+        }
         let result = catch_unwind(AssertUnwindSafe(
             || -> Result<Option<Outcome<O::Output>>, Error> {
+                if self.lookup.is_none() {
+                    let entry = self.engine.index.prepare(self.hash)?;
+                    self.lookup = Some(self.engine.log.lookup(
+                        &self.engine.storage,
+                        self.key.clone(),
+                        Engine::<S>::head(entry)?,
+                        CompletionHub::route(self.id),
+                    )?);
+                }
                 let request = self.request.as_mut().expect("请求尚未终结");
-                match self
-                    .lookup
-                    .step(&self.engine.log, &self.engine.storage, budget)?
-                {
+                match self.lookup.as_mut().expect("查询已创建").step(
+                    &self.engine.log,
+                    &self.engine.storage,
+                    budget,
+                )? {
                     LookupStep::Continue | LookupStep::AwaitingIo => Ok(None),
                     LookupStep::Present => Err(Error::InvalidState("值查询只返回了元数据")),
                     LookupStep::Missing => Ok(Some(Outcome::NotFound)),
@@ -165,47 +191,30 @@ impl<S: Schema> Engine<S> {
             Ok(id) => id,
             Err(reason) => return Err(Rejected { request, reason }),
         };
+        let permit = match self.version_permits.reserve(hash, session.current.version) {
+            Ok(permit) => permit,
+            Err(reason) => {
+                let _ = self.io.release(id);
+                return Err(Rejected { request, reason });
+            }
+        };
         if let Err(reason) = self.admit(session, serial) {
             let _ = self.io.release(id);
             return Err(Rejected { request, reason });
         }
-        let lookup = self
-            .index
-            .prepare(hash)
-            .and_then(Self::head)
-            .and_then(|head| {
-                self.log.lookup(
-                    &self.storage,
-                    key,
-                    head,
-                    session.current.version,
-                    CompletionHub::route(id),
-                )
-            });
-        let lookup = match lookup {
-            Ok(lookup) => lookup,
-            Err(cause) => {
-                let _ = self.io.release(id);
-                return Ok(Submission::Ready(self.finish_request(
-                    request,
-                    Err(OperationError {
-                        cause,
-                        effect: Effect::NotApplied,
-                    }),
-                    Effect::NotApplied,
-                )));
-            }
-        };
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = ReadTask {
             engine: self.clone(),
             request: Some(request),
-            lookup,
+            lookup: None,
+            key,
+            hash,
             options,
             complete,
             id,
             serial,
             version: session.current.version,
+            permit,
         };
         if matches!(task.step(PollBudget::default()), TaskStep::Complete) {
             let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")

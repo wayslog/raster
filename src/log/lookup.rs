@@ -21,7 +21,6 @@ pub(crate) struct LogLookup {
     storage: Arc<()>,
     key: Vec<u8>,
     next: Option<LogAddress>,
-    version: CheckpointVersion,
     route: CompletionRoute,
     reading: Option<(PageId, PageRead)>,
     cached: Option<(PageId, ReadPage)>,
@@ -34,10 +33,9 @@ impl<V: ValueLayout> HybridLog<V> {
         storage: &SegmentedStorage,
         key: Vec<u8>,
         head: Option<LogAddress>,
-        version: CheckpointVersion,
         route: CompletionRoute,
     ) -> Result<LogLookup, Error> {
-        let mut lookup = self.lookup(storage, key, head, version, route)?;
+        let mut lookup = self.lookup(storage, key, head, route)?;
         lookup.needs_value = false;
         Ok(lookup)
     }
@@ -47,7 +45,6 @@ impl<V: ValueLayout> HybridLog<V> {
         storage: &SegmentedStorage,
         key: Vec<u8>,
         head: Option<LogAddress>,
-        version: CheckpointVersion,
         route: CompletionRoute,
     ) -> Result<LogLookup, Error> {
         if let Some(address) = head {
@@ -58,7 +55,6 @@ impl<V: ValueLayout> HybridLog<V> {
             storage: storage.identity.clone(),
             key,
             next: head,
-            version,
             route,
             reading: None,
             cached: None,
@@ -169,8 +165,7 @@ impl LogLookup {
                     self.next = record.header.previous;
                 } else {
                     self.cached = None;
-                    let mut reading =
-                        PageRead::new(page, log.page_bytes, self.version, self.route)?;
+                    let mut reading = PageRead::new(page, log.page_bytes, self.route)?;
                     let submitted = reading.submit_next(storage);
                     self.reading = Some((page, reading));
                     return match submitted {
