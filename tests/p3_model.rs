@@ -122,7 +122,11 @@ impl DeleteOperation<Schema> for Request {
         ResultValue::Deleted
     }
 }
-fn actual(session: &mut raster::Session<Schema>, step: &Step) -> ModelSubmission {
+fn actual(
+    session: &mut raster::Session<Schema>,
+    step: &Step,
+    pending: &mut [usize; 4],
+) -> ModelSubmission {
     let value = match &step.operation {
         Operation::Upsert(v) => v.clone(),
         Operation::Rmw { operand, .. } => operand.clone(),
@@ -145,7 +149,7 @@ fn actual(session: &mut raster::Session<Schema>, step: &Step) -> ModelSubmission
             session.delete(serial, request, DeleteOptions { force_tombstone })
         }
     };
-    let value = match result {
+    let result = match result {
         Err(rejected) => {
             assert!(
                 matches!(rejected.reason, Error::InvalidState(_)),
@@ -155,16 +159,40 @@ fn actual(session: &mut raster::Session<Schema>, step: &Step) -> ModelSubmission
             assert_eq!(rejected.request.key, step.key);
             return ModelSubmission::Rejected(step.clone());
         }
-        Ok(Submission::Ready(Ok(Outcome::Success(v)))) => v,
-        Ok(Submission::Ready(Ok(Outcome::NotFound))) => ResultValue::NotFound,
-        Ok(Submission::Ready(Ok(Outcome::Aborted(AbortReason::Tombstone)))) => {
-            ResultValue::Tombstone
+        Ok(Submission::Ready(result)) => result,
+        Ok(Submission::Pending(mut ticket)) => {
+            let operation = match step.operation {
+                Operation::Read { .. } => 0,
+                Operation::Upsert(_) => 1,
+                Operation::Rmw { .. } => 2,
+                Operation::Delete { .. } => 3,
+            };
+            pending[operation] += 1;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "请求等待超时：{step:?}"
+                );
+                session.poll(PollBudget::default()).unwrap();
+                if let raster::api::completion::TicketState::Ready(result) =
+                    ticket.try_take().unwrap()
+                {
+                    break result;
+                }
+                std::thread::yield_now();
+            }
         }
-        Ok(Submission::Ready(Err(OperationError {
+    };
+    let value = match result {
+        Ok(Outcome::Success(v)) => v,
+        Ok(Outcome::NotFound) => ResultValue::NotFound,
+        Ok(Outcome::Aborted(AbortReason::Tombstone)) => ResultValue::Tombstone,
+        Err(OperationError {
             cause: Error::Codec("类型不匹配"),
             effect: Effect::NotApplied,
-        }))) => ResultValue::TypeMismatch,
-        _ => panic!("未预期的引擎结果：{step:?}"),
+        }) => ResultValue::TypeMismatch,
+        result => panic!("未预期的引擎结果：{step:?} => {result:?}"),
     };
     ModelSubmission::Accepted(value)
 }
@@ -173,6 +201,10 @@ fn replay(trace: Trace) {
         .device(Box::new(raster::device::null::NullDeviceFactory))
         .create()
         .unwrap();
+    assert_eq!(replay_store(trace, store), [0; 4]);
+}
+fn replay_store(trace: Trace, store: RasterKV<Schema>) -> [usize; 4] {
+    let mut pending = [0; 4];
     let mut sessions = std::collections::BTreeMap::new();
     let mut model = Model::default();
     for (i, step) in trace.steps.iter().enumerate() {
@@ -181,7 +213,7 @@ fn replay(trace: Trace) {
             .or_insert_with(|| store.start_session(SessionOptions::default()).unwrap());
         let expected = model.submit(step.clone());
         assert_eq!(
-            actual(session, step),
+            actual(session, step, &mut pending),
             expected,
             "种子 {} 步骤 {i}",
             trace.seed
@@ -191,6 +223,7 @@ fn replay(trace: Trace) {
             model.last_accepted(step.session)
         );
     }
+    pending
 }
 #[test]
 fn 固定轨迹通过真实引擎逐操作对照() {
@@ -245,4 +278,102 @@ fn 变长值增长收缩类型错误与序号拒绝对照() {
         });
     }
     replay(Trace { seed: 77, steps });
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn 原生文件两页内存变长值四操作混合轨迹() {
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let root = Directory(std::env::temp_dir().join(format!(
+        "raster-model-{:x?}",
+        StoreId::generate().unwrap().0
+    )));
+    let mut config = raster::config::Config::default();
+    config.log.page_bytes = 4096;
+    config.log.memory_pages = 2;
+    config.storage.segment_bytes = 65536;
+    config.storage.root = root.0.clone();
+    let store = RasterKV::builder(SchemaPair::new(ByteKey, SerializedValue::new(Codec)))
+        .config(config)
+        .device(Box::new(
+            raster::device::thread_pool::ThreadPoolDeviceFactory {
+                workers: 3,
+                queue_capacity: 64,
+            },
+        ))
+        .create()
+        .unwrap();
+    let key = |i: u64| {
+        let mut key = b"warm".to_vec();
+        key.extend(i.to_le_bytes());
+        key
+    };
+    let mut steps = vec![];
+    for i in 0..200 {
+        steps.push(Step {
+            session: 0,
+            serial: i + 1,
+            key: key(i),
+            operation: Operation::Upsert(Value::Bytes(vec![i as u8; 64 + i as usize % 12 * 64])),
+        });
+    }
+    let mut random = Trace::generate(42, 1500);
+    for (i, step) in random.steps.iter_mut().enumerate() {
+        step.serial += 10000;
+        if !step.key.is_empty() {
+            step.key.extend((((i / 8) % 64) as u64).to_le_bytes());
+        }
+        if let Operation::Upsert(Value::Bytes(bytes)) = &mut step.operation {
+            bytes.resize(64 + i % 24 * 48, i as u8);
+        }
+    }
+    steps.extend(random.steps);
+    for i in 0..200 {
+        steps.push(Step {
+            session: 0,
+            serial: 1_000_000 + i,
+            key: key(i),
+            operation: if i % 2 == 0 {
+                Operation::Rmw {
+                    operand: Value::Bytes(vec![1, 2]),
+                    create_if_missing: false,
+                }
+            } else {
+                Operation::Delete {
+                    force_tombstone: false,
+                }
+            },
+        });
+    }
+    for i in 0..200 {
+        steps.push(Step {
+            session: 0,
+            serial: 2_000_000 + i,
+            key: key(i),
+            operation: Operation::Read {
+                abort_if_tombstone: i % 3 == 0,
+            },
+        });
+    }
+    let pending = replay_store(Trace { seed: 42, steps }, store);
+    assert!(
+        pending.iter().all(|count| *count > 0),
+        "四操作均应实际经历 Pending：{pending:?}"
+    );
+    let files: Vec<_> = std::fs::read_dir(root.0.join("segments"))
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .collect();
+    assert!(files.len() > 1);
+    assert!(files.iter().sum::<u64>() > 4096 * 16);
+    eprintln!(
+        "原生混合轨迹：Read/Upsert/RMW/Delete Pending={pending:?}，段数={}，文件字节={}",
+        files.len(),
+        files.iter().sum::<u64>()
+    );
 }
