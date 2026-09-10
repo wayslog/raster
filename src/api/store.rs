@@ -108,6 +108,7 @@ impl<S: Schema> RasterKV<S> {
             };
             self.inner.storage.device.shutdown(deadline)?;
             self.inner.release_stopped_storage()?;
+            self.inner.release_stopped_checkpoint()?;
             *done = true;
             if let Some(error) = failure {
                 return Err(error);
@@ -149,7 +150,7 @@ impl<S: Schema> Builder<S> {
             .session
             .max_sessions
             .checked_mul(self.config.session.max_pending)
-            .and_then(|capacity| capacity.checked_add(1))
+            .and_then(|capacity| capacity.checked_add(2))
             .ok_or(Error::CapacityExceeded)?;
         let io = crate::engine::io_hub::CompletionHub::new(id, io_capacity)?;
         let schema = Arc::new(self.schema);
@@ -177,6 +178,7 @@ impl<S: Schema> Builder<S> {
             inner: Arc::new(Engine {
                 id,
                 io,
+                checkpoints: std::sync::Mutex::new(Default::default()),
                 storage_progress: std::sync::Mutex::new(Default::default()),
                 schema,
                 config: self.config,

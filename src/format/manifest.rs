@@ -3,7 +3,7 @@ use super::wire::{Reader, checksum, invalid};
 use crate::types::*;
 use std::collections::BTreeSet;
 
-const MAX_ITEMS: usize = 65_536;
+pub(crate) const MAX_ITEMS: usize = 65_536;
 const MAX_SEED: usize = 1024;
 const MAX_MANIFEST: usize = 8 * 1024 * 1024;
 

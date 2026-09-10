@@ -2,7 +2,7 @@
 mod manifest;
 mod record;
 mod wire;
-pub(crate) use manifest::{Commit, Kind, Manifest, Material};
+pub(crate) use manifest::{Commit, Kind, MAX_ITEMS as MAX_MANIFEST_ITEMS, Manifest, Material};
 pub(crate) use record::{HEADER_BYTES, Record, RecordHeader};
 mod page;
 pub(crate) use page::PageFrame;

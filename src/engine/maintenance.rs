@@ -7,6 +7,7 @@ impl<S: Schema> Engine<S> {
         let result = self.maintenance_step(budget);
         if result.is_err() {
             self.failed.store(true, Ordering::SeqCst);
+            self.fail_checkpoint()?;
             let state = self.coordinator.snapshot()?;
             if let Some(id) = state.id
                 && state.phase != Phase::Failed
@@ -24,7 +25,11 @@ impl<S: Schema> Engine<S> {
         }
         self.io.poll(&*self.storage.device, budget)?;
         let mut advanced = self.progress_storage()?;
+        let mut completed = 0;
         for _ in 0..budget.0.get() {
+            let (checkpoint_progress, checkpoint_completed) = self.progress_checkpoint()?;
+            advanced |= checkpoint_progress;
+            completed += usize::from(checkpoint_completed);
             let state = self.coordinator.snapshot()?;
             let Some(id) = state.id else {
                 break;
@@ -56,7 +61,7 @@ impl<S: Schema> Engine<S> {
             return Err(Error::InvalidState("维护动作已失败"));
         }
         Ok(Progress {
-            completed: 0,
+            completed,
             remaining: usize::from(state.id.is_some()),
             phase_advanced: advanced,
         })

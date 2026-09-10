@@ -84,10 +84,6 @@ pub struct MaintenanceTicket<R> {
     pub(crate) result: Arc<Mutex<Option<SharedReport<R>>>>,
 }
 impl<R> MaintenanceTicket<R> {
-    #[allow(
-        dead_code,
-        reason = "P5.2 的实际材料任务将创建维护票据，当前验证报告协议"
-    )]
     pub(crate) fn pair(store: StoreId, id: MaintenanceId) -> (Self, MaintenanceCompleter<R>) {
         let result = Arc::new(Mutex::new(None));
         (
@@ -112,12 +108,10 @@ impl<R> MaintenanceTicket<R> {
     }
 }
 /// 动作持有唯一完成端，报告一旦设置即不可替换。
-#[allow(dead_code, reason = "P5.2 的实际材料任务将持有完成端")]
 pub(crate) struct MaintenanceCompleter<R> {
     result: Arc<Mutex<Option<SharedReport<R>>>>,
 }
 impl<R> MaintenanceCompleter<R> {
-    #[allow(dead_code, reason = "P5.2 的实际材料任务将发布最终报告")]
     pub fn finish(&self, report: Result<R, Error>) -> Result<SharedReport<R>, Error> {
         let mut slot = self
             .result
@@ -146,9 +140,9 @@ pub struct Maintenance<S: Schema> {
 impl<S: Schema> Maintenance<S> {
     pub fn checkpoint(
         &self,
-        _kind: CheckpointKind,
+        kind: CheckpointKind,
     ) -> Result<MaintenanceTicket<CheckpointReport>, Error> {
-        self.inner.not_ready("checkpoint::start")
+        self.inner.start_checkpoint(kind)
     }
     pub fn compact(
         &self,

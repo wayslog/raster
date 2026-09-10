@@ -167,8 +167,16 @@ impl<S: Schema> Session<S> {
             if deadline.expired() {
                 return Err(Error::DeadlineExceeded);
             }
-            self.poll(PollBudget::default())?;
-            self.engine.poll_maintenance(PollBudget::default())?;
+            if let Err(error) = self
+                .poll(PollBudget::default())
+                .and_then(|_| self.engine.poll_maintenance(PollBudget::default()))
+            {
+                self.engine.fail_checkpoint()?;
+                if let Some(report) = ticket.try_report()? {
+                    return Ok(report);
+                }
+                return Err(error);
+            }
             std::thread::yield_now();
         }
     }

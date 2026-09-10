@@ -1,4 +1,5 @@
 //! 四操作编排中心；读取支持磁盘 Pending，写入与持久化路径继续分阶段接入。
+mod checkpoint;
 mod conditional_copy;
 mod delete;
 pub(crate) mod io_hub;
@@ -21,6 +22,7 @@ pub(crate) use pending::SessionRuntime;
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
     pub io: io_hub::CompletionHub,
+    pub checkpoints: std::sync::Mutex<checkpoint::CheckpointRuntime>,
     pub storage_progress: std::sync::Mutex<storage_progress::StorageProgress>,
     pub version_permits: version_permit::VersionPermits,
     pub operations: Vec<crate::sync::Mutex<()>>,
@@ -119,3 +121,6 @@ impl<S: Schema> Engine<S> {
 mod frozen_tests;
 #[cfg(test)]
 mod pending_read_tests;
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod checkpoint_tests;
