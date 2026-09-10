@@ -192,3 +192,73 @@ fn 完成未收取仍占队列容量且失败归还原缓冲() {
     assert_eq!(done.buffer.unwrap().as_slice().as_ptr(), pointer);
     device.shutdown(deadline()).unwrap();
 }
+
+#[test]
+fn 取消与关闭竞争仍逐项归还缓冲并只完成一次() {
+    let root = Directory::new();
+    let device = ThreadPoolDeviceFactory {
+        workers: 2,
+        queue_capacity: 128,
+    }
+    .open(DeviceOpenOptions {
+        root: root.0.clone(),
+        create_new: true,
+    })
+    .unwrap();
+    let IoOutcome::Opened(file) = execute(
+        &*device,
+        IoOperation::Open {
+            path: "竞争".into(),
+            create_new: true,
+        },
+    )
+    .result
+    .unwrap() else {
+        panic!("打开")
+    };
+    let mut writes = vec![];
+    let mut cancels = vec![];
+    for i in 0..32 {
+        let mut buffer = AlignedBuffer::new_zeroed(4, 8).unwrap();
+        buffer.as_mut_slice().fill(i as u8);
+        let pointer = buffer.as_slice().as_ptr();
+        let id = device
+            .submit(request(IoOperation::Write {
+                file,
+                offset: i * 4,
+                buffer,
+            }))
+            .unwrap();
+        writes.push((id, pointer, i as u8));
+        cancels.push(device.submit(request(IoOperation::Cancel(id))).unwrap());
+    }
+    // 超时不能销毁在途资源；线程已退出时也允许立即成功。
+    match device.shutdown(Deadline(Instant::now())) {
+        Ok(()) | Err(Error::DeadlineExceeded) => {}
+        Err(error) => panic!("关闭返回意外错误：{error:?}"),
+    }
+    device.shutdown(deadline()).unwrap();
+    let out = collect(&*device, 64);
+    assert_eq!(out.len(), 64);
+    for (id, pointer, value) in writes {
+        let matches: Vec<_> = out.iter().filter(|c| c.id == id).collect();
+        assert_eq!(matches.len(), 1);
+        let done = matches[0];
+        match &done.result {
+            Ok(IoOutcome::Transferred(4)) => {}
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            other => panic!("写入终结错误：{other:?}"),
+        }
+        let buffer = done.buffer.as_ref().unwrap();
+        assert_eq!(buffer.as_slice().as_ptr(), pointer);
+        assert_eq!(buffer.as_slice(), [value; 4]);
+    }
+    for id in cancels {
+        let matches: Vec<_> = out.iter().filter(|c| c.id == id).collect();
+        assert_eq!(matches.len(), 1);
+        assert!(matches!(matches[0].result, Ok(IoOutcome::Done)));
+    }
+    let mut extra = vec![];
+    device.poll(PollBudget::default(), &mut extra).unwrap();
+    assert!(extra.is_empty());
+}

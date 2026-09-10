@@ -139,11 +139,11 @@ impl<S: Schema> Builder<S> {
                     root: self.config.storage.root.clone(),
                     create_new: true,
                 })?;
-        let storage = crate::storage::SegmentedStorage {
-            device: Arc::from(device),
-            root: self.config.storage.root.clone(),
-            segment_bytes: self.config.storage.segment_bytes,
-        };
+        let storage = crate::storage::SegmentedStorage::new(
+            Arc::from(device),
+            self.config.storage.root.clone(),
+            self.config.storage.segment_bytes,
+        )?;
         let cache = crate::cache::ReadCache::new(self.config.cache.clone());
         Ok(RasterKV {
             inner: Arc::new(Engine {
