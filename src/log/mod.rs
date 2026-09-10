@@ -56,6 +56,12 @@ impl<V: ValueLayout> RecordLease<V> {
     ) -> Result<R, Error> {
         self.value.update(f)
     }
+    pub fn key(&self) -> &[u8] {
+        self.value.key()
+    }
+    pub fn previous(&self) -> Option<LogAddress> {
+        self.value.previous()
+    }
     pub fn generation(&self) -> Generation {
         self.value.generation()
     }
@@ -78,6 +84,41 @@ impl<V: ValueLayout> HybridLog<V> {
             owner: self,
             value: value::PageValue::initialize(&self.pool, self.layout.clone(), value)?,
         })
+    }
+    pub fn reserve_record(
+        &self,
+        key: &[u8],
+        previous: Option<LogAddress>,
+        value: V::Owned,
+    ) -> Result<RecordReservation<'_, V>, Error> {
+        Ok(RecordReservation {
+            owner: self,
+            value: value::PageValue::initialize_record(
+                &self.pool,
+                self.layout.clone(),
+                key,
+                previous,
+                value,
+            )?,
+        })
+    }
+    pub fn find<K: crate::schema::KeyCodec>(
+        &self,
+        codec: &K,
+        key: &K::Key,
+        mut head: Option<LogAddress>,
+    ) -> Result<Option<RecordLease<V>>, Error> {
+        while let Some(address) = head {
+            let lease = self.lease(address)?;
+            if codec.equals_encoded(key, lease.key())? {
+                return Ok(Some(lease));
+            }
+            head = lease.previous();
+            if head.is_some_and(|previous| previous >= address) {
+                return Err(Error::InvalidFormat("日志前驱形成非法回路"));
+            }
+        }
+        Ok(None)
     }
     pub fn finish_initialization(
         &self,

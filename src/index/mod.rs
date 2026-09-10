@@ -194,6 +194,106 @@ mod tests {
         MemIndex::new(IndexConfig { buckets: 2 }).unwrap()
     }
     #[test]
+    fn 真实键编码碰撞沿日志链查找不会串键() {
+        use crate::{
+            config::LogConfig,
+            log::HybridLog,
+            schema::{
+                KeyCodec,
+                builtin::{AtomicU64Value, U64Key},
+            },
+        };
+        let index = MemIndex::new(IndexConfig { buckets: 1 }).unwrap();
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 512,
+                memory_pages: 1,
+                mutable_fraction: 0.5,
+            },
+            std::sync::Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let codec = U64Key;
+        let a = 8969;
+        let b = 9239;
+        assert_eq!(codec.hash(&a).tag(), codec.hash(&b).tag());
+        let empty = index.prepare(codec.hash(&a)).unwrap();
+        let first = log
+            .finish_initialization(log.reserve_record(&a.to_le_bytes(), None, 17).unwrap())
+            .unwrap();
+        index.compare_publish(empty, IndexHead::Log(first)).unwrap();
+        let previous = index.prepare(codec.hash(&b)).unwrap();
+        let second = log
+            .finish_initialization(
+                log.reserve_record(&b.to_le_bytes(), Some(first), 29)
+                    .unwrap(),
+            )
+            .unwrap();
+        index
+            .compare_publish(previous, IndexHead::Log(second))
+            .unwrap();
+        for (key, expected) in [(a, 17), (b, 29)] {
+            let IndexHead::Log(head) = index.locate(codec.hash(&key)).unwrap().unwrap().head else {
+                panic!("应为主日志链头")
+            };
+            assert_eq!(
+                log.find(&codec, &key, Some(head))
+                    .unwrap()
+                    .unwrap()
+                    .read(|v| v)
+                    .unwrap(),
+                expected
+            );
+        }
+        assert!(log.find(&codec, &0, Some(second)).unwrap().is_none());
+        assert!(
+            log.reserve_record(&a.to_le_bytes(), Some(LogAddress(500)), 31)
+                .is_err()
+        );
+    }
+    #[test]
+    fn 空键变长键和损坏编码有明确结果() {
+        use crate::{
+            config::LogConfig,
+            log::HybridLog,
+            schema::builtin::{AtomicU64Value, ByteKey, U64Key},
+        };
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 512,
+                memory_pages: 1,
+                mutable_fraction: 0.5,
+            },
+            std::sync::Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let first = log
+            .finish_initialization(log.reserve_record(b"", None, 1).unwrap())
+            .unwrap();
+        let key = vec![255; 100];
+        let second = log
+            .finish_initialization(log.reserve_record(&key, Some(first), 2).unwrap())
+            .unwrap();
+        assert_eq!(
+            log.find(&ByteKey, b"", Some(second))
+                .unwrap()
+                .unwrap()
+                .read(|v| v)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            log.find(&ByteKey, &key, Some(second))
+                .unwrap()
+                .unwrap()
+                .read(|v| v)
+                .unwrap(),
+            2
+        );
+        assert!(log.find(&U64Key, &0, Some(second)).is_err());
+        assert!(log.reserve_record(&[0; 600], None, 3).is_err());
+    }
+    #[test]
     fn 已初始化日志记录发布与失败发布清理() {
         use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
         let log = HybridLog::new(

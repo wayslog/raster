@@ -17,6 +17,10 @@ pub(crate) struct PageValue<V: ValueLayout> {
     layout: Arc<V>,
     range: Option<PageRange>,
     initialized: bool,
+    value_offset: usize,
+    capacity: usize,
+    key_len: usize,
+    previous: Option<LogAddress>,
     gate: MutationGate,
     failed: AtomicBool,
     sealed: AtomicBool,
@@ -25,8 +29,8 @@ macro_rules! permit {
     ($owner:expr,$name:ident) => {{
         let range = $owner.range.as_ref().expect("值范围存在");
         $name {
-            pointer: range.pointer(),
-            length: range.len(),
+            pointer: $owner.value_pointer(),
+            length: $owner.capacity,
             generation: range.generation(),
             guard: PhantomData,
             local: PhantomData,
@@ -41,6 +45,10 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
+            value_offset: 0,
+            capacity: plan.capacity.max(1),
+            key_len: 0,
+            previous: None,
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
@@ -48,6 +56,73 @@ impl<V: ValueLayout> PageValue<V> {
         owner.layout.initialize(permit!(owner, InitPermit), value)?;
         owner.initialized = true;
         Ok(owner)
+    }
+    pub fn initialize_record(
+        pool: &PagePool,
+        layout: Arc<V>,
+        key: &[u8],
+        previous: Option<LogAddress>,
+        value: V::Owned,
+    ) -> Result<Self, Error> {
+        if let Some(address) = previous {
+            address.validate()?;
+        }
+        let plan = layout.plan(&value)?.validate()?;
+        let prefix = 48usize
+            .checked_add(key.len())
+            .ok_or(Error::CapacityExceeded)?;
+        let value_offset = prefix
+            .checked_add(plan.alignment - 1)
+            .ok_or(Error::CapacityExceeded)?
+            & !(plan.alignment - 1);
+        let total = value_offset
+            .checked_add(plan.capacity.max(1))
+            .and_then(|n| n.checked_add(4))
+            .ok_or(Error::CapacityExceeded)?;
+        u32::try_from(total).map_err(|_| Error::CapacityExceeded)?;
+        let mut range = pool.reserve(total, plan.alignment)?;
+        if previous.is_some_and(|address| range.address().is_ok_and(|current| address >= current)) {
+            return Err(Error::InvalidFormat("前驱必须早于当前记录"));
+        }
+        range.bytes_mut()[48..prefix].copy_from_slice(key);
+        let mut owner = Self {
+            layout,
+            range: Some(range),
+            initialized: false,
+            value_offset,
+            capacity: plan.capacity.max(1),
+            key_len: key.len(),
+            previous,
+            gate: MutationGate::default(),
+            failed: AtomicBool::new(false),
+            sealed: AtomicBool::new(false),
+        };
+        owner.layout.initialize(permit!(owner, InitPermit), value)?;
+        owner.initialized = true;
+        Ok(owner)
+    }
+    fn value_pointer(&self) -> std::ptr::NonNull<u8> {
+        let pointer = self.range.as_ref().expect("值范围存在").pointer();
+        // SAFETY: 构造时检查值偏移与容量在分配内，初始化后范围不移动或重叠。
+        unsafe { std::ptr::NonNull::new_unchecked(pointer.as_ptr().add(self.value_offset)) }
+    }
+    pub fn key(&self) -> &[u8] {
+        let offset = if self.value_offset == 0 { 0 } else { 48 };
+        // SAFETY: 键在初始化前拷贝到独立前缀，发布后不可变，且与所有值许可范围不重叠。
+        unsafe {
+            std::slice::from_raw_parts(
+                self.range
+                    .as_ref()
+                    .expect("值范围存在")
+                    .pointer()
+                    .as_ptr()
+                    .add(offset),
+                self.key_len,
+            )
+        }
+    }
+    pub fn previous(&self) -> Option<LogAddress> {
+        self.previous
     }
     pub fn decode(
         pool: &PagePool,
@@ -64,6 +139,10 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
+            value_offset: 0,
+            capacity: plan.capacity.max(1),
+            key_len: 0,
+            previous: None,
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
