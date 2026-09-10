@@ -186,4 +186,36 @@ mod tests {
         hub.poll(&device, PollBudget::default()).unwrap();
         assert!(hub.take(new).unwrap().is_none());
     }
+    #[test]
+    fn 重复未收完成与未知路由报错但不覆盖或丢失其他邮箱() {
+        let hub = CompletionHub::new(StoreId([1; 16]), 4).unwrap();
+        let device = MemoryDevice::new(4, 64).unwrap();
+        let first = hub.reserve(SessionId([1; 16])).unwrap();
+        let second = hub.reserve(SessionId([2; 16])).unwrap();
+        let submit = |route, name: &str| {
+            device
+                .submit(IoRequest {
+                    route,
+                    operation: IoOperation::CreateDirectory(name.into()),
+                })
+                .unwrap()
+        };
+        let first_io = submit(CompletionHub::route(first), "第一次");
+        submit(CompletionHub::route(first), "重复");
+        let second_io = submit(CompletionHub::route(second), "另一个会话");
+        assert!(matches!(
+            hub.poll(&device, PollBudget::default()),
+            Err(Error::InvalidState(_))
+        ));
+        assert_eq!(hub.take(first).unwrap().unwrap().id, first_io);
+        assert!(hub.take(first).unwrap().is_none());
+        assert_eq!(hub.take(second).unwrap().unwrap().id, second_io);
+        submit(CompletionRoute(999), "未知路由");
+        assert!(matches!(
+            hub.poll(&device, PollBudget::default()),
+            Err(Error::InvalidState(_))
+        ));
+        assert!(hub.take(first).unwrap().is_none());
+        assert!(hub.take(second).unwrap().is_none());
+    }
 }
