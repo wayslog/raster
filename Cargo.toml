@@ -1,0 +1,21 @@
+[package]
+name = "raster"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "RasterKV 嵌入式键值存储的模块骨架"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+# 仅控制后端骨架的编译，不表示已经实现对应能力。
+io-uring = []
+config-toml = []
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
