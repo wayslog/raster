@@ -104,7 +104,12 @@ impl PagePool {
             .state
             .lock()
             .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+        let current_id = state.next_id.checked_sub(1);
         for entry in &mut state.entries {
+            // 日志只在最新逻辑页追加，不能回填旧页空隙导致地址倒退。
+            if Some(entry.id.0) != current_id {
+                continue;
+            }
             if let Some(page) = &entry.page {
                 let start = entry
                     .next
@@ -188,6 +193,25 @@ impl PagePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn 跨页后小记录也不能回填旧页且释放尾页不倒退() {
+        let pool = PagePool::new(64, 2).unwrap();
+        let first = pool.reserve(24, 8).unwrap();
+        let second = pool.reserve(48, 8).unwrap();
+        let third = pool.reserve(8, 8).unwrap();
+        assert_eq!(first.address().unwrap(), LogAddress(0));
+        assert_eq!(second.address().unwrap(), LogAddress(64));
+        assert_eq!(third.address().unwrap(), LogAddress(112));
+        let page = second.page_id();
+        let generation = second.generation();
+        drop(second);
+        drop(third);
+        pool.release(page, generation).unwrap();
+        let next = pool.reserve(8, 8).unwrap();
+        assert_eq!(next.address().unwrap(), LogAddress(128));
+        assert_eq!(next.generation(), Generation(1));
+        assert_eq!(first.address().unwrap(), LogAddress(0));
+    }
     #[test]
     fn 范围对齐不重叠且页预算不会静默扩展() {
         let pool = PagePool::new(64, 1).unwrap();
