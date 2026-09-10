@@ -81,7 +81,15 @@ impl<S: Schema> Session<S> {
             .delete(&mut self.runtime, serial, request, options)
     }
     pub fn refresh(&mut self) -> Result<Progress, Error> {
-        Err(Error::unimplemented("coordination::refresh"))
+        if self.participant.is_none() {
+            return Ok(Progress::default());
+        }
+        let phase_advanced = self.engine.observe_session(&mut self.runtime)?;
+        Ok(Progress {
+            completed: 0,
+            remaining: self.runtime.pending(),
+            phase_advanced,
+        })
     }
     pub fn poll(&mut self, budget: PollBudget) -> Result<Progress, Error> {
         if self.participant.is_none() {
@@ -187,6 +195,16 @@ impl<S: Schema> Drop for Session<S> {
         if let Some(participant) = self.participant.take() {
             let _ = self.engine.epoch.unregister(participant);
             let _ = self.engine.coordinator.leave(self.id);
+            if self
+                .engine
+                .coordinator
+                .snapshot()
+                .is_ok_and(|state| state.phase == crate::coordination::Phase::Failed)
+            {
+                self.engine
+                    .failed
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
         }
     }
 }

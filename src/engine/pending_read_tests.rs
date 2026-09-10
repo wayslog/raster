@@ -1271,6 +1271,7 @@ fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成()
         panic!("应挂起")
     };
     let old_id = old_ticket.id();
+    let action = begin_test_cut(&store, &mut [&mut session]);
     assert!(
         session
             .runtime
@@ -1340,6 +1341,7 @@ fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成()
             .last_accepted,
         Some(Serial(7))
     );
+    finish_test_cut(&store, action, &mut [&mut session]);
     assert!(
         !session
             .runtime
@@ -1564,6 +1566,7 @@ fn 新版本替换与读改写不原地修改旧记录但同版本仍可更新()
     };
     let old_put = locate(59);
     let old_rmw = locate(58);
+    let _action = begin_test_cut(&store, &mut [&mut session]);
     session
         .runtime
         .switch_version(CheckpointVersion(1))
@@ -1681,6 +1684,7 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
         else {
             panic!("旧请求应等待读盘")
         };
+        let _action = begin_test_cut(&store, &mut [&mut old, &mut new]);
         new.runtime.switch_version(CheckpointVersion(1)).unwrap();
         let submission = match operation {
             0 => new
@@ -1765,7 +1769,7 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
     }
 }
 #[test]
-fn 丢弃旧票据不释放版本许可而会话放弃会释放() {
+fn 丢弃旧票据不释放许可而阶段放弃使新请求失败终结() {
     let store = setup();
     let mut old = store.start_session(SessionOptions::default()).unwrap();
     let mut new = store.start_session(SessionOptions::default()).unwrap();
@@ -1778,6 +1782,7 @@ fn 丢弃旧票据不释放版本许可而会话放弃会释放() {
         panic!("应挂起")
     };
     drop(ticket);
+    let _action = begin_test_cut(&store, &mut [&mut old, &mut new]);
     new.runtime.switch_version(CheckpointVersion(1)).unwrap();
     let replacements = Rc::new(Cell::new(0));
     let Submission::Pending(mut ticket) = new
@@ -1798,9 +1803,218 @@ fn 丢弃旧票据不释放版本许可而会话放弃会释放() {
     assert_eq!(replacements.get(), 0);
     drop(old);
     assert!(matches!(
-        new.wait(&mut ticket, wait_deadline()).unwrap(),
-        Ok(Outcome::Success(9))
+        new.wait(&mut ticket, wait_deadline()),
+        Err(Error::InvalidState(_))
     ));
+    assert!(matches!(ticket.try_take(), Ok(TicketState::Ready(Err(_)))));
     assert_eq!(calls.get(), 0);
-    assert_eq!(replacements.get(), 1);
+    assert_eq!(replacements.get(), 0);
+}
+
+// 测试只驱动协调阶段，不写检查点材料或宣称持久化成功。
+fn begin_test_cut(
+    store: &RasterKV<Schema>,
+    sessions: &mut [&mut crate::Session<Schema>],
+) -> MaintenanceId {
+    let id = store
+        .inner
+        .coordinator
+        .start_action(crate::coordination::Action::CheckpointLog)
+        .unwrap();
+    for session in sessions {
+        session.refresh().unwrap();
+    }
+    store
+        .inner
+        .coordinator
+        .advance(id, crate::coordination::Phase::Prepare)
+        .unwrap();
+    id
+}
+fn finish_test_cut(
+    store: &RasterKV<Schema>,
+    id: MaintenanceId,
+    sessions: &mut [&mut crate::Session<Schema>],
+) {
+    use crate::coordination::Phase;
+    for session in sessions.iter_mut() {
+        session.refresh().unwrap();
+    }
+    store
+        .inner
+        .coordinator
+        .advance(id, Phase::InProgress)
+        .unwrap();
+    for session in sessions.iter_mut() {
+        session.refresh().unwrap();
+    }
+    store
+        .inner
+        .coordinator
+        .advance(id, Phase::WaitPending)
+        .unwrap();
+    store
+        .inner
+        .coordinator
+        .advance(id, Phase::WaitFlush)
+        .unwrap();
+    store.inner.coordinator.finish_action(id).unwrap();
+}
+
+#[test]
+fn 提交和轮询自动观察版本且旧请求保持原切分() {
+    let store = setup();
+    let mut old = store.start_session(SessionOptions::default()).unwrap();
+    let mut new = store.start_session(SessionOptions::default()).unwrap();
+    let copies = Rc::new(Cell::new(0));
+    let Submission::Pending(mut old_ticket) = old
+        .rmw(
+            Serial(7),
+            Add {
+                key: 0,
+                delta: 1,
+                copies: copies.clone(),
+                initials: Rc::new(Cell::new(0)),
+            },
+            RmwOptions::default(),
+        )
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("旧请求应挂起")
+    };
+    let id = begin_test_cut(&store, &mut [&mut old, &mut new]);
+    assert_eq!(new.runtime.current.version, CheckpointVersion(0));
+    let replacements = Rc::new(Cell::new(0));
+    let Submission::Pending(mut new_ticket) = new
+        .upsert(
+            Serial(9),
+            CountedPut {
+                key: 0,
+                value: 100,
+                calls: replacements.clone(),
+            },
+        )
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("新请求应等待旧请求")
+    };
+    assert_eq!(new.runtime.current.version, CheckpointVersion(1));
+    assert_eq!(new.runtime.previous.as_ref().unwrap().last_accepted, None);
+    assert_eq!(replacements.get(), 0);
+    assert!(matches!(
+        old.wait(&mut old_ticket, wait_deadline()).unwrap(),
+        Ok(Outcome::Success(1))
+    ));
+    assert_eq!(old.runtime.current.version, CheckpointVersion(1));
+    assert_eq!(
+        old.runtime.cut(CheckpointVersion(0)).unwrap().last_accepted,
+        Some(Serial(7))
+    );
+    assert!(matches!(
+        new.wait(&mut new_ticket, wait_deadline()).unwrap(),
+        Ok(Outcome::Success(100))
+    ));
+    use crate::coordination::Phase;
+    store
+        .inner
+        .coordinator
+        .advance(id, Phase::InProgress)
+        .unwrap();
+    old.refresh().unwrap();
+    new.refresh().unwrap();
+    store
+        .inner
+        .coordinator
+        .advance(id, Phase::WaitPending)
+        .unwrap();
+    let cuts = store.inner.coordinator.cuts(id).unwrap();
+    assert!(cuts.iter().any(|cut| cut.session == old.id()
+        && cut.last_accepted == Some(Serial(7))
+        && cut.old_pending == 0));
+    assert!(
+        cuts.iter().any(|cut| cut.session == new.id()
+            && cut.last_accepted.is_none()
+            && cut.old_pending == 0)
+    );
+    store
+        .inner
+        .coordinator
+        .advance(id, Phase::WaitFlush)
+        .unwrap();
+    store.inner.coordinator.finish_action(id).unwrap();
+    old.close(wait_deadline()).unwrap();
+    new.close(wait_deadline()).unwrap();
+    store.shutdown(wait_deadline()).unwrap();
+}
+#[test]
+fn 并发阶段前进与会话确认交错不误报迟到失败() {
+    use crate::coordination::{Action, Phase};
+    for _ in 0..16 {
+        let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+            .device(Box::new(null::NullDeviceFactory))
+            .create()
+            .unwrap();
+        let ready = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            let mut workers = vec![];
+            for _ in 0..2 {
+                let store = &store;
+                let ready = &ready;
+                workers.push(scope.spawn(move || {
+                    let mut session = store.start_session(SessionOptions::default()).unwrap();
+                    ready.wait();
+                    let deadline = wait_deadline();
+                    loop {
+                        assert!(!deadline.expired(), "阶段应在截止时间内推进");
+                        session.refresh().unwrap();
+                        if store.inner.coordinator.snapshot().unwrap().phase == Phase::WaitFlush {
+                            break;
+                        }
+                        std::thread::yield_now();
+                    }
+                    assert_eq!(session.runtime.current.version, CheckpointVersion(1));
+                    session.close(wait_deadline()).unwrap();
+                }));
+            }
+            ready.wait();
+            let id = store
+                .inner
+                .coordinator
+                .start_action(Action::CheckpointLog)
+                .unwrap();
+            for phase in [Phase::Prepare, Phase::InProgress, Phase::WaitPending] {
+                let deadline = wait_deadline();
+                loop {
+                    match store.inner.coordinator.advance(id, phase) {
+                        Ok(_) => break,
+                        Err(Error::Busy) => {
+                            assert!(!deadline.expired(), "参与者必须确认阶段");
+                            std::thread::yield_now();
+                        }
+                        Err(error) => panic!("阶段推进错误：{error}"),
+                    }
+                }
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            assert!(
+                store
+                    .inner
+                    .coordinator
+                    .action_failure(id)
+                    .unwrap()
+                    .is_none()
+            );
+            store
+                .inner
+                .coordinator
+                .advance(id, Phase::WaitFlush)
+                .unwrap();
+            store.inner.coordinator.finish_action(id).unwrap();
+        });
+        store.shutdown(wait_deadline()).unwrap();
+    }
 }

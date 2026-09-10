@@ -19,14 +19,18 @@ impl<S: crate::schema::Schema> super::Engine<S> {
         budget: PollBudget,
     ) -> Result<Progress, Error> {
         use super::pending::TaskStep;
-        let mut failure = self.io.poll(&*self.storage.device, budget).err();
+        let observed = self.observe_session(session);
+        let mut storage_advanced = observed.as_ref().copied().unwrap_or(false);
+        let mut failure = observed.err();
+        if let Err(error) = self.io.poll(&*self.storage.device, budget) {
+            failure.get_or_insert(error);
+        }
         if failure.is_some() {
             self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        let mut storage_advanced = false;
         if !self.failed.load(std::sync::atomic::Ordering::SeqCst) {
             match self.progress_storage() {
-                Ok(advanced) => storage_advanced = advanced,
+                Ok(advanced) => storage_advanced |= advanced,
                 Err(error) => failure = Some(error),
             }
         }
@@ -87,6 +91,12 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                     previous.tasks.remove(&key);
                 }
                 completed += 1;
+            }
+        }
+        match self.observe_session(session) {
+            Ok(advanced) => storage_advanced |= advanced,
+            Err(error) => {
+                failure.get_or_insert(error);
             }
         }
         if let Some(error) = failure {

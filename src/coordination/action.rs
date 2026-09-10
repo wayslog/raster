@@ -339,12 +339,36 @@ mod tests {
         }
     }
     #[test]
+    fn 接受序号与版本校验原子进行且拒绝不消费序号() {
+        let c = Coordinator::new(1).unwrap();
+        let session = SessionId([1; 16]);
+        c.enroll(session).unwrap();
+        c.accept_serial(session, Serial(7), CheckpointVersion(0))
+            .unwrap();
+        let id = c.start_action(Action::CheckpointLog).unwrap();
+        c.acknowledge(id, cut(session, 0), Phase::Prepare).unwrap();
+        c.advance(id, Phase::Prepare).unwrap();
+        for version in [0, 2] {
+            assert!(matches!(
+                c.accept_serial(session, Serial(9), CheckpointVersion(version)),
+                Err(Error::Busy)
+            ));
+            assert_eq!(c.last_accepted(session).unwrap(), Some(Serial(7)));
+        }
+        c.accept_serial(session, Serial(9), CheckpointVersion(1))
+            .unwrap();
+        c.acknowledge(id, cut(session, 0), Phase::InProgress)
+            .unwrap();
+        assert_eq!(c.cuts(id).unwrap()[0].last_accepted, Some(Serial(7)));
+    }
+    #[test]
     fn 完整动作逐阶段确认且旧请求未排空不能发布() {
         let c = Coordinator::new(2).unwrap();
         let sessions = [SessionId([1; 16]), SessionId([2; 16])];
         for session in sessions {
             c.enroll(session).unwrap();
-            c.accept_serial(session, Serial(7)).unwrap();
+            c.accept_serial(session, Serial(7), CheckpointVersion(0))
+                .unwrap();
         }
         let id = c.start_action(Action::CheckpointFull).unwrap();
         assert!(matches!(c.start_action(Action::Gc), Err(Error::Busy)));

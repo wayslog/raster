@@ -236,6 +236,9 @@ impl<S: Schema> Engine<S> {
         request: O,
         options: RmwOptions,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
+        if let Err(reason) = self.observe_session(session) {
+            return Err(Rejected { request, reason });
+        }
         let (hash, key) = match self.prepare(session, serial, &request) {
             Ok(value) => value,
             Err(reason) => return Err(Rejected { request, reason }),

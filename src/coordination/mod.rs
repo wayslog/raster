@@ -94,13 +94,21 @@ impl Coordinator {
         Ok(entry.last_accepted)
     }
     /// 只在其他拒绝条件已检查后调用；拒绝保持原序号。
-    pub fn accept_serial(&self, id: SessionId, serial: Serial) -> Result<(), Error> {
+    pub fn accept_serial(
+        &self,
+        id: SessionId,
+        serial: Serial,
+        version: CheckpointVersion,
+    ) -> Result<(), Error> {
         let mut registry = self
             .registry
             .lock()
             .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
         if registry.closed || registry.system.phase == Phase::Failed {
             return Err(Error::InvalidState("存储已关闭或协调动作失败"));
+        }
+        if version != registry.system.version {
+            return Err(Error::Busy);
         }
         let entry = registry
             .sessions
@@ -195,7 +203,7 @@ mod tests {
         assert!(matches!(c.enroll(a), Err(Error::Busy)));
         assert!(matches!(c.enroll(b), Err(Error::CapacityExceeded)));
         assert!(matches!(c.shutdown(), Err(Error::Busy)));
-        c.accept_serial(a, Serial(7)).unwrap();
+        c.accept_serial(a, Serial(7), CheckpointVersion(0)).unwrap();
         c.leave(a).unwrap();
         c.enroll(b).unwrap();
         c.leave(b).unwrap();
@@ -211,18 +219,22 @@ mod tests {
         c.enroll(a).unwrap();
         c.enroll(b).unwrap();
         for n in [0, 7, 19] {
-            c.accept_serial(a, Serial(n)).unwrap();
+            c.accept_serial(a, Serial(n), CheckpointVersion(0)).unwrap();
         }
         for n in [0, 18, 19] {
-            assert!(c.accept_serial(a, Serial(n)).is_err());
+            assert!(c.accept_serial(a, Serial(n), CheckpointVersion(0)).is_err());
             assert_eq!(c.last_accepted(a).unwrap(), Some(Serial(19)));
         }
         assert_eq!(c.last_accepted(b).unwrap(), None);
         c.leave(a).unwrap();
-        assert!(c.accept_serial(a, Serial(20)).is_err());
+        assert!(
+            c.accept_serial(a, Serial(20), CheckpointVersion(0))
+                .is_err()
+        );
         c.enroll(a).unwrap();
         assert_eq!(c.last_accepted(a).unwrap(), Some(Serial(19)));
-        c.accept_serial(a, Serial(20)).unwrap();
+        c.accept_serial(a, Serial(20), CheckpointVersion(0))
+            .unwrap();
     }
     #[test]
     fn 注册与关闭竞争只有一致的终态() {

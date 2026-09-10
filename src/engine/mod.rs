@@ -2,6 +2,7 @@
 mod conditional_copy;
 mod delete;
 pub(crate) mod io_hub;
+mod observe;
 mod pending;
 mod progress;
 mod read;
@@ -99,7 +100,8 @@ impl<S: Schema> Engine<S> {
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::InvalidState("会话关闭或引擎失败"));
         }
-        self.coordinator.accept_serial(session.id, serial)?;
+        self.coordinator
+            .accept_serial(session.id, serial, session.current.version)?;
         session.current.last_accepted = Some(serial);
         Ok(())
     }
