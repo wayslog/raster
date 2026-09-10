@@ -7,7 +7,7 @@ use crate::{
         operation::{UpdateDecision, UpsertOperation},
     },
     index::{IndexHead, PublishResult},
-    schema::{KeyCodec, Schema, ValueUpdate},
+    schema::{Schema, ValueUpdate},
     types::*,
 };
 impl<S: Schema> Engine<S> {
@@ -17,8 +17,11 @@ impl<S: Schema> Engine<S> {
         serial: Serial,
         mut request: O,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
+        let (hash, key) = match self.prepare(session, serial, &request) {
+            Ok(prepared) => prepared,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
         let codec = self.schema.key_codec();
-        let hash = codec.hash(request.key());
         let _gate = match self.operations[hash.0 as usize % self.operations.len()].try_lock() {
             Ok(g) => g,
             Err(_) => {
@@ -27,18 +30,6 @@ impl<S: Schema> Engine<S> {
                     reason: Error::Busy,
                 });
             }
-        };
-        let key = (|| {
-            let len = codec.encoded_len(request.key())? as usize;
-            let mut key = Vec::new();
-            key.try_reserve_exact(len).map_err(|_| Error::OutOfMemory)?;
-            key.resize(len, 0);
-            codec.encode(request.key(), &mut key)?;
-            Ok::<_, Error>(key)
-        })();
-        let key = match key {
-            Ok(key) => key,
-            Err(reason) => return Err(Rejected { request, reason }),
         };
         if let Err(reason) = self.admit(session, serial) {
             return Err(Rejected { request, reason });
@@ -89,6 +80,8 @@ impl<S: Schema> Engine<S> {
         if result.is_err() && effect == Effect::Unknown {
             self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        Ok(Submission::Ready(result))
+        Ok(Submission::Ready(
+            self.finish_request(request, result, effect),
+        ))
     }
 }

@@ -123,13 +123,7 @@ fn 可能修改的错误失败关闭且不重复执行() {
     ));
     assert!(s.upsert(Serial(3), put(1, 3)).is_err());
     assert_eq!(s.last_accepted(), Some(Serial(2)));
-    let mut second = store.start_session(SessionOptions::default()).unwrap();
-    assert!(
-        second
-            .read(Serial(1), Read(1), ReadOptions::default())
-            .is_err()
-    );
-    assert_eq!(second.last_accepted(), None);
+    assert!(store.start_session(SessionOptions::default()).is_err());
 }
 #[test]
 fn 同标签不同键通过公开接口分别读取() {

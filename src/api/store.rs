@@ -43,6 +43,9 @@ impl<S: Schema> RasterKV<S> {
         }
     }
     pub fn start_session(&self, options: SessionOptions) -> Result<Session<S>, Error> {
+        if self.inner.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::InvalidState("引擎已失败关闭"));
+        }
         let id = match options.id {
             Some(id) => id,
             None => SessionId::generate()?,

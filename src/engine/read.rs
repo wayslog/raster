@@ -6,7 +6,7 @@ use crate::{
         completion::{AbortReason, Outcome},
         operation::{ReadOperation, ReadOptions},
     },
-    schema::{KeyCodec, Schema, ValueRead},
+    schema::{Schema, ValueRead},
     types::*,
 };
 impl<S: Schema> Engine<S> {
@@ -17,7 +17,10 @@ impl<S: Schema> Engine<S> {
         mut request: O,
         options: ReadOptions,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
-        let hash = self.schema.key_codec().hash(request.key());
+        let (hash, _key) = match self.prepare(session, serial, &request) {
+            Ok(prepared) => prepared,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
         let _gate = match self.operations[hash.0 as usize % self.operations.len()].try_lock() {
             Ok(g) => g,
             Err(_) => {
@@ -60,6 +63,10 @@ impl<S: Schema> Engine<S> {
                 })
             }
         };
-        Ok(Submission::Ready(result))
+        Ok(Submission::Ready(self.finish_request(
+            request,
+            result,
+            Effect::NotApplied,
+        )))
     }
 }
