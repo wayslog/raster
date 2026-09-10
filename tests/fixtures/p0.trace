@@ -1,0 +1,9 @@
+raster-trace 1 42
+0 0 - read 0
+0 2 - upsert u 18446744073709551615
+0 3 - rmw 1 u 1
+0 5 - delete 1
+0 6 - read 1
+0 7 - rmw 0 u 4
+0 8 - delete 0
+1 0 ff delete 1
