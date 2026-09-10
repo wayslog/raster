@@ -13,6 +13,23 @@ use std::{
     },
 };
 
+pub(super) fn record_bytes(key_len: usize, plan: ValuePlan) -> Result<(usize, usize), Error> {
+    let plan = plan.validate()?;
+    let prefix = 48usize
+        .checked_add(key_len)
+        .ok_or(Error::CapacityExceeded)?;
+    let offset = prefix
+        .checked_add(plan.alignment - 1)
+        .ok_or(Error::CapacityExceeded)?
+        & !(plan.alignment - 1);
+    let total = offset
+        .checked_add(plan.capacity.max(1))
+        .and_then(|n| n.checked_add(4))
+        .ok_or(Error::CapacityExceeded)?;
+    u32::try_from(total).map_err(|_| Error::CapacityExceeded)?;
+    Ok((offset, total))
+}
+
 /// 磁盘值的独立只读活跃对象，生命周期与日志页池分离。
 pub(crate) struct TemporaryValue<V: ValueLayout> {
     value: PageValue<V>,
@@ -99,28 +116,27 @@ impl<V: ValueLayout> PageValue<V> {
         previous: Option<LogAddress>,
         value: V::Owned,
     ) -> Result<Self, Error> {
+        let plan = layout.plan(&value)?.validate()?;
+        Self::allocate_record(pool, layout, key, previous, plan)?.initialize_owned(value)
+    }
+    pub fn allocate_record(
+        pool: &PagePool,
+        layout: Arc<V>,
+        key: &[u8],
+        previous: Option<LogAddress>,
+        plan: ValuePlan,
+    ) -> Result<Self, Error> {
         if let Some(address) = previous {
             address.validate()?;
         }
-        let plan = layout.plan(&value)?.validate()?;
-        let prefix = 48usize
-            .checked_add(key.len())
-            .ok_or(Error::CapacityExceeded)?;
-        let value_offset = prefix
-            .checked_add(plan.alignment - 1)
-            .ok_or(Error::CapacityExceeded)?
-            & !(plan.alignment - 1);
-        let total = value_offset
-            .checked_add(plan.capacity.max(1))
-            .and_then(|n| n.checked_add(4))
-            .ok_or(Error::CapacityExceeded)?;
-        u32::try_from(total).map_err(|_| Error::CapacityExceeded)?;
+        let plan = plan.validate()?;
+        let (value_offset, total) = record_bytes(key.len(), plan)?;
         let mut range = pool.reserve(total, plan.alignment)?;
         if previous.is_some_and(|address| range.address().is_ok_and(|current| address >= current)) {
             return Err(Error::InvalidFormat("前驱必须早于当前记录"));
         }
-        range.bytes_mut()[48..prefix].copy_from_slice(key);
-        let mut owner = Self {
+        range.bytes_mut()[48..48 + key.len()].copy_from_slice(key);
+        Ok(Self {
             layout,
             range: Some(range),
             initialized: false,
@@ -132,10 +148,15 @@ impl<V: ValueLayout> PageValue<V> {
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
-        };
-        owner.layout.initialize(permit!(owner, InitPermit), value)?;
-        owner.initialized = true;
-        Ok(owner)
+        })
+    }
+    pub fn initialize_owned(mut self, value: V::Owned) -> Result<Self, Error> {
+        if self.initialized || self.tombstone {
+            return Err(Error::InvalidState("值不能重复初始化"));
+        }
+        self.layout.initialize(permit!(self, InitPermit), value)?;
+        self.initialized = true;
+        Ok(self)
     }
     fn value_pointer(&self) -> std::ptr::NonNull<u8> {
         let pointer = self.range.as_ref().expect("值范围存在").pointer();

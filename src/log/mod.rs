@@ -42,6 +42,21 @@ pub(crate) struct PageState {
     pub readers: usize,
     pub io_references: usize,
 }
+/// 原始记录槽尚未消费拥有值，不能直接发布。
+pub(crate) struct RecordAllocation<'a, V: ValueLayout> {
+    owner: &'a HybridLog<V>,
+    value: value::PageValue<V>,
+    activity: ReservationActivity<'a>,
+}
+impl<'a, V: ValueLayout> RecordAllocation<'a, V> {
+    pub fn initialize(self, value: V::Owned) -> Result<RecordReservation<'a, V>, Error> {
+        Ok(RecordReservation {
+            owner: self.owner,
+            value: self.value.initialize_owned(value)?,
+            _activity: self.activity,
+        })
+    }
+}
 /// 已完成值初始化但未进入地址表；丢弃即放弃，不发布半记录。
 pub(crate) struct RecordReservation<'a, V: ValueLayout> {
     owner: &'a HybridLog<V>,
@@ -143,6 +158,62 @@ impl<V: ValueLayout> HybridLog<V> {
             owner: self,
             value: value::PageValue::tombstone(&self.pool, self.layout.clone(), key, previous)?,
         })
+    }
+    pub fn record_fits(
+        &self,
+        key_len: usize,
+        plan: crate::schema::value::ValuePlan,
+    ) -> Result<(), Error> {
+        let (_, total) = value::record_bytes(key_len, plan)?;
+        if total > self.page_bytes || plan.alignment > self.page_bytes {
+            return Err(Error::CapacityExceeded);
+        }
+        Ok(())
+    }
+    pub fn allocate_record(
+        &self,
+        key: &[u8],
+        previous: Option<LogAddress>,
+        plan: crate::schema::value::ValuePlan,
+    ) -> Result<RecordAllocation<'_, V>, Error> {
+        self.record_fits(key.len(), plan)?;
+        let activity = self.enter_reservation()?;
+        Ok(RecordAllocation {
+            owner: self,
+            value: value::PageValue::allocate_record(
+                &self.pool,
+                self.layout.clone(),
+                key,
+                previous,
+                plan,
+            )?,
+            activity,
+        })
+    }
+    pub fn find_mutable(
+        &self,
+        key: &[u8],
+        mut head: Option<LogAddress>,
+    ) -> Result<Option<RecordLease<V>>, Error> {
+        while let Some(address) = head {
+            let frontiers = self.frontiers()?;
+            if address < frontiers.read_only.max(frontiers.head) {
+                return Ok(None);
+            }
+            let lease = match self.lease(address) {
+                Ok(lease) => lease,
+                Err(Error::RangeTruncated) if address < self.frontiers()?.head => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            if lease.key() == key {
+                return Ok(Some(lease));
+            }
+            head = lease.previous();
+            if head.is_some_and(|previous| previous >= address) {
+                return Err(Error::InvalidFormat("日志前驱形成非法回路"));
+            }
+        }
+        Ok(None)
     }
     pub fn reserve_record(
         &self,
@@ -433,6 +504,38 @@ mod tests {
             unsafe { std::ptr::drop_in_place(p.as_ptr().cast::<Box<Resource>>().as_ptr()) };
             Ok(())
         }
+    }
+    #[test]
+    fn 原始记录槽放弃不销毁未初始化值且成功初始化仅销毁一次() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let drops = Arc::new(AtomicUsize::new(0));
+        let destructors = Arc::new(AtomicUsize::new(0));
+        let layout = Arc::new(ResourceLayout {
+            drops: drops.clone(),
+            destructors: destructors.clone(),
+        });
+        let plan = layout.plan(&false).unwrap();
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 128,
+                memory_pages: 1,
+                mutable_fraction: 0.5,
+            },
+            layout,
+        )
+        .unwrap();
+        let allocation = log.allocate_record(b"k", None, plan).unwrap();
+        assert!(log.lease(LogAddress(0)).is_err());
+        drop(allocation);
+        assert_eq!(destructors.load(Ordering::SeqCst), 0);
+        log.release_page(PageId(0), Generation(0)).unwrap();
+        let allocation = log.allocate_record(b"k", None, plan).unwrap();
+        let address = log
+            .finish_initialization(allocation.initialize(false).unwrap())
+            .unwrap();
+        log.retire(address).unwrap();
+        assert_eq!(destructors.load(Ordering::SeqCst), 1);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
     #[test]
     fn 临时解码不占日志页且资源只销毁一次() {

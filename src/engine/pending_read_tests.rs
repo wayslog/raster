@@ -305,3 +305,112 @@ fn 公开写入轮询驱动自动刷盘且两页预算可读回多窗口数据()
     assert!(disk_reads > 400);
     assert_eq!(calls.get(), 500);
 }
+
+struct CountedPut {
+    key: u64,
+    value: u64,
+    calls: Rc<Cell<usize>>,
+}
+impl Keyed<Schema> for CountedPut {
+    fn key(&self) -> &u64 {
+        &self.key
+    }
+}
+impl UpsertOperation<Schema> for CountedPut {
+    type Output = u64;
+    fn replacement(&mut self) -> Result<(u64, u64), Error> {
+        self.calls.set(self.calls.get() + 1);
+        Ok((self.value, self.value))
+    }
+    fn update_in_place(
+        &mut self,
+        _: ValueUpdate<'_, Schema>,
+    ) -> Result<UpdateDecision<u64>, Error> {
+        panic!("本测试只插入新键或替换已淘汰的冷键")
+    }
+}
+#[test]
+fn 容量不足的写入挂起且恢复后不重复调用替换回调() {
+    let mut config = Config::default();
+    config.log.page_bytes = 4096;
+    config.log.memory_pages = 2;
+    config.session.max_pending = 1;
+    config.session.max_results = 1;
+    let device = Arc::new(memory::MemoryDevice::new(16, 131072).unwrap());
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(Factory(device)))
+        .create()
+        .unwrap();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let mut pending = 0;
+    for serial in 0..401 {
+        let key = if serial == 400 { 0 } else { serial };
+        let value = if serial == 400 { 999 } else { serial };
+        let result = session
+            .upsert(
+                Serial(serial),
+                CountedPut {
+                    key,
+                    value,
+                    calls: calls.clone(),
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        match result {
+            Submission::Ready(result) => {
+                assert!(matches!(result, Ok(Outcome::Success(output)) if output == value))
+            }
+            Submission::Pending(mut ticket) => {
+                pending += 1;
+                let mut done = false;
+                for _ in 0..100 {
+                    session.poll(PollBudget::default()).unwrap();
+                    if let TicketState::Ready(result) = ticket.try_take().unwrap() {
+                        assert!(matches!(result, Ok(Outcome::Success(output)) if output == value));
+                        done = true;
+                        break;
+                    }
+                }
+                assert!(done, "等待空间的写入没有终结");
+            }
+        }
+        assert_eq!(calls.get(), serial as usize + 1);
+    }
+    assert!(pending >= 4);
+    assert!(store.inner.log.frontiers().unwrap().safe_head.0 >= 4 * 4096);
+    let reads = Rc::new(Cell::new(0));
+    for key in 0..400 {
+        let expected = if key == 0 { 999 } else { key };
+        match session
+            .read(
+                Serial(401 + key),
+                request(key, &reads),
+                ReadOptions::default(),
+            )
+            .map_err(|r| r.reason)
+            .unwrap()
+        {
+            Submission::Ready(result) => {
+                assert!(matches!(result, Ok(Outcome::Success(value)) if *value == expected))
+            }
+            Submission::Pending(mut ticket) => {
+                let mut done = false;
+                for _ in 0..100 {
+                    session.poll(PollBudget::default()).unwrap();
+                    if let TicketState::Ready(result) = ticket.try_take().unwrap() {
+                        assert!(
+                            matches!(result, Ok(Outcome::Success(value)) if *value == expected)
+                        );
+                        done = true;
+                        break;
+                    }
+                }
+                assert!(done);
+            }
+        }
+    }
+    assert_eq!(calls.get(), 401);
+}
