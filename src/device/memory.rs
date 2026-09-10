@@ -1,7 +1,7 @@
 //! 有界、由 poll 推进的内存设备；不提供进程重启或掉电持久化保证。
 use super::*;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Mutex,
 };
 #[derive(Clone, Debug, Default)]
@@ -31,8 +31,10 @@ struct State {
     next_file: u64,
     pending: VecDeque<Queued>,
     ready: VecDeque<IoCompletion>,
-    files: BTreeMap<PathBuf, Vec<u8>>,
-    handles: BTreeMap<u64, PathBuf>,
+    files: BTreeMap<PathBuf, u64>,
+    objects: BTreeMap<u64, Vec<u8>>,
+    directories: BTreeSet<PathBuf>,
+    handles: BTreeMap<u64, u64>,
 }
 pub struct MemoryDevice {
     capacity: usize,
@@ -59,6 +61,8 @@ impl MemoryDevice {
                 pending: VecDeque::new(),
                 ready: VecDeque::new(),
                 files: BTreeMap::new(),
+                objects: BTreeMap::new(),
+                directories: BTreeSet::new(),
                 handles: BTreeMap::new(),
             }),
         })
@@ -113,13 +117,10 @@ impl MemoryDevice {
         let mut returned = None;
         let result = (|| match operation {
             IoOperation::Open { path, create_new } => {
-                if path.as_os_str().is_empty()
-                    || path.is_absolute()
-                    || path
-                        .components()
-                        .any(|p| !matches!(p, std::path::Component::Normal(_)))
-                {
-                    return Err(Error::InvalidFormat("内存文件路径须为规范相对路径"));
+                valid_path(&path)?;
+                parent_exists(state, &path)?;
+                if state.directories.contains(&path) {
+                    return Err(Error::InvalidFormat("路径是目录"));
                 }
                 if create_new && state.files.contains_key(&path) {
                     return Err(Error::Io(std::io::Error::from(
@@ -132,14 +133,20 @@ impl MemoryDevice {
                     )));
                 }
                 if state.handles.len() >= self.capacity
-                    || (!state.files.contains_key(&path) && state.files.len() >= self.capacity)
+                    || (!state.files.contains_key(&path) && state.objects.len() >= self.capacity)
                 {
                     return Err(Error::CapacityExceeded);
                 }
                 let id = state.next_file;
                 let next = id.checked_add(1).ok_or(Error::CapacityExceeded)?;
-                state.files.entry(path.clone()).or_default();
-                state.handles.insert(id, path);
+                let object = if let Some(object) = state.files.get(&path) {
+                    *object
+                } else {
+                    state.objects.insert(id, Vec::new());
+                    state.files.insert(path, id);
+                    id
+                };
+                state.handles.insert(id, object);
                 state.next_file = next;
                 Ok(IoOutcome::Opened(FileId {
                     slot: id,
@@ -153,7 +160,7 @@ impl MemoryDevice {
             } => {
                 let result = (|| {
                     let path = handle(state, file)?;
-                    let data = state.files.get(path).ok_or(Error::RangeTruncated)?;
+                    let data = state.objects.get(&path).ok_or(Error::RangeTruncated)?;
                     let offset = usize::try_from(offset).map_err(|_| Error::CapacityExceeded)?;
                     let len = buffer
                         .len()
@@ -173,7 +180,7 @@ impl MemoryDevice {
                 buffer,
             } => {
                 let result = (|| {
-                    let path = handle(state, file)?.clone();
+                    let path = handle(state, file)?;
                     let offset = usize::try_from(offset).map_err(|_| Error::CapacityExceeded)?;
                     let transferred = buffer.len().min(limit);
                     if transferred == 0 {
@@ -182,9 +189,9 @@ impl MemoryDevice {
                     let end = offset
                         .checked_add(transferred)
                         .ok_or(Error::CapacityExceeded)?;
-                    let old = state.files.get(&path).ok_or(Error::RangeTruncated)?.len();
+                    let old = state.objects.get(&path).ok_or(Error::RangeTruncated)?.len();
                     self.budget(state, end.saturating_sub(old))?;
-                    let data = state.files.get_mut(&path).expect("文件已检查");
+                    let data = state.objects.get_mut(&path).expect("文件已检查");
                     if end > old {
                         data.try_reserve(end - old)
                             .map_err(|_| Error::OutOfMemory)?;
@@ -197,11 +204,11 @@ impl MemoryDevice {
                 result
             }
             IoOperation::SetLen { file, length } => {
-                let path = handle(state, file)?.clone();
+                let path = handle(state, file)?;
                 let len = usize::try_from(length).map_err(|_| Error::CapacityExceeded)?;
-                let old = state.files.get(&path).ok_or(Error::RangeTruncated)?.len();
+                let old = state.objects.get(&path).ok_or(Error::RangeTruncated)?.len();
                 self.budget(state, len.saturating_sub(old))?;
-                let data = state.files.get_mut(&path).expect("文件已检查");
+                let data = state.objects.get_mut(&path).expect("文件已检查");
                 if len > old {
                     data.try_reserve(len - old)
                         .map_err(|_| Error::OutOfMemory)?;
@@ -210,8 +217,9 @@ impl MemoryDevice {
                 Ok(IoOutcome::Done)
             }
             IoOperation::Close(file) => {
-                handle(state, file)?;
+                let object = handle(state, file)?;
                 state.handles.remove(&file.slot);
+                collect_object(state, object);
                 Ok(IoOutcome::Done)
             }
             IoOperation::SyncFile { file, .. } => {
@@ -224,7 +232,65 @@ impl MemoryDevice {
                 }
                 Ok(IoOutcome::Done)
             }
-            _ => Err(Error::unimplemented("memory::命名空间")),
+            IoOperation::CreateDirectory(path) => {
+                valid_path(&path)?;
+                parent_exists(state, &path)?;
+                if state.files.contains_key(&path) {
+                    return Err(Error::InvalidFormat("目录路径被文件占用"));
+                }
+                if !state.directories.contains(&path) && state.directories.len() >= self.capacity {
+                    return Err(Error::CapacityExceeded);
+                }
+                state.directories.insert(path);
+                Ok(IoOutcome::Done)
+            }
+            IoOperation::SyncDirectory(path) => {
+                if !path.as_os_str().is_empty() {
+                    valid_path(&path)?;
+                    if !state.directories.contains(&path) {
+                        return Err(Error::Io(std::io::Error::from(
+                            std::io::ErrorKind::NotFound,
+                        )));
+                    }
+                }
+                Err(Error::UnsupportedDurability)
+            }
+            IoOperation::Rename {
+                source,
+                destination,
+            } => {
+                valid_path(&source)?;
+                valid_path(&destination)?;
+                parent_exists(state, &destination)?;
+                if state.directories.contains(&destination) {
+                    return Err(Error::InvalidFormat("目标路径是目录"));
+                }
+                let object = *state
+                    .files
+                    .get(&source)
+                    .ok_or(Error::Io(std::io::Error::from(
+                        std::io::ErrorKind::NotFound,
+                    )))?;
+                if source != destination {
+                    state.files.remove(&source);
+                    let old = state.files.insert(destination, object);
+                    if let Some(old) = old {
+                        collect_object(state, old);
+                    }
+                }
+                Ok(IoOutcome::Done)
+            }
+            IoOperation::RemoveFile(path) => {
+                valid_path(&path)?;
+                let object = state
+                    .files
+                    .remove(&path)
+                    .ok_or(Error::Io(std::io::Error::from(
+                        std::io::ErrorKind::NotFound,
+                    )))?;
+                collect_object(state, object);
+                Ok(IoOutcome::Done)
+            }
         })();
         IoCompletion {
             id: queued.id,
@@ -235,7 +301,7 @@ impl MemoryDevice {
     }
     fn budget(&self, state: &State, growth: usize) -> Result<(), Error> {
         let used = state
-            .files
+            .objects
             .values()
             .try_fold(0usize, |n, data| n.checked_add(data.len()))
             .ok_or(Error::CapacityExceeded)?;
@@ -245,11 +311,44 @@ impl MemoryDevice {
         Ok(())
     }
 }
-fn handle(state: &State, file: FileId) -> Result<&PathBuf, Error> {
+fn handle(state: &State, file: FileId) -> Result<u64, Error> {
     if file.generation != Generation(0) {
         return Err(Error::RangeTruncated);
     }
-    state.handles.get(&file.slot).ok_or(Error::RangeTruncated)
+    state
+        .handles
+        .get(&file.slot)
+        .copied()
+        .ok_or(Error::RangeTruncated)
+}
+fn valid_path(path: &std::path::Path) -> Result<(), Error> {
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|p| !matches!(p, std::path::Component::Normal(_)))
+    {
+        return Err(Error::InvalidFormat("内存路径须为规范相对路径"));
+    }
+    Ok(())
+}
+fn parent_exists(state: &State, path: &std::path::Path) -> Result<(), Error> {
+    if path
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty() && !state.directories.contains(parent))
+    {
+        return Err(Error::Io(std::io::Error::from(
+            std::io::ErrorKind::NotFound,
+        )));
+    }
+    Ok(())
+}
+fn collect_object(state: &mut State, object: u64) {
+    if !state.files.values().any(|id| *id == object)
+        && !state.handles.values().any(|id| *id == object)
+    {
+        state.objects.remove(&object);
+    }
 }
 impl Device for MemoryDevice {
     fn capabilities(&self) -> DeviceCapabilities {

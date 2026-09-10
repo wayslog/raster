@@ -309,3 +309,217 @@ fn 拒绝不消耗下一次故障且多个请求反序归还() {
     device.poll(PollBudget::default(), &mut output).unwrap();
     assert_eq!(output.iter().map(|c| c.id).collect::<Vec<_>>(), vec![b, a]);
 }
+#[test]
+fn 重命名覆盖与删除不改变已有句柄的文件身份() {
+    let device = MemoryDevice::new(16, 128).unwrap();
+    complete(&device, IoOperation::CreateDirectory("目录".into()))
+        .result
+        .unwrap();
+    let make = |path: &str| match complete(
+        &device,
+        IoOperation::Open {
+            path: path.into(),
+            create_new: true,
+        },
+    )
+    .result
+    .unwrap()
+    {
+        IoOutcome::Opened(file) => file,
+        _ => panic!("预期文件"),
+    };
+    let a = make("目录/甲");
+    let b = make("目录/乙");
+    for (file, value) in [(a, 1), (b, 2)] {
+        let mut buffer = AlignedBuffer::new_zeroed(1, 1).unwrap();
+        buffer.as_mut_slice()[0] = value;
+        complete(
+            &device,
+            IoOperation::Write {
+                file,
+                offset: 0,
+                buffer,
+            },
+        )
+        .result
+        .unwrap();
+    }
+    complete(
+        &device,
+        IoOperation::Rename {
+            source: "目录/甲".into(),
+            destination: "目录/乙".into(),
+        },
+    )
+    .result
+    .unwrap();
+    for (file, expected) in [(a, 1), (b, 2)] {
+        let done = complete(
+            &device,
+            IoOperation::Read {
+                file,
+                offset: 0,
+                buffer: AlignedBuffer::new_zeroed(1, 1).unwrap(),
+            },
+        );
+        assert_eq!(done.buffer.unwrap().as_slice(), [expected]);
+    }
+    complete(&device, IoOperation::RemoveFile("目录/乙".into()))
+        .result
+        .unwrap();
+    assert!(
+        complete(
+            &device,
+            IoOperation::Open {
+                path: "目录/乙".into(),
+                create_new: false
+            }
+        )
+        .result
+        .is_err()
+    );
+    assert_eq!(
+        complete(
+            &device,
+            IoOperation::Read {
+                file: a,
+                offset: 0,
+                buffer: AlignedBuffer::new_zeroed(1, 1).unwrap()
+            }
+        )
+        .buffer
+        .unwrap()
+        .as_slice(),
+        [1]
+    );
+    assert!(
+        complete(&device, IoOperation::SyncDirectory("目录".into()))
+            .result
+            .is_err()
+    );
+    for path in ["../外部", "/绝对", "缺父/文件"] {
+        assert!(
+            complete(
+                &device,
+                IoOperation::Open {
+                    path: path.into(),
+                    create_new: true
+                }
+            )
+            .result
+            .is_err()
+        );
+    }
+}
+#[test]
+fn 删除的开放对象仍计入预算直到最后句柄关闭() {
+    let device = MemoryDevice::new(8, 4).unwrap();
+    let old = open(&device);
+    complete(
+        &device,
+        IoOperation::SetLen {
+            file: old,
+            length: 4,
+        },
+    )
+    .result
+    .unwrap();
+    complete(&device, IoOperation::RemoveFile("数据".into()))
+        .result
+        .unwrap();
+    let new = open(&device);
+    assert!(
+        complete(
+            &device,
+            IoOperation::SetLen {
+                file: new,
+                length: 4
+            }
+        )
+        .result
+        .is_err()
+    );
+    complete(&device, IoOperation::Close(old)).result.unwrap();
+    complete(
+        &device,
+        IoOperation::SetLen {
+            file: new,
+            length: 4,
+        },
+    )
+    .result
+    .unwrap();
+}
+#[test]
+fn 取消与执行竞争保留两个独立的一次终结() {
+    for _ in 0..32 {
+        let device = MemoryDevice::new(8, 128).unwrap();
+        let file = open(&device);
+        device.set_reverse(true).unwrap();
+        let target = device
+            .submit(request(IoOperation::Read {
+                file,
+                offset: 0,
+                buffer: AlignedBuffer::new_zeroed(1, 1).unwrap(),
+            }))
+            .unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        let (mut output, cancel) = std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                barrier.wait();
+                let mut output = vec![];
+                device
+                    .poll(
+                        PollBudget(std::num::NonZeroUsize::new(1).unwrap()),
+                        &mut output,
+                    )
+                    .unwrap();
+                output
+            });
+            let b = scope.spawn(|| {
+                barrier.wait();
+                device.submit(request(IoOperation::Cancel(target))).unwrap()
+            });
+            (a.join().unwrap(), b.join().unwrap())
+        });
+        device.poll(PollBudget::default(), &mut output).unwrap();
+        assert_eq!(output.len(), 2);
+        assert_eq!(output.iter().filter(|c| c.id == target).count(), 1);
+        assert_eq!(output.iter().filter(|c| c.id == cancel).count(), 1);
+        let target = output.iter().find(|c| c.id == target).unwrap();
+        assert!(target.buffer.is_some());
+        assert!(
+            matches!(&target.result, Ok(IoOutcome::Transferred(0)))
+                || matches!(&target.result,Err(Error::Io(e)) if e.kind()==std::io::ErrorKind::Interrupted)
+        );
+    }
+}
+#[test]
+fn 空设备拒绝原样归还且不承诺恢复() {
+    let device = raster::device::null::NullDeviceFactory
+        .open(DeviceOpenOptions {
+            root: "不使用".into(),
+            create_new: true,
+        })
+        .unwrap();
+    let buffer = AlignedBuffer::new_zeroed(4, 8).unwrap();
+    let pointer = buffer.as_slice().as_ptr();
+    let rejected = device
+        .submit(request(IoOperation::Write {
+            file: FileId {
+                slot: 0,
+                generation: Generation(0),
+            },
+            offset: 0,
+            buffer,
+        }))
+        .unwrap_err();
+    let IoOperation::Write { buffer, .. } = rejected.request.operation else {
+        panic!("应归还写请求")
+    };
+    assert_eq!(buffer.as_slice().as_ptr(), pointer);
+    assert!(!device.capabilities().supports_file_sync);
+    let mut output = vec![];
+    device.poll(PollBudget::default(), &mut output).unwrap();
+    assert!(output.is_empty());
+}
