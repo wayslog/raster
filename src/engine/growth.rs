@@ -47,9 +47,11 @@ impl Job {
                         Err(_) => return Err(Error::InvalidState("扩容遇到业务仲裁锁中毒")),
                     }
                 }
-                let progress = engine.index.grow_step(PollBudget(
-                    std::num::NonZeroUsize::new(1).expect("固定预算"),
-                ))?;
+                let progress = engine.cache.with_normalized_index(&engine.index, || {
+                    engine.index.grow_step(PollBudget(
+                        std::num::NonZeroUsize::new(1).expect("固定预算"),
+                    ))
+                })?;
                 self.progress = Some(progress);
                 if progress.complete {
                     engine.epoch.defer(DeferredAction::ReleaseIndex(Generation(

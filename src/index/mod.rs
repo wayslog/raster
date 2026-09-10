@@ -10,7 +10,6 @@ static NEXT_INDEX: AtomicU64 = AtomicU64::new(0);
 pub(crate) enum IndexHead {
     Empty,
     Log(LogAddress),
-    #[cfg_attr(not(test), expect(dead_code, reason = "P6.2 接入读缓存时构造缓存头"))]
     Cache(CacheAddress),
 }
 #[derive(Clone, Copy, Debug)]

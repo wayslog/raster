@@ -254,3 +254,10 @@ P1.3 的值编码辅助接口和尺寸规则见 [值编码契约](acceptance/P1.
 Maintenance::grow_index 将当前桶数加倍，返回的票据通过维护 poll 或 Session::wait_maintenance 推进。参与会话须 refresh/poll 观察阶段；维护轮询不执行其他会话的业务回调。只有全部桶完成迁移并安全释放旧表后，IndexGrowthReport 才报告 old_buckets、new_buckets 和 generation。重复或冲突动作返回 Busy，丢弃票据不取消扩容。
 
 扩容保持日志检查点版本和逻辑记录地址不变。恢复仍要求 Config.index.buckets 与所选索引材料一致，调用方应保存报告的 new_buckets；初始配置值不等于在线扩容后的当前容量。P6.1 的实现与证据见 [索引扩容交付记录](acceptance/P6.1索引扩容交付记录.md)。
+
+
+## 读缓存实施说明
+
+Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记录的计费内存。计费包含拥有型记录容量和固定结构，读者仍持有的已淘汰记录继续计费；它不是进程 RSS 上限。缓存不足或仲裁竞争只跳过可选安装，后续仍可从日志读取。
+
+写入和删除更换索引头后旧缓存立即失效；检查点与扩容先规范化主日志地址，恢复总是创建空缓存。启用缓存不改变四操作结果与恢复语义，具体证据见 [读缓存交付记录](acceptance/P6.2读缓存交付记录.md)。

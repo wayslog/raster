@@ -92,6 +92,13 @@ fn builder(config: Config) -> raster::Builder<Schema> {
 }
 #[test]
 fn 变长字节键值恢复后读改写扩展且重新恢复保持结果() {
+    scenario(false);
+}
+#[test]
+fn 启用读缓存的变长字节值命中后可读改写并再次恢复() {
+    scenario(true);
+}
+fn scenario(cache: bool) {
     struct Directory(PathBuf);
     impl Drop for Directory {
         fn drop(&mut self) {
@@ -106,6 +113,8 @@ fn 变长字节键值恢复后读改写扩展且重新恢复保持结果() {
     config.storage.root = root.0.clone();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 2;
+    config.cache.enabled = cache;
+    config.cache.capacity_bytes = 128 * 1024;
     let store = builder(config.clone()).create().unwrap();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     let id = session.id();
@@ -173,8 +182,25 @@ fn 变长字节键值恢复后读改写扩展且重新恢复保持结果() {
         .unwrap();
     assert_eq!(outcome(&mut session, submission), vec![7; 1300]);
     let submission = session
-        .rmw(
+        .read(
             Serial(33),
+            Context {
+                key: vec![7, 255],
+                value: vec![],
+            },
+            Default::default(),
+        )
+        .unwrap();
+    if cache {
+        assert!(
+            matches!(&submission, Submission::Ready(_)),
+            "第二次读取应命中缓存"
+        );
+    }
+    assert_eq!(outcome(&mut session, submission), vec![7; 1300]);
+    let submission = session
+        .rmw(
+            Serial(34),
             Context {
                 key: vec![7, 255],
                 value: vec![255; 17],
@@ -203,7 +229,7 @@ fn 变长字节键值恢复后读改写扩展且重新恢复保持结果() {
     let mut session = store.continue_session(id).unwrap().session;
     let submission = session
         .read(
-            Serial(34),
+            Serial(35),
             Context {
                 key: vec![7, 255],
                 value: vec![],

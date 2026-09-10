@@ -23,6 +23,7 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     engine: Arc<Engine<S>>,
     request: Option<O>,
     lookup: Option<LogLookup>,
+    observed: Option<crate::index::EntrySnapshot>,
     key: Vec<u8>,
     hash: KeyHash,
     options: ReadOptions,
@@ -87,11 +88,30 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
         let result = catch_unwind(AssertUnwindSafe(
             || -> Result<Option<Outcome<O::Output>>, Error> {
                 if self.lookup.is_none() {
-                    let entry = self.engine.index.prepare(self.hash)?;
+                    let resolved = self.engine.resolve_index(self.hash, &self.key)?;
+                    if let Some(record) = resolved.cached {
+                        if record.source < self.engine.log.frontiers()?.begin {
+                            return Err(Error::RangeTruncated);
+                        }
+                        let encoded = crate::format::Record::decode(record.encoded())?;
+                        if encoded.header.version != record.version {
+                            return Err(Error::InvalidState("缓存记录版本不匹配"));
+                        }
+                        let value = self.engine.log.decode_temporary(encoded.value)?;
+                        return value
+                            .read(|view| {
+                                self.request
+                                    .as_mut()
+                                    .expect("请求尚未终结")
+                                    .read(ValueRead { view })
+                            })?
+                            .map(|value| Some(Outcome::Success(value)));
+                    }
+                    self.observed = Some(resolved.entry);
                     self.lookup = Some(self.engine.log.lookup(
                         &self.engine.storage,
                         self.key.clone(),
-                        Engine::<S>::head(entry)?,
+                        resolved.head,
                         CompletionHub::route(self.id),
                     )?);
                 }
@@ -112,9 +132,16 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     LookupStep::Resident(value) => value
                         .read(|view| request.read(ValueRead { view }))?
                         .map(|value| Some(Outcome::Success(value))),
-                    LookupStep::Decoded(value) => value
-                        .read(|view| request.read(ValueRead { view }))?
-                        .map(|value| Some(Outcome::Success(value))),
+                    LookupStep::Decoded(value) => {
+                        self.engine.populate_cache(
+                            self.hash,
+                            self.observed.expect("已保存索引快照"),
+                            self.lookup.as_ref().expect("查询已创建"),
+                        )?;
+                        value
+                            .read(|view| request.read(ValueRead { view }))?
+                            .map(|value| Some(Outcome::Success(value)))
+                    }
                 }
             },
         ));
@@ -210,6 +237,7 @@ impl<S: Schema> Engine<S> {
             engine: self.clone(),
             request: Some(request),
             lookup: None,
+            observed: None,
             key,
             hash,
             options,

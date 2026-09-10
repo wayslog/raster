@@ -41,11 +41,12 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             engine.index.prepare(self.hash)?
         } else {
             if self.lookup.is_none() {
-                let entry = engine.index.prepare(self.hash)?;
+                let resolved = engine.resolve_index(self.hash, &self.key)?;
+                let entry = resolved.entry;
                 let lookup = engine.log.lookup_metadata(
                     &engine.storage,
                     self.key.clone(),
-                    Engine::<S>::head(entry)?,
+                    resolved.head,
                     super::io_hub::CompletionHub::route(self.id),
                 )?;
                 self.lookup = Some((entry, lookup));
@@ -71,7 +72,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
         engine.log.tombstone_fits(self.key.len())?;
         let reservation = match engine
             .log
-            .reserve_tombstone(&self.key, Engine::<S>::head(entry)?)
+            .reserve_tombstone(&self.key, engine.resolve_index(self.hash, &self.key)?.head)
         {
             Ok(reservation) => reservation,
             Err(Error::CapacityExceeded) if engine.storage.device.capabilities().supports_files => {

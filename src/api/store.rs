@@ -166,10 +166,7 @@ impl<S: Schema> Builder<S> {
                 reason: "必须提供设备工厂",
             });
         }
-        if self.config.cache.enabled
-            || self.config.maintenance.auto_compaction
-            || self.config.storage.pre_allocate_log
-        {
+        if self.config.maintenance.auto_compaction || self.config.storage.pre_allocate_log {
             return Err(Error::NotImplemented {
                 module: "engine::高级配置",
             });

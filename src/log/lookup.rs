@@ -64,6 +64,33 @@ impl<V: ValueLayout> HybridLog<V> {
     }
 }
 impl LogLookup {
+    /// 只在成功解码冷记录后调用；返回拥有型编码，不暴露页借用。
+    pub fn cache_record(&self, limit: usize) -> Result<Option<(LogAddress, Vec<u8>)>, Error> {
+        if !self.ended {
+            return Ok(None);
+        }
+        let Some(address) = self.next else {
+            return Ok(None);
+        };
+        let Some((_, page)) = &self.cached else {
+            return Ok(None);
+        };
+        let record = page.record(address)?;
+        if record.header.invalid || record.header.tombstone {
+            return Ok(None);
+        }
+        let length = record.header.encoded_len()?;
+        if length > limit {
+            return Ok(None);
+        }
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(length)
+            .map_err(|_| Error::OutOfMemory)?;
+        bytes.resize(length, 0);
+        record.encode(&mut bytes)?;
+        Ok(Some((address, bytes)))
+    }
     #[allow(clippy::result_large_err, reason = "错误路由原样归还完成缓冲")]
     pub fn accept(
         &mut self,

@@ -201,8 +201,7 @@ pub(crate) fn recover<S: Schema>(
     set.store.validate()?;
     set.index.validate()?;
     set.log.validate()?;
-    if config.cache.enabled || config.maintenance.auto_compaction || config.storage.pre_allocate_log
-    {
+    if config.maintenance.auto_compaction || config.storage.pre_allocate_log {
         return Err(Error::unimplemented("engine::高级配置"));
     }
     let deadline = Deadline(

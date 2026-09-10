@@ -1314,3 +1314,6 @@ mod safety;
 
 #[path = "growth_tests.rs"]
 mod growth;
+
+#[path = "cache_tests.rs"]
+mod cache;

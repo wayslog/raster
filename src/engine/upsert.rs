@@ -39,8 +39,9 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
 impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn advance(&mut self) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = self.engine.clone();
-        let entry = engine.index.prepare(self.hash)?;
-        let head = Engine::<S>::head(entry)?;
+        let resolved = engine.resolve_index(self.hash, &self.key)?;
+        let entry = resolved.entry;
+        let head = resolved.head;
         if self.prepared.is_none() {
             let request = self.request.as_mut().expect("请求未完成");
             if let Some(lease) = engine

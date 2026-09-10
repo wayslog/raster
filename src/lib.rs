@@ -10,7 +10,6 @@ pub mod schema;
 pub mod types;
 
 // 内部协议尚未接入运行路径；每个模块实现时移除对应的临时抑制。
-#[allow(dead_code)]
 mod cache;
 mod checkpoint;
 #[allow(dead_code)]

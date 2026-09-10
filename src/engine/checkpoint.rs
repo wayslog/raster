@@ -138,7 +138,11 @@ impl Job {
         match state.phase {
             Phase::IndexSnapshot => {
                 let before = engine.log.frontiers()?;
-                let bytes = engine.index.snapshot()?.encode()?;
+                let bytes = match engine.snapshot_index() {
+                    Ok(bytes) => bytes,
+                    Err(Error::Busy) => return Ok(false),
+                    Err(error) => return Err(error),
+                };
                 let after = engine.log.frontiers()?;
                 self.manifest.begin = before.begin;
                 // 开发期重放覆盖整个保留日志，包含快照前已预留但稍后发布的旧请求。

@@ -38,11 +38,12 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
     fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = self.engine.clone();
         if self.lookup.is_none() {
-            let entry = engine.index.prepare(self.hash)?;
+            let resolved = engine.resolve_index(self.hash, &self.key)?;
+            let entry = resolved.entry;
             let lookup = engine.log.lookup(
                 &engine.storage,
                 self.key.clone(),
-                Engine::<S>::head(entry)?,
+                resolved.head,
                 super::io_hub::CompletionHub::route(self.id),
             )?;
             self.lookup = Some((entry, lookup));
@@ -92,19 +93,17 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         };
         let plan = engine.schema.value_layout().plan(&value)?.validate()?;
         engine.log.record_fits(self.key.len(), plan)?;
-        let allocation =
-            match engine
-                .log
-                .allocate_record(&self.key, Engine::<S>::head(entry)?, plan)
-            {
-                Ok(allocation) => allocation,
-                Err(Error::CapacityExceeded)
-                    if engine.storage.device.capabilities().supports_files =>
-                {
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
-            };
+        let allocation = match engine.log.allocate_record(
+            &self.key,
+            engine.resolve_index(self.hash, &self.key)?.head,
+            plan,
+        ) {
+            Ok(allocation) => allocation,
+            Err(Error::CapacityExceeded) if engine.storage.device.capabilities().supports_files => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
         let address = engine
             .log
             .finish_initialization(allocation.initialize(value)?.with_version(self.version))?;

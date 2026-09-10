@@ -57,6 +57,11 @@ impl ReadCache {
             state: Mutex::new(State::default()),
         }
     }
+    pub fn max_record_bytes(&self) -> usize {
+        self.config
+            .capacity_bytes
+            .saturating_sub(std::mem::size_of::<CachedRecord>())
+    }
     fn bind(state: &mut State, index: &MemIndex) -> Result<(), Error> {
         let owner = index.identity()?;
         if state.owner.is_some_and(|old| old != owner) {
@@ -197,6 +202,7 @@ impl ReadCache {
         state.entries.remove(&address);
         Ok(())
     }
+    #[cfg(test)]
     pub fn invalidate(&self, index: &MemIndex, address: CacheAddress) -> Result<(), Error> {
         let mut state = self
             .state
@@ -224,6 +230,10 @@ impl ReadCache {
         }
         operation()
     }
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "P8 诊断将读取缓存计费，当前由原生容量测试验证")
+    )]
     pub fn allocated_bytes(&self) -> usize {
         self.allocated.load(Ordering::SeqCst)
     }
