@@ -4,6 +4,8 @@
 
 ## 1. Schema 把键语义与值表示分开
 
+P1.1 已实现键规范编码与固定版本哈希，见 [类型与键契约](acceptance/P1.1类型与键契约.md)。身份拒绝全零；地址零有效，u64::MAX 无效。编码版本、算法、种子变化均须拒绝，后续恢复入口必须调用 validate_identity；地址 validate 不授予记录访问许可。值访问、并发和恢复协议尚未实现。
+
 ```rust
 pub trait Schema: Send + Sync + 'static {
     type Key: KeyCodec;

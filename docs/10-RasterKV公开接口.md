@@ -6,6 +6,8 @@
 
 ## 1. 三组公开对象
 
+P1.1 新增实际入口：StoreId/SessionId/CheckpointToken 的 generate/validate，LogAddress/CacheAddress 的 validate/checked_add/page_offset/from_page_offset，KeyHash::tag，以及 KeyCodec::validate_identity。ByteKey/U64Key 已实现 KeyCodec。参数、返回错误和兼容规则见 [类型与键契约](acceptance/P1.1类型与键契约.md)；下文的引擎接口仍是草案。
+
 ```rust
 pub struct RasterKV<S: Schema> { /* 共享引擎句柄 */ }
 pub struct Session<S: Schema> { /* 线程绑定的业务操作流 */ }
