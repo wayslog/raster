@@ -7,8 +7,11 @@ use std::marker::PhantomData;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Buffering {
+    /// 按需读取当前页，不预读后续页。
     Unbuffered,
+    /// 当前页之外预读后续一页，总计最多两页。
     SinglePage,
+    /// 当前页之外预读后续两页，总计最多三页。
     DoublePage,
 }
 #[derive(Clone, Copy, Debug)]
