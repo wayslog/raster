@@ -6,6 +6,7 @@ pub(crate) struct PageCursor {
     bytes: Vec<u8>,
     records: Vec<(LogAddress, Range<usize>)>,
     next: usize,
+    position: LogAddress,
 }
 impl PageCursor {
     /// begin/end 是当前页内的半开范围，允许指向填充；非空范围不能切断记录。
@@ -49,6 +50,7 @@ impl PageCursor {
             bytes,
             records,
             next: 0,
+            position: begin,
         })
     }
 
@@ -61,8 +63,13 @@ impl PageCursor {
             return Ok(None);
         };
         let record = super::record::decode_record(schema, *address, &self.bytes[range.clone()])?;
+        self.position = address.checked_add(range.len() as u64)?;
         self.next += 1;
         Ok(Some(record))
+    }
+
+    pub fn position(&self) -> LogAddress {
+        self.position
     }
 
     /// 只有完整副本分配成功才推进。返回值独立于游标，可跨页复用缓冲后保留。

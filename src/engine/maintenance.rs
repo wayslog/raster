@@ -25,6 +25,7 @@ impl<S: Schema> Engine<S> {
             return Err(Error::InvalidState("引擎或维护动作已失败"));
         }
         self.io.poll(&*self.storage.device, budget)?;
+        self.progress_scans()?;
         let mut advanced = self.progress_storage()?;
         let mut completed = 0;
         for _ in 0..budget.0.get() {

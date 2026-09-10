@@ -1,6 +1,55 @@
 //! 单条驻留记录复制；返回前释放所有页引用，不生成全局一致快照。
 use super::*;
 impl<V: ValueLayout> HybridLog<V> {
+    /// 测试专用：模拟 P7 发布已刷盘范围的逻辑 begin，不执行物理删除。
+    #[cfg(test)]
+    pub fn advance_begin_for_scan_test(&self, begin: LogAddress) {
+        let mut state = self.state.lock().unwrap();
+        assert!(state.frontiers.begin <= begin && begin <= state.frontiers.head);
+        state.frontiers.begin = begin;
+    }
+
+    /// 开放扫描前验证逻辑范围和驻留槽边界；冷页的非对齐边界由页游标另行检查。
+    pub fn validate_scan_range(
+        &self,
+        begin: LogAddress,
+        end: LogAddress,
+    ) -> Result<Frontiers, Error> {
+        begin.validate()?;
+        end.validate()?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        let mut frontiers = state.frontiers;
+        frontiers.tail = self.pool.tail()?;
+        if begin > end || end > frontiers.tail {
+            return Err(Error::InvalidFormat("扫描范围无效"));
+        }
+        if begin < frontiers.begin {
+            return Err(Error::RangeTruncated);
+        }
+        if begin == end {
+            return Ok(frontiers);
+        }
+        if state.reservations != 0 {
+            return Err(Error::Busy);
+        }
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+        for boundary in [begin, end] {
+            if boundary >= frontiers.head
+                && let Some((address, value)) = records.range(..boundary).next_back()
+                && address.checked_add(value.record_bytes() as u64)? > boundary
+            {
+                return Err(Error::InvalidFormat("扫描边界位于记录中间"));
+            }
+        }
+        Ok(frontiers)
+    }
+
     /// 只用于当前内存范围。head 前移导致 RangeTruncated 时，驱动者可重新选择磁盘路径。
     pub fn snapshot_next(
         &self,

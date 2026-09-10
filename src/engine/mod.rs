@@ -11,6 +11,7 @@ mod pending;
 mod progress;
 mod read;
 mod rmw;
+pub(crate) mod scan;
 mod storage_progress;
 mod upsert;
 mod version_permit;
@@ -24,6 +25,7 @@ pub(crate) use pending::SessionRuntime;
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
     pub io: io_hub::CompletionHub,
+    pub scans: scan::ScanRegistry,
     pub growth: std::sync::Mutex<growth::GrowthRuntime>,
     pub checkpoints: std::sync::Mutex<checkpoint::CheckpointRuntime>,
     pub storage_progress: std::sync::Mutex<storage_progress::StorageProgress>,

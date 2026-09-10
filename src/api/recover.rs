@@ -358,14 +358,10 @@ fn build<S: Schema>(
             })
             .collect(),
     };
-    let io_capacity = config
-        .session
-        .max_sessions
-        .checked_mul(config.session.max_pending)
-        .and_then(|n| n.checked_add(2))
-        .ok_or(Error::CapacityExceeded)?;
+    let io_capacity = config.io_capacity()?;
     let engine = Engine {
         id: set.store,
+        scans: Default::default(),
         io: CompletionHub::new(set.store, io_capacity)?,
         growth: std::sync::Mutex::new(Default::default()),
         checkpoints: std::sync::Mutex::new(

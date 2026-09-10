@@ -341,10 +341,11 @@ impl<V: ValueLayout> PageValue<V> {
     pub fn encode_record(&self, maximum_version: CheckpointVersion) -> Result<Vec<u8>, Error> {
         self.copy_record(Some(maximum_version))
     }
-    /// 扫描短暂排除全部更新后复制编码，不修改 sealed 或日志边界。
+    /// 完整记录占槽长度，供扫描检查边界是否落在槽内。
     pub fn record_bytes(&self) -> usize {
         self.range.as_ref().expect("活跃记录持有分配").len()
     }
+    /// 扫描短暂排除全部更新后复制编码，不修改 sealed 或日志边界。
     pub fn snapshot_record(&self) -> Result<Vec<u8>, Error> {
         self.copy_record(None)
     }

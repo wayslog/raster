@@ -3,7 +3,7 @@ use crate::{
     schema::{OwnedKeyOf, OwnedValueOf, Schema},
     types::*,
 };
-use std::marker::PhantomData;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Buffering {
@@ -31,13 +31,29 @@ pub struct ScannedRecord<S: Schema> {
     pub invalid: bool,
 }
 pub struct RecordScanner<S: Schema> {
-    pub(crate) schema: PhantomData<S>,
+    pub(crate) engine: Arc<crate::engine::Engine<S>>,
+    pub(crate) registration: u64,
+    pub(crate) state: Arc<crate::engine::scan::ScanHandle>,
 }
 impl<S: Schema> RecordScanner<S> {
-    pub fn next_record(&mut self) -> Result<Option<ScannedRecord<S>>, Error> {
-        Err(Error::unimplemented("scan::next_record"))
+    pub(crate) fn open(
+        engine: Arc<crate::engine::Engine<S>>,
+        options: ScanOptions,
+    ) -> Result<Self, Error> {
+        engine.open_scan(options)
     }
+    /// 返回拥有型物理记录；结束后重复调用仍为 None。
+    /// Busy、DeadlineExceeded、OutOfMemory 可重试；其他错误关闭扫描，专家恐慌同时失败关闭引擎。
+    pub fn next_record(&mut self) -> Result<Option<ScannedRecord<S>>, Error> {
+        self.engine.scan_next(self.registration, &self.state)
+    }
+    /// 停止预读并等待已接受读取归还；使用 Config.scan.timeout，超时后可再次关闭。
     pub fn close(&mut self) -> Result<(), Error> {
-        Err(Error::unimplemented("scan::close"))
+        self.engine.close_scan(self.registration, &self.state)
+    }
+}
+impl<S: Schema> Drop for RecordScanner<S> {
+    fn drop(&mut self) {
+        self.engine.abandon_scan(self.registration, &self.state);
     }
 }

@@ -21,8 +21,13 @@ pub(crate) struct SegmentSlice {
     pub length: u64,
 }
 struct Binding {
+    protection: Arc<()>,
     generation: Generation,
     file: Option<FileId>,
+}
+/// 短期物理读取租约。持有期间不能摘除对应段映射；Drop 不获取存储锁。
+pub(crate) struct SegmentReadLease {
+    _bindings: Vec<Arc<()>>,
 }
 pub(crate) struct SegmentedStorage {
     pub identity: Arc<()>,
@@ -121,6 +126,7 @@ impl SegmentedStorage {
                 segments.insert(
                     number,
                     Binding {
+                        protection: Arc::new(()),
                         generation,
                         file: Some(file),
                     },
@@ -144,6 +150,29 @@ impl SegmentedStorage {
             generation: binding.generation,
         })
     }
+    /// 在同一映射锁内保护整个物理读取范围，与 invalidate 原子互斥。
+    pub fn lease_read(&self, start: u64, length: usize) -> Result<SegmentReadLease, Error> {
+        let slices = self.split(LogAddress(start), length as u64)?;
+        let mut bindings = Vec::new();
+        bindings
+            .try_reserve_exact(slices.len())
+            .map_err(|_| Error::OutOfMemory)?;
+        let segments = self
+            .segments
+            .lock()
+            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+        for slice in slices {
+            let binding = segments.get(&slice.number).ok_or(Error::RangeTruncated)?;
+            if binding.file.is_none() {
+                return Err(Error::RangeTruncated);
+            }
+            bindings.push(binding.protection.clone());
+        }
+        Ok(SegmentReadLease {
+            _bindings: bindings,
+        })
+    }
+
     pub fn validate_completion(
         &self,
         address: LogAddress,
@@ -171,6 +200,9 @@ impl SegmentedStorage {
         let binding = segments.get_mut(&number).ok_or(Error::RangeTruncated)?;
         if binding.generation != generation {
             return Err(Error::RangeTruncated);
+        }
+        if Arc::strong_count(&binding.protection) != 1 {
+            return Err(Error::Busy);
         }
         let next = Generation(generation.0.checked_add(1).ok_or(Error::CapacityExceeded)?);
         let file = binding.file.take().ok_or(Error::RangeTruncated)?;

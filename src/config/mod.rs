@@ -11,6 +11,13 @@ pub struct Config {
     pub maintenance: MaintenanceConfig,
     pub session: SessionConfig,
     pub recovery: RecoveryConfig,
+    pub scan: ScanConfig,
+}
+/// 扫描注册和同步调用的预算；关闭中的在途扫描也占用名额。
+#[derive(Clone, Debug)]
+pub struct ScanConfig {
+    pub max_scanners: usize,
+    pub timeout: std::time::Duration,
 }
 /// 恢复的临时元数据与索引输入预算，不改变日志驻留页预算。
 #[derive(Clone, Debug)]
@@ -72,6 +79,10 @@ impl Default for Config {
                 auto_compaction: false,
                 workers: 1,
             },
+            scan: ScanConfig {
+                max_scanners: 16,
+                timeout: std::time::Duration::from_secs(30),
+            },
             recovery: RecoveryConfig {
                 max_records: 1_000_000,
                 max_index_bytes: 128 * 1024 * 1024,
@@ -88,6 +99,10 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
         let invalid = |field, reason| Error::InvalidConfig { field, reason };
+        if self.scan.max_scanners == 0 || self.scan.timeout.is_zero() {
+            return Err(invalid("scan", "扫描名额和超时必须非零"));
+        }
+        self.io_capacity()?;
         if self.recovery.max_records == 0
             || self.recovery.max_index_bytes < 36
             || self.recovery.timeout.is_zero()
@@ -136,6 +151,21 @@ impl Config {
             return Err(invalid("capacity", "线程、会话和请求预算必须非零"));
         }
         Ok(())
+    }
+
+    /// 用户请求、后台刷页、检查点及每个扫描器最多三条读取路由。
+    pub(crate) fn io_capacity(&self) -> Result<usize, Error> {
+        self.session
+            .max_sessions
+            .checked_mul(self.session.max_pending)
+            .and_then(|n| n.checked_add(2))
+            .and_then(|n| {
+                self.scan
+                    .max_scanners
+                    .checked_mul(3)
+                    .and_then(|scans| n.checked_add(scans))
+            })
+            .ok_or(Error::CapacityExceeded)
     }
 
     #[cfg(feature = "config-toml")]

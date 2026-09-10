@@ -108,10 +108,10 @@ impl<S: Schema> RasterKV<S> {
     pub fn diagnostics(&self) -> Result<Diagnostics, Error> {
         Err(Error::unimplemented("diagnostics::snapshot"))
     }
-    pub fn scan(&self, _options: ScanOptions) -> Result<RecordScanner<S>, Error> {
-        Err(Error::unimplemented("scan::open"))
+    pub fn scan(&self, options: ScanOptions) -> Result<RecordScanner<S>, Error> {
+        RecordScanner::open(self.inner.clone(), options)
     }
-    /// 立即拒绝仍有活跃会话的关闭，不等待本线程自己的 Session。
+    /// 活跃会话或扫描使关闭立即返回 Busy；已放弃扫描的在途读取按截止时间排空。
     pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, Error> {
         let mut done = self
             .inner
@@ -122,12 +122,23 @@ impl<S: Schema> RasterKV<S> {
                 std::sync::TryLockError::Poisoned(_) => Error::InvalidState("关闭锁中毒"),
             })?;
         if !*done {
+            // 注册扫描与关闭共享关闭锁；活跃扫描立即拒绝，已放弃扫描按截止时间排空。
+            let scan_failure = match self.inner.drain_scans(deadline) {
+                Ok(()) => None,
+                Err(error @ (Error::Busy | Error::DeadlineExceeded)) => return Err(error),
+                Err(error) => {
+                    self.inner
+                        .failed
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    Some(error)
+                }
+            };
             self.inner.coordinator.shutdown()?;
             self.inner
                 .shutdown_requested
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             let failure = match self.inner.drain_storage(deadline) {
-                Ok(()) => None,
+                Ok(()) => scan_failure,
                 Err(Error::DeadlineExceeded) => return Err(Error::DeadlineExceeded),
                 Err(error) => {
                     self.inner
@@ -137,6 +148,7 @@ impl<S: Schema> RasterKV<S> {
                 }
             };
             self.inner.storage.device.shutdown(deadline)?;
+            self.inner.release_stopped_scans()?;
             self.inner.release_stopped_storage()?;
             self.inner.release_stopped_checkpoint()?;
             *done = true;
@@ -172,13 +184,7 @@ impl<S: Schema> Builder<S> {
             });
         }
         let id = StoreId::generate()?;
-        let io_capacity = self
-            .config
-            .session
-            .max_sessions
-            .checked_mul(self.config.session.max_pending)
-            .and_then(|capacity| capacity.checked_add(2))
-            .ok_or(Error::CapacityExceeded)?;
+        let io_capacity = self.config.io_capacity()?;
         let io = crate::engine::io_hub::CompletionHub::new(id, io_capacity)?;
         let schema = Arc::new(self.schema);
         let index = crate::index::MemIndex::new(self.config.index.clone())?;
@@ -205,6 +211,7 @@ impl<S: Schema> Builder<S> {
             inner: Arc::new(Engine {
                 id,
                 io,
+                scans: Default::default(),
                 growth: std::sync::Mutex::new(Default::default()),
                 checkpoints: std::sync::Mutex::new(Default::default()),
                 storage_progress: std::sync::Mutex::new(Default::default()),

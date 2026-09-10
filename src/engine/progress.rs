@@ -25,6 +25,9 @@ impl<S: crate::schema::Schema> super::Engine<S> {
         if let Err(error) = self.io.poll(&*self.storage.device, budget) {
             failure.get_or_insert(error);
         }
+        if let Err(error) = self.progress_scans() {
+            failure.get_or_insert(error);
+        }
         if failure.is_some() {
             self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
         }

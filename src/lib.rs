@@ -25,7 +25,6 @@ mod index;
 mod log;
 #[allow(dead_code)]
 mod maintenance;
-#[allow(dead_code)]
 mod scan;
 #[allow(dead_code)]
 mod storage;
