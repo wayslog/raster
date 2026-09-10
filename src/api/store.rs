@@ -129,6 +129,7 @@ impl<S: Schema> Builder<S> {
             .session
             .max_sessions
             .checked_mul(self.config.session.max_pending)
+            .and_then(|capacity| capacity.checked_add(1))
             .ok_or(Error::CapacityExceeded)?;
         let io = crate::engine::io_hub::CompletionHub::new(id, io_capacity)?;
         let schema = Arc::new(self.schema);
@@ -156,6 +157,7 @@ impl<S: Schema> Builder<S> {
             inner: Arc::new(Engine {
                 id,
                 io,
+                storage_progress: std::sync::Mutex::new(Default::default()),
                 schema,
                 config: self.config,
                 index,

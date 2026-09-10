@@ -19,9 +19,16 @@ impl<S: crate::schema::Schema> super::Engine<S> {
         budget: PollBudget,
     ) -> Result<Progress, Error> {
         use super::pending::TaskStep;
-        if let Err(error) = self.io.poll(&*self.storage.device, budget) {
+        let mut failure = self.io.poll(&*self.storage.device, budget).err();
+        if failure.is_some() {
             self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
-            return Err(error);
+        }
+        let mut storage_advanced = false;
+        if !self.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            match self.progress_storage() {
+                Ok(advanced) => storage_advanced = advanced,
+                Err(error) => failure = Some(error),
+            }
         }
         let mut keys = Vec::new();
         keys.try_reserve_exact(session.pending())
@@ -82,10 +89,13 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                 completed += 1;
             }
         }
+        if let Some(error) = failure {
+            return Err(error);
+        }
         Ok(Progress {
             completed,
             remaining: session.pending(),
-            phase_advanced: false,
+            phase_advanced: storage_advanced,
         })
     }
 }

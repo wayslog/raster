@@ -244,3 +244,64 @@ fn 丢弃票据仍执行读取而丢弃会话明确终结未执行请求() {
     let mut another = store.start_session(SessionOptions::default()).unwrap();
     another.poll(PollBudget::default()).unwrap();
 }
+
+#[test]
+fn 公开写入轮询驱动自动刷盘且两页预算可读回多窗口数据() {
+    let mut config = Config::default();
+    config.log.page_bytes = 4096;
+    config.log.memory_pages = 2;
+    config.session.max_pending = 1;
+    config.session.max_results = 1;
+    let device = Arc::new(memory::MemoryDevice::new(16, 131072).unwrap());
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(Factory(device)))
+        .create()
+        .unwrap();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    for key in 0..500 {
+        assert!(matches!(
+            session
+                .upsert(Serial(key), Put(key))
+                .map_err(|r| r.reason)
+                .unwrap(),
+            Submission::Ready(Ok(_))
+        ));
+        for _ in 0..16 {
+            session.poll(PollBudget::default()).unwrap();
+        }
+    }
+    assert!(store.inner.log.frontiers().unwrap().safe_head.0 >= 7 * 4096);
+    let calls = Rc::new(Cell::new(0));
+    let mut disk_reads = 0;
+    for key in 0..500 {
+        match session
+            .read(
+                Serial(500 + key),
+                request(key, &calls),
+                ReadOptions::default(),
+            )
+            .map_err(|r| r.reason)
+            .unwrap()
+        {
+            Submission::Ready(result) => {
+                assert!(matches!(result, Ok(Outcome::Success(value)) if *value == key))
+            }
+            Submission::Pending(mut ticket) => {
+                disk_reads += 1;
+                let mut done = false;
+                for _ in 0..16 {
+                    session.poll(PollBudget::default()).unwrap();
+                    if let TicketState::Ready(result) = ticket.try_take().unwrap() {
+                        assert!(matches!(result, Ok(Outcome::Success(value)) if *value == key));
+                        done = true;
+                        break;
+                    }
+                }
+                assert!(done, "磁盘读取没有在预算内终结");
+            }
+        }
+    }
+    assert!(disk_reads > 400);
+    assert_eq!(calls.get(), 500);
+}

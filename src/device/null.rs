@@ -11,6 +11,7 @@ impl DeviceFactory for NullDeviceFactory {
 impl Device for NullDevice {
     fn capabilities(&self) -> DeviceCapabilities {
         DeviceCapabilities {
+            supports_files: false,
             memory_alignment: 1,
             transfer_alignment: 1,
             supports_file_sync: false,

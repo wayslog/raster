@@ -353,6 +353,7 @@ fn collect_object(state: &mut State, object: u64) {
 impl Device for MemoryDevice {
     fn capabilities(&self) -> DeviceCapabilities {
         DeviceCapabilities {
+            supports_files: true,
             memory_alignment: 1,
             transfer_alignment: 1,
             supports_file_sync: false,

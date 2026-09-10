@@ -27,6 +27,8 @@ pub struct DeviceOpenOptions {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct DeviceCapabilities {
+    /// 是否支持基本文件读写；与持久化同步能力分开。
+    pub supports_files: bool,
     pub memory_alignment: usize,
     pub transfer_alignment: usize,
     pub supports_file_sync: bool,

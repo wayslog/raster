@@ -105,6 +105,7 @@ fn 设备关闭失败不能报告成功且重试不会重新开放注册() {
     impl Device for DeviceState {
         fn capabilities(&self) -> DeviceCapabilities {
             DeviceCapabilities {
+                supports_files: false,
                 memory_alignment: 1,
                 transfer_alignment: 1,
                 supports_file_sync: false,

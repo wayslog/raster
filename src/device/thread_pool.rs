@@ -177,6 +177,7 @@ mod backend {
     impl Device for ThreadPoolDevice {
         fn capabilities(&self) -> DeviceCapabilities {
             DeviceCapabilities {
+                supports_files: true,
                 memory_alignment: 1,
                 transfer_alignment: 1,
                 supports_file_sync: true,
