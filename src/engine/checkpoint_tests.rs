@@ -1,4 +1,4 @@
-//! 公开检查点入口与原生材料的贯通验证；恢复入口另行验收。
+//! 公开检查点、恢复和原生材料的贯通验证。
 use crate::{
     RasterKV, Submission,
     api::{
@@ -372,6 +372,28 @@ fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
             address = previous;
         }
         assert_eq!(found, if key == 401 { None } else { Some(key) });
+    }
+    let config = store.inner.config.clone();
+    let id = session.id();
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.id(),
+        index: report.token,
+        log: report.token,
+    };
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let (store, recovered) = recover_store(config, set).unwrap();
+    let mut cuts: Vec<_> = recovered.sessions.iter().map(|p| p.serial.0).collect();
+    cuts.sort();
+    assert_eq!(cuts, [37, 400]);
+    let mut session = store.continue_session(id).unwrap().session;
+    for (offset, key) in old_keys.into_iter().chain([401]).enumerate() {
+        assert_eq!(
+            read_value(&mut session, 402 + offset as u64, key),
+            if key == 401 { None } else { Some(key) },
+        );
     }
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
@@ -1275,3 +1297,6 @@ fn 恢复安装同步失败会排空设备且超时后可以重新恢复() {
     let (store, _) = recover_store(config, set).unwrap();
     store.shutdown(deadline()).unwrap();
 }
+
+#[path = "checkpoint_safety_tests.rs"]
+mod safety;
