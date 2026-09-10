@@ -414,3 +414,171 @@ fn 容量不足的写入挂起且恢复后不重复调用替换回调() {
     }
     assert_eq!(calls.get(), 401);
 }
+
+struct Add {
+    key: u64,
+    delta: u64,
+    copies: Rc<Cell<usize>>,
+    initials: Rc<Cell<usize>>,
+}
+impl Keyed<Schema> for Add {
+    fn key(&self) -> &u64 {
+        &self.key
+    }
+}
+impl RmwOperation<Schema> for Add {
+    type Output = u64;
+    fn initial(&mut self) -> Result<(u64, u64), Error> {
+        self.initials.set(self.initials.get() + 1);
+        Ok((self.delta, self.delta))
+    }
+    fn copy_update(&mut self, value: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
+        self.copies.set(self.copies.get() + 1);
+        let value = value.view().wrapping_add(self.delta);
+        Ok((value, value))
+    }
+    fn update_in_place(
+        &mut self,
+        _: ValueUpdate<'_, Schema>,
+    ) -> Result<UpdateDecision<u64>, Error> {
+        Ok(UpdateDecision::Append)
+    }
+}
+fn finish_number(session: &mut crate::Session<Schema>, submission: Submission<u64>) -> u64 {
+    let result = match submission {
+        Submission::Ready(result) => result,
+        Submission::Pending(mut ticket) => {
+            let mut result = None;
+            for _ in 0..100 {
+                session.poll(PollBudget::default()).unwrap();
+                if let TicketState::Ready(value) = ticket.try_take().unwrap() {
+                    result = Some(value);
+                    break;
+                }
+            }
+            result.expect("挂起更新未终结")
+        }
+    };
+    match result.unwrap() {
+        Outcome::Success(value) => value,
+        _ => panic!("预期成功更新"),
+    }
+}
+#[test]
+fn 冷键查询期间发生替换时先重查新值再计算() {
+    let store = setup();
+    let mut first = store.start_session(SessionOptions::default()).unwrap();
+    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let copies = Rc::new(Cell::new(0));
+    let initials = Rc::new(Cell::new(0));
+    let pending = first
+        .rmw(
+            Serial(0),
+            Add {
+                key: 0,
+                delta: 1,
+                copies: copies.clone(),
+                initials: initials.clone(),
+            },
+            RmwOptions::default(),
+        )
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert!(matches!(pending, Submission::Pending(_)));
+    let replacement = second
+        .upsert(
+            Serial(0),
+            CountedPut {
+                key: 0,
+                value: 100,
+                calls: Rc::new(Cell::new(0)),
+            },
+        )
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert_eq!(finish_number(&mut second, replacement), 100);
+    assert_eq!(finish_number(&mut first, pending), 101);
+    assert_eq!(copies.get(), 1);
+    assert_eq!(initials.get(), 0);
+    let missing = first
+        .rmw(
+            Serial(1),
+            Add {
+                key: 999,
+                delta: 1,
+                copies,
+                initials: initials.clone(),
+            },
+            RmwOptions {
+                create_if_missing: false,
+            },
+        )
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert!(matches!(missing, Submission::Ready(Ok(Outcome::NotFound))));
+    assert_eq!(initials.get(), 0);
+}
+#[test]
+fn 读改写新建跨越容量窗口且两个冷键增量不会丢失() {
+    let store = setup();
+    let mut first = store.start_session(SessionOptions::default()).unwrap();
+    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let copies = Rc::new(Cell::new(0));
+    let initials = Rc::new(Cell::new(0));
+    let request = |key| Add {
+        key,
+        delta: 1,
+        copies: copies.clone(),
+        initials: initials.clone(),
+    };
+    let a = first
+        .rmw(Serial(0), request(0), RmwOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    let b = second
+        .rmw(Serial(0), request(0), RmwOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert!(matches!(a, Submission::Pending(_)) && matches!(b, Submission::Pending(_)));
+    assert_eq!(finish_number(&mut first, a), 1);
+    assert_eq!(finish_number(&mut second, b), 2);
+    let mut waiting = 0;
+    for i in 0..400 {
+        let result = first
+            .rmw(Serial(i + 1), request(i + 1000), RmwOptions::default())
+            .map_err(|r| r.reason)
+            .unwrap();
+        if matches!(result, Submission::Pending(_)) {
+            waiting += 1;
+        }
+        assert_eq!(finish_number(&mut first, result), 1);
+    }
+    assert!(waiting > 3);
+    assert!(initials.get() >= 400);
+    assert_eq!(copies.get(), 2);
+    let reads = Rc::new(Cell::new(0));
+    for key in [0, 1000, 1199, 1399] {
+        let serial = Serial(2000 + key);
+        let result = second
+            .read(serial, self::request(key, &reads), ReadOptions::default())
+            .map_err(|r| r.reason)
+            .unwrap();
+        let result = match result {
+            Submission::Ready(result) => result,
+            Submission::Pending(mut ticket) => {
+                let mut result = None;
+                for _ in 0..100 {
+                    second.poll(PollBudget::default()).unwrap();
+                    if let TicketState::Ready(value) = ticket.try_take().unwrap() {
+                        result = Some(value);
+                        break;
+                    }
+                }
+                result.unwrap()
+            }
+        };
+        assert!(
+            matches!(result, Ok(Outcome::Success(value)) if *value == if key == 0 { 2 } else { 1 })
+        );
+    }
+}
