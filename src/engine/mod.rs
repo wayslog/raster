@@ -1,5 +1,5 @@
 //! 四操作编排中心；读取支持磁盘 Pending，写入与持久化路径继续分阶段接入。
-mod checkpoint;
+pub(crate) mod checkpoint;
 mod conditional_copy;
 mod delete;
 pub(crate) mod io_hub;

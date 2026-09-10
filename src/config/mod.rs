@@ -10,6 +10,14 @@ pub struct Config {
     pub cache: CacheConfig,
     pub maintenance: MaintenanceConfig,
     pub session: SessionConfig,
+    pub recovery: RecoveryConfig,
+}
+/// 恢复的临时元数据与索引输入预算，不改变日志驻留页预算。
+#[derive(Clone, Debug)]
+pub struct RecoveryConfig {
+    pub max_records: usize,
+    pub max_index_bytes: usize,
+    pub timeout: std::time::Duration,
 }
 #[derive(Clone, Debug)]
 pub struct StorageConfig {
@@ -64,6 +72,11 @@ impl Default for Config {
                 auto_compaction: false,
                 workers: 1,
             },
+            recovery: RecoveryConfig {
+                max_records: 1_000_000,
+                max_index_bytes: 128 * 1024 * 1024,
+                timeout: std::time::Duration::from_secs(300),
+            },
             session: SessionConfig {
                 max_sessions: 96,
                 max_pending: 1024,
@@ -75,6 +88,15 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
         let invalid = |field, reason| Error::InvalidConfig { field, reason };
+        if self.recovery.max_records == 0
+            || self.recovery.max_index_bytes < 36
+            || self.recovery.timeout.is_zero()
+        {
+            return Err(invalid(
+                "recovery",
+                "恢复记录预算与超时须非零，索引字节预算至少 36",
+            ));
+        }
         if !self.index.buckets.is_power_of_two() {
             return Err(invalid("index.buckets", "必须是非零二次幂"));
         }

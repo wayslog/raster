@@ -9,3 +9,5 @@ pub mod store;
 pub use completion::{OperationResult, Outcome, Submission, Ticket, TicketState};
 pub use session::Session;
 pub use store::{Builder, RasterKV};
+
+pub(crate) mod recover;

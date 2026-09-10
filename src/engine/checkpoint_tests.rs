@@ -830,3 +830,448 @@ fn 日志材料校验通过但键编码不规范时恢复计划不接受材料()
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }
+
+#[derive(Debug)]
+struct Delete(u64);
+impl Keyed<Schema> for Delete {
+    fn key(&self) -> &u64 {
+        &self.0
+    }
+}
+impl crate::api::operation::DeleteOperation<Schema> for Delete {
+    type Output = ();
+    fn complete(self, _: crate::api::operation::DeleteOutcome) {}
+}
+fn read_value(session: &mut Session<Schema>, serial: u64, key: u64) -> Option<u64> {
+    let outcome = match session
+        .read(Serial(serial), Read(key), Default::default())
+        .unwrap()
+    {
+        Submission::Ready(result) => result.unwrap(),
+        Submission::Pending(mut ticket) => session.wait(&mut ticket, deadline()).unwrap().unwrap(),
+    };
+    match outcome {
+        crate::api::completion::Outcome::Success(value) => Some(value),
+        crate::api::completion::Outcome::NotFound => None,
+        _ => panic!("意外读取结果"),
+    }
+}
+fn recover_store(
+    config: Config,
+    set: crate::api::maintenance::RecoverySet,
+) -> Result<(RasterKV<Schema>, crate::api::maintenance::RecoveryReport), Error> {
+    RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(device::thread_pool::ThreadPoolDeviceFactory {
+            workers: 2,
+            queue_capacity: 16,
+        }))
+        .recover(set)
+}
+#[test]
+fn 完整恢复保留墓碑与进度并可继续写入再次检查点和恢复() {
+    let (_root, store) = setup(None);
+    let config = store.inner.config.clone();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let id = session.id();
+    for key in 0..400 {
+        put(&mut session, key, key);
+    }
+    match session
+        .delete(Serial(400), Delete(1), Default::default())
+        .unwrap()
+    {
+        Submission::Ready(result) => {
+            result.unwrap();
+        }
+        Submission::Pending(mut ticket) => {
+            session.wait(&mut ticket, deadline()).unwrap().unwrap();
+        }
+    }
+    let ticket = store
+        .maintenance()
+        .checkpoint(CheckpointKind::Full)
+        .unwrap();
+    let report = wait(&mut session, &ticket);
+    let source_manifest = manifest(&store, &report);
+    let source_path = store.inner.storage.root.join(
+        store
+            .inner
+            .storage
+            .checkpoint_path(report.token, "manifest")
+            .unwrap(),
+    );
+    let source_bytes = std::fs::read(&source_path).unwrap();
+    put(&mut session, 401, 999);
+    session.close(deadline()).unwrap();
+    drop(session);
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: report.token,
+        log: report.token,
+    };
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let (store, recovered) = recover_store(config.clone(), set).unwrap();
+    assert_eq!(recovered.version, report.version);
+    assert_eq!(recovered.sessions[0].serial, Serial(400));
+    assert!(
+        store
+            .inner
+            .storage
+            .segment_directory()
+            .to_string_lossy()
+            .starts_with("restore-")
+    );
+    assert!(
+        store
+            .start_session(SessionOptions { id: Some(id) })
+            .is_err()
+    );
+    assert!(store.continue_session(SessionId([99; 16])).is_err());
+    let resumed = store.continue_session(id).unwrap();
+    assert_eq!(resumed.progress.serial, Serial(400));
+    assert!(matches!(store.continue_session(id), Err(Error::Busy)));
+    let mut session = resumed.session;
+    assert!(session.upsert(Serial(400), Put(888)).is_err());
+    assert_eq!(read_value(&mut session, 401, 0), Some(0));
+    assert_eq!(read_value(&mut session, 402, 1), None);
+    assert_eq!(read_value(&mut session, 403, 999), None);
+    put(&mut session, 404, 777);
+    let ticket = store
+        .maintenance()
+        .checkpoint(CheckpointKind::Full)
+        .unwrap();
+    let next = wait(&mut session, &ticket);
+    assert_eq!(next.sessions[0].serial, Serial(404));
+    assert_eq!(next.version, CheckpointVersion(report.version.0 + 1));
+    assert_eq!(std::fs::read(&source_path).unwrap(), source_bytes);
+    assert_eq!(source_manifest.token, report.token);
+    session.close(deadline()).unwrap();
+    drop(session);
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: next.token,
+        log: next.token,
+    };
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let (store, _) = recover_store(config, set).unwrap();
+    let mut session = store.continue_session(id).unwrap().session;
+    assert_eq!(read_value(&mut session, 405, 777), Some(777));
+    assert_eq!(read_value(&mut session, 406, 1), None);
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+
+#[test]
+fn 索引日志分离恢复后可以再次提交仅日志检查点() {
+    let (_root, store) = setup(None);
+    let config = store.inner.config.clone();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let id = session.id();
+    put(&mut session, 10, 42);
+    let index = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Index)
+            .unwrap(),
+    );
+    put(&mut session, 20, 84);
+    let log = wait(
+        &mut session,
+        &store.maintenance().checkpoint(CheckpointKind::Log).unwrap(),
+    );
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: index.token,
+        log: log.token,
+    };
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let mut invalid = set.clone();
+    invalid.log = invalid.index;
+    assert!(recover_store(config.clone(), invalid).is_err());
+    let (store, report) = recover_store(config.clone(), set.clone()).unwrap();
+    assert_eq!(report.sessions[0].serial, Serial(20));
+    let mut session = store.continue_session(id).unwrap().session;
+    assert_eq!(read_value(&mut session, 21, 42), Some(42));
+    assert_eq!(read_value(&mut session, 22, 84), Some(84));
+    let next = wait(
+        &mut session,
+        &store.maintenance().checkpoint(CheckpointKind::Log).unwrap(),
+    );
+    assert_eq!(manifest(&store, &next).base_index, set.index);
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let (store, report) = recover_store(
+        config,
+        crate::api::maintenance::RecoverySet {
+            log: next.token,
+            ..set
+        },
+    )
+    .unwrap();
+    assert_eq!(report.sessions[0].serial, Serial(22));
+    let mut session = store.continue_session(id).unwrap().session;
+    assert_eq!(read_value(&mut session, 23, 42), Some(42));
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+#[test]
+fn 恢复预算不足或材料缺失不发布实例且原提交保持不变() {
+    let (root, store) = setup(None);
+    let config = store.inner.config.clone();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    for key in 0..120 {
+        put(&mut session, key, key);
+    }
+    let report = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
+    let manifest = manifest(&store, &report);
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: report.token,
+        log: report.token,
+    };
+    let paths: Vec<_> = manifest
+        .materials
+        .iter()
+        .map(|m| {
+            root.0.join(
+                store
+                    .inner
+                    .storage
+                    .checkpoint_path(
+                        report.token,
+                        &crate::storage::SegmentedStorage::checkpoint_material_name(
+                            m.id,
+                            m.generation,
+                        ),
+                    )
+                    .unwrap(),
+            )
+        })
+        .collect();
+    let original: Vec<_> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let mut limited = config.clone();
+    limited.recovery.max_records = 64;
+    assert!(matches!(
+        recover_store(limited, set.clone()),
+        Err(Error::CapacityExceeded)
+    ));
+    for (path, bytes) in paths.iter().zip(&original) {
+        assert_eq!(&std::fs::read(path).unwrap(), bytes);
+    }
+    let mut limited = config.clone();
+    limited.recovery.max_index_bytes = 36;
+    assert!(matches!(
+        recover_store(limited, set.clone()),
+        Err(Error::CapacityExceeded)
+    ));
+    let (store, _) = recover_store(config.clone(), set.clone()).unwrap();
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let wrong_schema = RasterKV::builder(crate::schema::builtin::SchemaPair::new(
+        crate::schema::builtin::ByteKey,
+        AtomicU64Value,
+    ))
+    .config(config.clone())
+    .device(Box::new(device::thread_pool::ThreadPoolDeviceFactory {
+        workers: 2,
+        queue_capacity: 16,
+    }))
+    .recover(set.clone());
+    assert!(matches!(wrong_schema, Err(Error::InvalidFormat(_))));
+    let mut damaged = original[0].clone();
+    damaged[0] ^= 1;
+    std::fs::write(&paths[0], &damaged).unwrap();
+    assert!(matches!(
+        recover_store(config.clone(), set.clone()),
+        Err(Error::InvalidFormat(_))
+    ));
+    std::fs::write(&paths[0], &original[0]).unwrap();
+    std::fs::remove_file(paths.last().unwrap()).unwrap();
+    assert!(matches!(recover_store(config, set), Err(Error::Io(_))));
+}
+#[test]
+fn 恢复子进程入口() {
+    let Some(root) = std::env::var_os("RASTER_RECOVERY_CHILD_ROOT") else {
+        return;
+    };
+    let decode = |name| {
+        let text = std::env::var(name).unwrap();
+        let mut bytes = [0; 16];
+        assert_eq!(text.len(), 32);
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        bytes
+    };
+    let mut config = Config::default();
+    config.storage.root = root.into();
+    config.log.page_bytes = 4096;
+    let token = CheckpointToken(decode("RASTER_RECOVERY_CHILD_TOKEN"));
+    let (store, _) = recover_store(
+        config,
+        crate::api::maintenance::RecoverySet {
+            store: StoreId(decode("RASTER_RECOVERY_CHILD_STORE")),
+            index: token,
+            log: token,
+        },
+    )
+    .unwrap();
+    let mut session = store
+        .continue_session(SessionId(decode("RASTER_RECOVERY_CHILD_SESSION")))
+        .unwrap()
+        .session;
+    assert_eq!(read_value(&mut session, 8, 19), Some(19));
+    put(&mut session, 9, 23);
+    let report = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
+    assert_eq!(report.sessions[0].serial, Serial(9));
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+    println!("恢复子进程完成");
+}
+#[test]
+fn 独立进程恢复后读取写入及检查点通过() {
+    let (root, store) = setup(None);
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let id = session.id();
+    put(&mut session, 7, 19);
+    let report = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
+    let store_id = store.inner.id;
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let hex = |bytes: [u8; 16]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "engine::checkpoint_tests::恢复子进程入口",
+            "--nocapture",
+        ])
+        .env("RASTER_RECOVERY_CHILD_ROOT", &root.0)
+        .env("RASTER_RECOVERY_CHILD_TOKEN", hex(report.token.0))
+        .env("RASTER_RECOVERY_CHILD_STORE", hex(store_id.0))
+        .env("RASTER_RECOVERY_CHILD_SESSION", hex(id.0))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "子进程失败：{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        String::from_utf8(result.stdout)
+            .unwrap()
+            .contains("恢复子进程完成")
+    );
+}
+
+struct RecoverySyncFaultFactory(std::sync::Arc<std::sync::atomic::AtomicBool>);
+struct RecoverySyncFault {
+    inner: Box<dyn Device>,
+    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl DeviceFactory for RecoverySyncFaultFactory {
+    fn open(&self, options: DeviceOpenOptions) -> Result<Box<dyn Device>, Error> {
+        Ok(Box::new(RecoverySyncFault {
+            inner: device::thread_pool::ThreadPoolDeviceFactory {
+                workers: 2,
+                queue_capacity: 16,
+            }
+            .open(options)?,
+            stopped: self.0.clone(),
+        }))
+    }
+}
+impl Device for RecoverySyncFault {
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.inner.capabilities()
+    }
+    fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {
+        if matches!(&request.operation, IoOperation::SyncDirectory(path) if path.to_string_lossy().starts_with("restore-"))
+        {
+            return Err(RejectedIo {
+                request,
+                reason: std::io::Error::other("注入恢复目录同步失败").into(),
+            });
+        }
+        self.inner.submit(request)
+    }
+    fn poll(&self, budget: PollBudget, out: &mut Vec<IoCompletion>) -> Result<(), Error> {
+        self.inner.poll(budget, out)
+    }
+    fn shutdown(&self, deadline: Deadline) -> Result<(), Error> {
+        self.inner.shutdown(deadline)?;
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+#[test]
+fn 恢复安装同步失败会排空设备且超时后可以重新恢复() {
+    let (_root, store) = setup(None);
+    let config = store.inner.config.clone();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    put(&mut session, 7, 19);
+    let report = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.id(),
+        index: report.token,
+        log: report.token,
+    };
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let result = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config.clone())
+        .device(Box::new(RecoverySyncFaultFactory(stopped.clone())))
+        .recover(set.clone());
+    assert!(matches!(result, Err(Error::Io(_))));
+    assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
+    let mut short = config.clone();
+    short.recovery.timeout = Duration::from_nanos(1);
+    assert!(matches!(
+        recover_store(short, set.clone()),
+        Err(Error::DeadlineExceeded)
+    ));
+    let (store, _) = recover_store(config, set).unwrap();
+    store.shutdown(deadline()).unwrap();
+}

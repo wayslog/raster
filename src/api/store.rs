@@ -1,4 +1,4 @@
-//! 创建完成内存组件与设备初始化后返回；恢复仍待检查点协议接入。
+//! 创建和恢复完成全部组件后才发布实例；持久会话须显式继续。
 use super::{
     maintenance::{Maintenance, RecoveryReport, RecoverySet},
     scan::{RecordScanner, ScanOptions},
@@ -35,6 +35,11 @@ pub struct ShutdownReport {
 }
 
 impl<S: Schema> RasterKV<S> {
+    /// 持久存储身份，用于组装恢复集；恢复后保持不变。
+    pub fn id(&self) -> StoreId {
+        self.inner.id
+    }
+
     pub fn builder(schema: S) -> Builder<S> {
         Builder {
             schema,
@@ -67,8 +72,33 @@ impl<S: Schema> RasterKV<S> {
             local: std::marker::PhantomData,
         })
     }
-    pub fn continue_session(&self, _id: SessionId) -> Result<ResumedSession<S>, Error> {
-        Err(Error::unimplemented("coordination::continue_session"))
+    pub fn continue_session(&self, id: SessionId) -> Result<ResumedSession<S>, Error> {
+        if self.inner.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::InvalidState("引擎已失败关闭"));
+        }
+        let (version, serial, durable_version) = self.inner.coordinator.resume(id)?;
+        let participant = match self.inner.epoch.register() {
+            Ok(participant) => participant,
+            Err(error) => {
+                let _ = self.inner.coordinator.leave(id);
+                return Err(error);
+            }
+        };
+        let last = self.inner.coordinator.last_accepted(id)?;
+        Ok(ResumedSession {
+            session: Session {
+                engine: self.inner.clone(),
+                id,
+                participant: Some(participant),
+                runtime: crate::engine::SessionRuntime::new(id, last, version),
+                local: std::marker::PhantomData,
+            },
+            progress: super::maintenance::DurableProgress {
+                session: id,
+                serial,
+                version: durable_version,
+            },
+        })
     }
     pub fn maintenance(&self) -> Maintenance<S> {
         Maintenance {
@@ -197,7 +227,7 @@ impl<S: Schema> Builder<S> {
         })
     }
 
-    pub fn recover(self, _set: RecoverySet) -> Result<(RasterKV<S>, RecoveryReport), Error> {
+    pub fn recover(self, set: RecoverySet) -> Result<(RasterKV<S>, RecoveryReport), Error> {
         self.config.validate()?;
         if self.device.is_none() {
             return Err(Error::InvalidConfig {
@@ -205,6 +235,11 @@ impl<S: Schema> Builder<S> {
                 reason: "必须提供设备工厂",
             });
         }
-        Err(Error::unimplemented("checkpoint::recover"))
+        super::recover::recover(
+            self.config,
+            self.schema,
+            self.device.expect("设备工厂已检查"),
+            set,
+        )
     }
 }

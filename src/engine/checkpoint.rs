@@ -24,6 +24,14 @@ pub(crate) struct CheckpointRuntime {
     job: Option<Job>,
     latest_index: Option<Manifest>,
 }
+impl CheckpointRuntime {
+    pub(crate) fn recovered(index: Manifest) -> Self {
+        Self {
+            job: None,
+            latest_index: Some(index),
+        }
+    }
+}
 enum Work {
     Directory(DirectoryPrepare),
     Index(MaterialWrite),

@@ -68,7 +68,7 @@ impl SegmentOpen {
             return Ok(None);
         }
         let operation = match self.stage {
-            Stage::Directory => IoOperation::CreateDirectory("segments".into()),
+            Stage::Directory => IoOperation::CreateDirectory(storage.segment_directory()),
             Stage::Open => IoOperation::Open {
                 path: storage.segment_path(self.number, self.generation),
                 create_new: self.create_new,

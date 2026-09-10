@@ -105,7 +105,7 @@ impl DeviceFactory for SpyFactory {
 }
 
 #[test]
-fn 创建传递设备失败且未实现恢复不打开设备() {
+fn 创建传递设备失败且无效恢复身份不打开设备() {
     let calls = Arc::new(AtomicUsize::new(0));
     let build = || {
         RasterKV::builder(SchemaPair::new(TestKey, TestLayout))
@@ -122,12 +122,7 @@ fn 创建传递设备失败且未实现恢复不打开设备() {
         index: CheckpointToken([1; 16]),
         log: CheckpointToken([2; 16]),
     };
-    assert!(matches!(
-        build().recover(set),
-        Err(Error::NotImplemented {
-            module: "checkpoint::recover"
-        })
-    ));
+    assert!(matches!(build().recover(set), Err(Error::InvalidFormat(_))));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 

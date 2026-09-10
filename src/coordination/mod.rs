@@ -45,6 +45,7 @@ pub(crate) struct SessionCut {
 struct Registration {
     active: bool,
     last_accepted: Option<Serial>,
+    recovered: Option<(Serial, CheckpointVersion)>,
 }
 struct Registry {
     system: SystemState,
@@ -80,6 +81,74 @@ impl Coordinator {
             }),
             max_sessions,
         })
+    }
+    pub fn from_checkpoint(
+        max_sessions: usize,
+        version: CheckpointVersion,
+        sessions: &[(SessionId, Serial)],
+    ) -> Result<Self, Error> {
+        let mut coordinator = Self::new(max_sessions)?;
+        let registry = coordinator
+            .registry
+            .get_mut()
+            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+        registry.system.version =
+            CheckpointVersion(version.0.checked_add(1).ok_or(Error::CapacityExceeded)?);
+        for &(id, serial) in sessions {
+            id.validate()?;
+            if registry
+                .sessions
+                .insert(
+                    id,
+                    Registration {
+                        active: false,
+                        last_accepted: Some(serial),
+                        recovered: Some((serial, version)),
+                    },
+                )
+                .is_some()
+            {
+                return Err(Error::InvalidFormat("恢复会话重复"));
+            }
+        }
+        Ok(coordinator)
+    }
+    pub fn resume(
+        &self,
+        session: SessionId,
+    ) -> Result<(CheckpointVersion, Serial, CheckpointVersion), Error> {
+        let mut registry = self
+            .registry
+            .lock()
+            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+        if registry.closed || registry.system.phase == Phase::Failed {
+            return Err(Error::InvalidState("存储已关闭或失败"));
+        }
+        if registry.action.is_some() {
+            return Err(Error::Busy);
+        }
+        if registry
+            .sessions
+            .values()
+            .filter(|entry| entry.active)
+            .count()
+            >= self.max_sessions
+        {
+            return Err(Error::CapacityExceeded);
+        }
+        let version = registry.system.version;
+        let entry = registry
+            .sessions
+            .get_mut(&session)
+            .ok_or(Error::InvalidState("没有该会话的恢复进度"))?;
+        if entry.active {
+            return Err(Error::Busy);
+        }
+        let (serial, durable_version) = entry
+            .recovered
+            .ok_or(Error::InvalidState("会话不属于本次恢复集合"))?;
+        entry.active = true;
+        Ok((version, serial, durable_version))
     }
     pub fn last_accepted(&self, id: SessionId) -> Result<Option<Serial>, Error> {
         let registry = self
@@ -158,6 +227,15 @@ impl Coordinator {
         if registry.sessions.values().filter(|e| e.active).count() >= self.max_sessions {
             return Err(Error::CapacityExceeded);
         }
+        if registry
+            .sessions
+            .get(&session)
+            .is_some_and(|entry| entry.recovered.is_some())
+        {
+            return Err(Error::InvalidState(
+                "持久会话必须通过 continue_session 恢复",
+            ));
+        }
         registry
             .sessions
             .entry(session)
@@ -165,6 +243,7 @@ impl Coordinator {
             .or_insert(Registration {
                 active: true,
                 last_accepted: None,
+                recovered: None,
             });
         Ok(registry.system.version)
     }
@@ -194,6 +273,40 @@ impl Coordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn 恢复进度注册遵守容量且拒绝重复身份与版本耗尽() {
+        let a = SessionId([1; 16]);
+        let b = SessionId([2; 16]);
+        assert!(Coordinator::from_checkpoint(1, CheckpointVersion(u64::MAX), &[]).is_err());
+        assert!(
+            Coordinator::from_checkpoint(
+                1,
+                CheckpointVersion(3),
+                &[(a, Serial(7)), (a, Serial(9))]
+            )
+            .is_err()
+        );
+        let c = Coordinator::from_checkpoint(
+            1,
+            CheckpointVersion(3),
+            &[(a, Serial(7)), (b, Serial(19))],
+        )
+        .unwrap();
+        assert!(c.enroll(a).is_err());
+        assert_eq!(
+            c.resume(a).unwrap(),
+            (CheckpointVersion(4), Serial(7), CheckpointVersion(3))
+        );
+        assert!(c.resume(b).is_err());
+        assert!(c.accept_serial(a, Serial(7), CheckpointVersion(4)).is_err());
+        c.accept_serial(a, Serial(11), CheckpointVersion(4))
+            .unwrap();
+        c.leave(a).unwrap();
+        assert_eq!(
+            c.resume(b).unwrap(),
+            (CheckpointVersion(4), Serial(19), CheckpointVersion(3))
+        );
+    }
     #[test]
     fn 重复注册容量和关闭拒绝不改变状态() {
         let c = Coordinator::new(1).unwrap();

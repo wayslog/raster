@@ -41,6 +41,7 @@ pub struct Rejected<R> {
 
 ```rust
 impl<S: Schema> RasterKV<S> {
+    pub fn id(&self) -> StoreId;
     pub fn builder(schema: S) -> Builder<S>;
 
     pub fn start_session(
@@ -69,11 +70,13 @@ impl<S: Schema> Builder<S> {
 
 `create` 仅用于新存储或明确的非持久化设备，不隐式覆盖已有数据。`recover` 在实例对外可见前同步完成，避免多个 RasterKV 克隆之间出现“某个线程正在恢复，另一个已经写入”的组合。上游实例内 Recover 的功能通过该工厂入口保留，方法形式有意调整。
 
+`RasterKV::id()` 返回持久存储身份，恢复后不变，可与检查点 token 组成 `RecoverySet`。`Config.recovery` 默认限制 1,000,000 条重放记录、128 MiB 索引输入和 300 秒恢复时间；这是恢复资源预算，不是总内存上限。恢复先在独立工作目录安装日志，全部校验和同步成功后才发布实例。
+
 `SessionOptions` 支持可选 GUID；活跃 GUID 不可重复注册。`ResumedSession` 包含 Session 和 `DurableProgress`，该进度来自最近恢复报告；继续不存在或已被占用的会话返回错误。
 
 第一阶段建议每线程每存储最多一个活跃业务 Session，以便匹配原线程上下文语义，重复开始明确拒绝。不同线程共享一个 RasterKV。调用线程不会通过全局 TLS 查到另一个 store 的隐式会话。
 
-Config 分为索引、日志、缓存、维护、会话/请求预算和设备选项。`Config::from_toml_str` / `from_toml_file` 对应原配置入口；解析后必须验证范围。命名、默认值与上游差异要在实施时逐项记录。
+Config 分为索引、日志、缓存、维护、恢复预算、会话/请求预算和设备选项。`Config::from_toml_str` / `from_toml_file` 对应原配置入口；解析后必须验证范围。命名、默认值与上游差异要在实施时逐项记录。
 
 ## 3. 四种操作及拥有型上下文
 
