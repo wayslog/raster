@@ -356,6 +356,7 @@ mod tests {
                     )
                     .unwrap()
                 {
+                    LookupStep::Present => panic!("值查询需要返回值"),
                     LookupStep::Continue => {}
                     LookupStep::AwaitingIo => {
                         lookup

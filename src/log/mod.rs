@@ -147,6 +147,15 @@ impl<V: ValueLayout> HybridLog<V> {
             value: value::PageValue::initialize(&self.pool, self.layout.clone(), value)?,
         })
     }
+    pub fn tombstone_fits(&self, key_len: usize) -> Result<(), Error> {
+        if key_len
+            .checked_add(52)
+            .is_none_or(|length| length > self.page_bytes || u32::try_from(length).is_err())
+        {
+            return Err(Error::CapacityExceeded);
+        }
+        Ok(())
+    }
     pub fn reserve_tombstone(
         &self,
         key: &[u8],

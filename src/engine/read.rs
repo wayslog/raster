@@ -76,6 +76,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     .step(&self.engine.log, &self.engine.storage, budget)?
                 {
                     LookupStep::Continue | LookupStep::AwaitingIo => Ok(None),
+                    LookupStep::Present => Err(Error::InvalidState("值查询只返回了元数据")),
                     LookupStep::Missing => Ok(Some(Outcome::NotFound)),
                     LookupStep::Tombstone => Ok(Some(if self.options.abort_if_tombstone {
                         Outcome::Aborted(AbortReason::Tombstone)

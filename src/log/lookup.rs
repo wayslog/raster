@@ -10,6 +10,7 @@ use crate::{
 pub(crate) enum LookupStep<V: ValueLayout> {
     Resident(RecordLease<V>),
     Decoded(value::TemporaryValue<V>),
+    Present,
     Tombstone,
     Missing,
     AwaitingIo,
@@ -25,8 +26,21 @@ pub(crate) struct LogLookup {
     reading: Option<(PageId, PageRead)>,
     cached: Option<(PageId, ReadPage)>,
     ended: bool,
+    needs_value: bool,
 }
 impl<V: ValueLayout> HybridLog<V> {
+    pub fn lookup_metadata(
+        &self,
+        storage: &SegmentedStorage,
+        key: Vec<u8>,
+        head: Option<LogAddress>,
+        version: CheckpointVersion,
+        route: CompletionRoute,
+    ) -> Result<LogLookup, Error> {
+        let mut lookup = self.lookup(storage, key, head, version, route)?;
+        lookup.needs_value = false;
+        Ok(lookup)
+    }
     /// key 必须来自 KeyCodec 的规范编码，不能传入任意未验证的持久字节。
     pub fn lookup(
         &self,
@@ -49,6 +63,7 @@ impl<V: ValueLayout> HybridLog<V> {
             reading: None,
             cached: None,
             ended: false,
+            needs_value: true,
         })
     }
 }
@@ -129,6 +144,8 @@ impl LogLookup {
                 if lease.key() == self.key {
                     return Ok(if lease.is_tombstone() {
                         LookupStep::Tombstone
+                    } else if !self.needs_value {
+                        LookupStep::Present
                     } else {
                         LookupStep::Resident(lease)
                     });
@@ -143,6 +160,8 @@ impl LogLookup {
                     if record.key == self.key {
                         return Ok(if record.header.tombstone {
                             LookupStep::Tombstone
+                        } else if !self.needs_value {
+                            LookupStep::Present
                         } else {
                             LookupStep::Decoded(log.decode_temporary(record.value)?)
                         });

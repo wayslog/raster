@@ -582,3 +582,160 @@ fn 读改写新建跨越容量窗口且两个冷键增量不会丢失() {
         );
     }
 }
+
+struct Erase {
+    key: u64,
+    calls: Rc<Cell<usize>>,
+    panic: bool,
+}
+impl Keyed<Schema> for Erase {
+    fn key(&self) -> &u64 {
+        &self.key
+    }
+}
+impl DeleteOperation<Schema> for Erase {
+    type Output = u64;
+    fn complete(self, _: DeleteOutcome) -> u64 {
+        self.calls.set(self.calls.get() + 1);
+        assert!(!self.panic, "删除完成回调恐慌");
+        self.key
+    }
+}
+#[test]
+fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
+    let store = setup();
+    let mut first = store.start_session(SessionOptions::default()).unwrap();
+    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let delete = |key| Erase {
+        key,
+        calls: calls.clone(),
+        panic: false,
+    };
+    let pending = first
+        .delete(Serial(0), delete(0), DeleteOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert!(matches!(pending, Submission::Pending(_)));
+    let replace = second
+        .upsert(
+            Serial(0),
+            CountedPut {
+                key: 0,
+                value: 100,
+                calls: Rc::new(Cell::new(0)),
+            },
+        )
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert_eq!(finish_number(&mut second, replace), 100);
+    assert_eq!(finish_number(&mut first, pending), 0);
+    let missing = first
+        .delete(Serial(1), delete(999), DeleteOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert!(matches!(missing, Submission::Ready(Ok(Outcome::NotFound))));
+    assert_eq!(calls.get(), 1);
+    let mut waiting = 0;
+    for i in 0..400 {
+        let result = first
+            .delete(
+                Serial(i + 2),
+                delete(i + 1000),
+                DeleteOptions {
+                    force_tombstone: true,
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        if matches!(result, Submission::Pending(_)) {
+            waiting += 1;
+        }
+        assert_eq!(finish_number(&mut first, result), i + 1000);
+        assert_eq!(calls.get(), i as usize + 2);
+    }
+    assert!(waiting >= 3);
+    for key in [0, 1000, 1399] {
+        let read = second
+            .read(
+                Serial(1000 + key),
+                request(key, &Rc::new(Cell::new(0))),
+                ReadOptions {
+                    abort_if_tombstone: true,
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        let result = match read {
+            Submission::Ready(result) => result,
+            Submission::Pending(mut ticket) => {
+                let mut result = None;
+                for _ in 0..100 {
+                    second.poll(PollBudget::default()).unwrap();
+                    if let TicketState::Ready(value) = ticket.try_take().unwrap() {
+                        result = Some(value);
+                        break;
+                    }
+                }
+                result.unwrap()
+            }
+        };
+        assert!(matches!(
+            result,
+            Ok(Outcome::Aborted(
+                crate::api::completion::AbortReason::Tombstone
+            ))
+        ));
+    }
+}
+#[test]
+fn 磁盘删除完成回调恐慌只终结一次且保留已生效墓碑() {
+    use crate::schema::KeyCodec;
+    let store = setup();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let Submission::Pending(mut ticket) = session
+        .delete(
+            Serial(0),
+            Erase {
+                key: 0,
+                calls: calls.clone(),
+                panic: true,
+            },
+            DeleteOptions::default(),
+        )
+        .map_err(|r| r.reason)
+        .unwrap()
+    else {
+        panic!("应等待磁盘")
+    };
+    let mut result = None;
+    for _ in 0..100 {
+        session.poll(PollBudget::default()).unwrap();
+        if let TicketState::Ready(value) = ticket.try_take().unwrap() {
+            result = Some(value);
+            break;
+        }
+    }
+    assert!(matches!(
+        result.unwrap(),
+        Err(OperationError {
+            effect: Effect::Applied,
+            ..
+        })
+    ));
+    assert_eq!(calls.get(), 1);
+    assert!(store.inner.failed.load(std::sync::atomic::Ordering::SeqCst));
+    let head =
+        super::Engine::<Schema>::head(store.inner.index.prepare(U64Key.hash(&0)).unwrap()).unwrap();
+    assert!(
+        store
+            .inner
+            .log
+            .find(&U64Key, &0, head)
+            .unwrap()
+            .unwrap()
+            .is_tombstone()
+    );
+    assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
+}

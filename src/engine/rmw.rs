@@ -60,6 +60,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         }
         let request = self.request.as_mut().expect("请求尚未终结");
         let (value, output) = match source {
+            LookupStep::Present => return Err(Error::InvalidState("值查询只返回了元数据")),
             LookupStep::Resident(lease) => {
                 if !self.skip_in_place {
                     self.effect = Effect::Unknown;
