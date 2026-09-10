@@ -11,12 +11,22 @@ impl DeviceFactory for MemoryDeviceFactory {
         Ok(Box::new(MemoryDevice::new(1024, 64 * 1024 * 1024)?))
     }
 }
+/// 绑定到下一次成功接受的请求，拒绝不会消耗该故障。
+#[derive(Clone, Copy, Debug)]
+pub enum MemoryFault {
+    Fail(std::io::ErrorKind),
+    Short(usize),
+}
 struct Queued {
+    fault: Option<MemoryFault>,
+    cancelled: bool,
     id: IoId,
     request: IoRequest,
 }
 struct State {
     closed: bool,
+    fault: Option<MemoryFault>,
+    reverse: bool,
     next_io: u64,
     next_file: u64,
     pending: VecDeque<Queued>,
@@ -42,6 +52,8 @@ impl MemoryDevice {
             max_bytes,
             state: Mutex::new(State {
                 closed: false,
+                fault: None,
+                reverse: false,
                 next_io: 0,
                 next_file: 0,
                 pending: VecDeque::new(),
@@ -51,8 +63,53 @@ impl MemoryDevice {
             }),
         })
     }
+    pub fn inject_next(&self, fault: MemoryFault) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("内存设备锁中毒"))?;
+        if state.fault.is_some() {
+            return Err(Error::Busy);
+        }
+        state.fault = Some(fault);
+        Ok(())
+    }
+    /// 测试用反向执行队列，用于确定地制造乱序；不会执行用户业务回调。
+    pub fn set_reverse(&self, reverse: bool) -> Result<(), Error> {
+        self.state
+            .lock()
+            .map_err(|_| Error::InvalidState("内存设备锁中毒"))?
+            .reverse = reverse;
+        Ok(())
+    }
     fn execute(&self, state: &mut State, queued: Queued) -> IoCompletion {
         let IoRequest { route, operation } = queued.request;
+        let fault = if queued.cancelled {
+            Some(std::io::ErrorKind::Interrupted)
+        } else {
+            match queued.fault {
+                Some(MemoryFault::Fail(kind)) => Some(kind),
+                _ => None,
+            }
+        };
+        if let Some(kind) = fault {
+            let buffer = match operation {
+                IoOperation::Read { buffer, .. } | IoOperation::Write { buffer, .. } => {
+                    Some(buffer)
+                }
+                _ => None,
+            };
+            return IoCompletion {
+                id: queued.id,
+                route,
+                result: Err(Error::Io(std::io::Error::from(kind))),
+                buffer,
+            };
+        }
+        let limit = match queued.fault {
+            Some(MemoryFault::Short(limit)) => limit,
+            _ => usize::MAX,
+        };
         let mut returned = None;
         let result = (|| match operation {
             IoOperation::Open { path, create_new } => {
@@ -98,7 +155,10 @@ impl MemoryDevice {
                     let path = handle(state, file)?;
                     let data = state.files.get(path).ok_or(Error::RangeTruncated)?;
                     let offset = usize::try_from(offset).map_err(|_| Error::CapacityExceeded)?;
-                    let len = buffer.len().min(data.len().saturating_sub(offset));
+                    let len = buffer
+                        .len()
+                        .min(limit)
+                        .min(data.len().saturating_sub(offset));
                     if len > 0 {
                         buffer.as_mut_slice()[..len].copy_from_slice(&data[offset..offset + len]);
                     }
@@ -115,8 +175,12 @@ impl MemoryDevice {
                 let result = (|| {
                     let path = handle(state, file)?.clone();
                     let offset = usize::try_from(offset).map_err(|_| Error::CapacityExceeded)?;
+                    let transferred = buffer.len().min(limit);
+                    if transferred == 0 {
+                        return Ok(IoOutcome::Transferred(0));
+                    }
                     let end = offset
-                        .checked_add(buffer.len())
+                        .checked_add(transferred)
                         .ok_or(Error::CapacityExceeded)?;
                     let old = state.files.get(&path).ok_or(Error::RangeTruncated)?.len();
                     self.budget(state, end.saturating_sub(old))?;
@@ -126,8 +190,8 @@ impl MemoryDevice {
                             .map_err(|_| Error::OutOfMemory)?;
                         data.resize(end, 0);
                     }
-                    data[offset..end].copy_from_slice(buffer.as_slice());
-                    Ok(IoOutcome::Transferred(buffer.len()))
+                    data[offset..end].copy_from_slice(&buffer.as_slice()[..transferred]);
+                    Ok(IoOutcome::Transferred(transferred))
                 })();
                 returned = Some(buffer);
                 result
@@ -154,7 +218,13 @@ impl MemoryDevice {
                 handle(state, file)?;
                 Err(Error::UnsupportedDurability)
             }
-            _ => Err(Error::unimplemented("memory::命名空间与取消")),
+            IoOperation::Cancel(target) => {
+                if let Some(pending) = state.pending.iter_mut().find(|p| p.id == target) {
+                    pending.cancelled = true;
+                }
+                Ok(IoOutcome::Done)
+            }
+            _ => Err(Error::unimplemented("memory::命名空间")),
         })();
         IoCompletion {
             id: queued.id,
@@ -225,7 +295,13 @@ impl Device for MemoryDevice {
         }
         let id = IoId(state.next_io);
         state.next_io = next;
-        state.pending.push_back(Queued { id, request });
+        let fault = state.fault.take();
+        state.pending.push_back(Queued {
+            id,
+            request,
+            fault,
+            cancelled: false,
+        });
         Ok(id)
     }
     fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
@@ -238,7 +314,11 @@ impl Device for MemoryDevice {
         for _ in 0..count {
             if let Some(completion) = state.ready.pop_front() {
                 output.push(completion);
-            } else if let Some(queued) = state.pending.pop_front() {
+            } else if let Some(queued) = if state.reverse {
+                state.pending.pop_back()
+            } else {
+                state.pending.pop_front()
+            } {
                 output.push(self.execute(&mut state, queued));
             }
         }
@@ -255,7 +335,12 @@ impl Device for MemoryDevice {
                 return Err(Error::DeadlineExceeded);
             }
             state.ready.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
-            let queued = state.pending.pop_front().expect("队列非空");
+            let queued = if state.reverse {
+                state.pending.pop_back()
+            } else {
+                state.pending.pop_front()
+            }
+            .expect("队列非空");
             let completed = self.execute(&mut state, queued);
             state.ready.push_back(completed);
         }

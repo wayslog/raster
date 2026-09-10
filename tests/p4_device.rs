@@ -173,3 +173,139 @@ fn 文件代次关闭容量和持久化能力拒绝() {
     assert!(result.result.is_err());
     assert!(result.buffer.is_some());
 }
+#[test]
+fn 可控短写短读和失败保持缓冲与数据边界() {
+    use raster::device::memory::MemoryFault;
+    let device = MemoryDevice::new(8, 128).unwrap();
+    let file = open(&device);
+    let mut buffer = AlignedBuffer::new_zeroed(4, 8).unwrap();
+    buffer.as_mut_slice().copy_from_slice(b"abcd");
+    let pointer = buffer.as_slice().as_ptr();
+    device.inject_next(MemoryFault::Short(2)).unwrap();
+    let done = complete(
+        &device,
+        IoOperation::Write {
+            file,
+            offset: 0,
+            buffer,
+        },
+    );
+    assert!(matches!(done.result, Ok(IoOutcome::Transferred(2))));
+    assert_eq!(done.buffer.unwrap().as_slice().as_ptr(), pointer);
+    device.inject_next(MemoryFault::Short(1)).unwrap();
+    let done = complete(
+        &device,
+        IoOperation::Read {
+            file,
+            offset: 0,
+            buffer: AlignedBuffer::new_zeroed(4, 8).unwrap(),
+        },
+    );
+    assert!(matches!(done.result, Ok(IoOutcome::Transferred(1))));
+    assert_eq!(done.buffer.unwrap().as_slice(), [b'a', 0, 0, 0]);
+    device
+        .inject_next(MemoryFault::Fail(std::io::ErrorKind::Other))
+        .unwrap();
+    let done = complete(
+        &device,
+        IoOperation::Write {
+            file,
+            offset: 0,
+            buffer: AlignedBuffer::new_zeroed(4, 8).unwrap(),
+        },
+    );
+    assert!(done.result.is_err());
+    assert!(done.buffer.is_some());
+    let done = complete(
+        &device,
+        IoOperation::Read {
+            file,
+            offset: 0,
+            buffer: AlignedBuffer::new_zeroed(4, 8).unwrap(),
+        },
+    );
+    assert_eq!(done.buffer.unwrap().as_slice(), [b'a', b'b', 0, 0]);
+}
+#[test]
+fn 反向执行取消待执行请求与迟到取消都只终结一次() {
+    let device = MemoryDevice::new(8, 128).unwrap();
+    let file = open(&device);
+    device.set_reverse(true).unwrap();
+    let write = device
+        .submit(request(IoOperation::Write {
+            file,
+            offset: 0,
+            buffer: AlignedBuffer::new_zeroed(4, 8).unwrap(),
+        }))
+        .unwrap();
+    let cancel = device.submit(request(IoOperation::Cancel(write))).unwrap();
+    let mut output = vec![];
+    device.poll(PollBudget::default(), &mut output).unwrap();
+    assert_eq!(output.len(), 2);
+    assert_eq!(output[0].id, cancel);
+    assert!(output[0].result.is_ok());
+    assert_eq!(output[1].id, write);
+    assert!(
+        matches!(&output[1].result,Err(Error::Io(e)) if e.kind()==std::io::ErrorKind::Interrupted)
+    );
+    assert!(output[1].buffer.is_some());
+    assert!(complete(&device, IoOperation::Cancel(write)).result.is_ok());
+    output.clear();
+    device.poll(PollBudget::default(), &mut output).unwrap();
+    assert!(output.is_empty());
+    let done = complete(
+        &device,
+        IoOperation::Read {
+            file,
+            offset: 0,
+            buffer: AlignedBuffer::new_zeroed(4, 8).unwrap(),
+        },
+    );
+    assert!(matches!(done.result, Ok(IoOutcome::Transferred(0))));
+}
+#[test]
+fn 拒绝不消耗下一次故障且多个请求反序归还() {
+    use raster::device::memory::MemoryFault;
+    let device = MemoryDevice::new(1, 128).unwrap();
+    device
+        .submit(request(IoOperation::Open {
+            path: "数据".into(),
+            create_new: true,
+        }))
+        .unwrap();
+    device
+        .inject_next(MemoryFault::Fail(std::io::ErrorKind::PermissionDenied))
+        .unwrap();
+    let rejected = device
+        .submit(request(IoOperation::Open {
+            path: "其他".into(),
+            create_new: true,
+        }))
+        .unwrap_err();
+    let mut output = vec![];
+    device.poll(PollBudget::default(), &mut output).unwrap();
+    assert!(output[0].result.is_ok());
+    device.submit(rejected.request).unwrap();
+    output.clear();
+    device.poll(PollBudget::default(), &mut output).unwrap();
+    assert!(
+        matches!(&output[0].result,Err(Error::Io(e)) if e.kind()==std::io::ErrorKind::PermissionDenied)
+    );
+    let device = MemoryDevice::new(4, 128).unwrap();
+    device.set_reverse(true).unwrap();
+    let a = device
+        .submit(request(IoOperation::Open {
+            path: "甲".into(),
+            create_new: true,
+        }))
+        .unwrap();
+    let b = device
+        .submit(request(IoOperation::Open {
+            path: "乙".into(),
+            create_new: true,
+        }))
+        .unwrap();
+    output.clear();
+    device.poll(PollBudget::default(), &mut output).unwrap();
+    assert_eq!(output.iter().map(|c| c.id).collect::<Vec<_>>(), vec![b, a]);
+}
