@@ -42,17 +42,6 @@ pub(crate) struct RecordLease<'a> {
     guard: PhantomData<&'a ()>,
     local: PhantomData<Rc<()>>,
 }
-pub(crate) struct MutationGate {
-    active_writers: crate::sync::AtomicU64,
-}
-pub(crate) struct ReplacementPermit<'a> {
-    gate: &'a MutationGate,
-    local: PhantomData<Rc<()>>,
-}
-pub(crate) struct SharedUpdatePermit<'a> {
-    gate: &'a MutationGate,
-    local: PhantomData<Rc<()>>,
-}
 pub(crate) struct HybridLog {
     config: LogConfig,
     frontiers: AtomicFrontiers,
@@ -82,12 +71,5 @@ impl HybridLog {
         Err(Error::unimplemented("log::flush"))
     }
 }
-impl MutationGate {
-    pub fn try_update(&self) -> Result<SharedUpdatePermit<'_>, Error> {
-        Err(Error::unimplemented("log::mutation_gate"))
-    }
-    /// 不得带共享许可升级，也不得跨 Pending 持有此许可。
-    pub fn try_replace(&self) -> Result<ReplacementPermit<'_>, Error> {
-        Err(Error::unimplemented("log::mutation_gate"))
-    }
-}
+
+mod gate;
