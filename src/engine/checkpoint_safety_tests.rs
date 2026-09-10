@@ -135,3 +135,6 @@ fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材�
         restored.shutdown(deadline()).unwrap();
     }
 }
+
+#[path = "checkpoint_crash_tests.rs"]
+mod crash;
