@@ -96,6 +96,18 @@ impl PagePool {
             }),
         })
     }
+    pub fn generation(&self, page: PageId) -> Result<Generation, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+        state
+            .entries
+            .iter()
+            .find(|entry| entry.id == page && entry.page.is_some())
+            .map(|entry| entry.generation)
+            .ok_or(Error::RangeTruncated)
+    }
     pub fn tail(&self) -> Result<LogAddress, Error> {
         let state = self
             .state

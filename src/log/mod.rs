@@ -25,6 +25,12 @@ impl Drop for ReservationActivity<'_> {
         state.reservations -= 1;
     }
 }
+/// 所有字节已独立编码，不含页面引用或用户视图，可以交给设备线程。
+pub(crate) struct EncodedPage {
+    pub page: PageId,
+    pub generation: Generation,
+    pub bytes: Vec<u8>,
+}
 pub(crate) struct PageState {
     pub id: PageId,
     pub generation: Generation,
@@ -264,6 +270,63 @@ impl<V: ValueLayout> HybridLog<V> {
         state.frontiers.safe_read_only = target;
         Ok(())
     }
+    pub fn encode_page(
+        &self,
+        page: PageId,
+        version: CheckpointVersion,
+    ) -> Result<EncodedPage, Error> {
+        let begin = LogAddress::from_page_offset(page, 0, self.page_bytes as u64)?;
+        let end = begin.checked_add(self.page_bytes as u64)?;
+        let (generation, values) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            if end > state.frontiers.safe_read_only {
+                return Err(Error::Busy);
+            }
+            let generation = self.pool.generation(page)?;
+            let records = self
+                .records
+                .lock()
+                .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+            let mut values = Vec::new();
+            for (address, value) in records.range(begin..end) {
+                values.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+                values.push((*address, value.clone()));
+            }
+            (generation, values)
+        };
+        // 专家布局回调执行期间不持有日志控制锁或记录表锁。
+        let mut payload = Vec::new();
+        payload
+            .try_reserve_exact(self.page_bytes)
+            .map_err(|_| Error::OutOfMemory)?;
+        payload.resize(self.page_bytes, 0);
+        for (address, value) in values {
+            let encoded = value.encode_record(version)?;
+            let offset =
+                usize::try_from(address.0 - begin.0).map_err(|_| Error::CapacityExceeded)?;
+            let end = offset
+                .checked_add(encoded.len())
+                .ok_or(Error::CapacityExceeded)?;
+            payload
+                .get_mut(offset..end)
+                .ok_or(Error::InvalidFormat("记录越过逻辑页"))?
+                .copy_from_slice(&encoded);
+        }
+        let bytes = crate::format::PageFrame {
+            page,
+            version,
+            payload: &payload,
+        }
+        .encode()?;
+        Ok(EncodedPage {
+            page,
+            generation,
+            bytes,
+        })
+    }
     pub fn flush_step(&self, _budget: PollBudget) -> Result<Progress, Error> {
         Err(Error::unimplemented("log::flush"))
     }
@@ -362,6 +425,42 @@ mod tests {
             unsafe { std::ptr::drop_in_place(p.as_ptr().cast::<Box<Resource>>().as_ptr()) };
             Ok(())
         }
+    }
+    #[test]
+    fn 冻结页编码覆盖对齐间隙和已放弃预留() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        drop(log.reserve_record(b"lost", None, 9).unwrap());
+        let first = log
+            .finish_initialization(log.reserve_record(b"a", None, 11).unwrap())
+            .unwrap();
+        let second = log
+            .finish_initialization(log.reserve_record(b"b", Some(first), 22).unwrap())
+            .unwrap();
+        // 第四条占槽进入第二页，第一页尾部保留零填充。
+        let _next = log
+            .finish_initialization(log.reserve_record(b"next", Some(second), 33).unwrap())
+            .unwrap();
+        assert!(log.encode_page(PageId(0), CheckpointVersion(0)).is_err());
+        log.advance_read_only(LogAddress(256)).unwrap();
+        let encoded = log.encode_page(PageId(0), CheckpointVersion(0)).unwrap();
+        assert_eq!(encoded.page, PageId(0));
+        assert_eq!(encoded.generation, Generation(0));
+        let frame = crate::format::PageFrame::decode(&encoded.bytes, PageId(0), 256).unwrap();
+        let records = frame.records().unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].0, first);
+        assert_eq!(records[0].1.value, 11u64.to_le_bytes());
+        assert_eq!(records[1].0, second);
+        assert_eq!(records[1].1.header.previous, Some(first));
+        assert_eq!(log.frontiers().unwrap().flushed_until, LogAddress(0));
     }
     #[test]
     fn 未发布预留阻止冻结且放弃后可以推进() {
