@@ -47,10 +47,7 @@ fn 生成器固定种子及格式往返可重放() {
     let first = Trace::generate(0, 1);
     assert_eq!(first.steps[0].session, 1);
     assert_eq!(first.steps[0].key, vec![4; 4]);
-    assert_eq!(
-        first.encode(),
-        "raster-trace 1 0\n1 2 04040404 delete 1\n"
-    );
+    assert_eq!(first.encode(), "raster-trace 1 0\n1 2 04040404 delete 1\n");
     for seed in [0, 1, 42, u64::MAX] {
         let trace = Trace::generate(seed, 256);
         assert_eq!(trace, Trace::generate(seed, 256));
