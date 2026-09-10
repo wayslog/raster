@@ -1,4 +1,4 @@
-//! 内存四操作编排中心；磁盘 Pending 与持久化路径分阶段实现。
+//! 四操作编排中心；读取支持磁盘 Pending，写入与持久化路径继续分阶段接入。
 mod conditional_copy;
 mod delete;
 pub(crate) mod io_hub;
@@ -109,3 +109,5 @@ impl<S: Schema> Engine<S> {
 
 #[cfg(test)]
 mod frozen_tests;
+#[cfg(test)]
+mod pending_read_tests;

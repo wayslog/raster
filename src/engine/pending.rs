@@ -13,7 +13,7 @@ pub(crate) trait PendingTask: 'static {
     fn serial(&self) -> Serial;
     fn version(&self) -> CheckpointVersion;
     fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error>;
-    fn step(&mut self) -> TaskStep;
+    fn step(&mut self, budget: PollBudget) -> TaskStep;
     fn abandon(&mut self, error: OperationError);
 }
 pub(crate) struct ExecutionContext {
@@ -26,6 +26,8 @@ pub(crate) struct SessionRuntime {
     pub current: ExecutionContext,
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
+    pub poll_cursor: Option<u64>,
+    results: Vec<std::rc::Weak<()>>,
 }
 
 impl SessionRuntime {
@@ -39,7 +41,21 @@ impl SessionRuntime {
             },
             previous: None,
             closing: false,
+            poll_cursor: None,
+            results: Vec::new(),
         }
+    }
+    pub fn reserve_result(&mut self, limit: usize) -> Result<std::rc::Rc<()>, Error> {
+        self.results.retain(|credit| credit.strong_count() != 0);
+        if self.results.len() >= limit {
+            return Err(Error::Busy);
+        }
+        self.results
+            .try_reserve(1)
+            .map_err(|_| Error::OutOfMemory)?;
+        let credit = std::rc::Rc::new(());
+        self.results.push(std::rc::Rc::downgrade(&credit));
+        Ok(credit)
     }
     pub fn pending(&self) -> usize {
         self.current.tasks.len() + self.previous.as_ref().map_or(0, |old| old.tasks.len())

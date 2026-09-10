@@ -44,23 +44,30 @@ enum Slot<T> {
 pub struct Ticket<T: 'static> {
     id: RequestId,
     slot: Rc<RefCell<Slot<T>>>,
+    credit: Option<Rc<()>>,
 }
 
-#[allow(dead_code)] // 挂起执行器接入前，生产构造路径暂未使用。
 pub(crate) struct Completer<T: 'static> {
     slot: Rc<RefCell<Slot<T>>>,
+    credit: Option<Rc<()>>,
 }
 impl<T: 'static> Ticket<T> {
-    #[allow(dead_code)]
     pub(crate) fn pair(id: RequestId) -> (Self, Completer<T>) {
         let slot = Rc::new(RefCell::new(Slot::Pending));
         (
             Self {
                 id,
+                credit: None,
                 slot: Rc::clone(&slot),
             },
-            Completer { slot },
+            Completer { slot, credit: None },
         )
+    }
+    pub(crate) fn pair_bounded(id: RequestId, credit: Rc<()>) -> (Self, Completer<T>) {
+        let (mut ticket, mut completer) = Self::pair(id);
+        ticket.credit = Some(credit.clone());
+        completer.credit = Some(credit);
+        (ticket, completer)
     }
     pub fn id(&self) -> RequestId {
         self.id
@@ -76,6 +83,7 @@ impl<T: 'static> Ticket<T> {
             Slot::Taken => Err(TicketError::AlreadyTaken),
             Slot::Ready(_) => {
                 if let Slot::Ready(result) = std::mem::replace(&mut *slot, Slot::Taken) {
+                    self.credit = None;
                     Ok(TicketState::Ready(result))
                 } else {
                     unreachable!("同一独占借用中的槽状态不会改变")
@@ -84,7 +92,6 @@ impl<T: 'static> Ticket<T> {
         }
     }
 }
-#[allow(dead_code)]
 impl<T: 'static> Completer<T> {
     pub(crate) fn finish(&self, result: OperationResult<T>) -> Result<(), TicketError> {
         let mut slot = self

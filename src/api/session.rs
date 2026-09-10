@@ -21,7 +21,7 @@ pub struct CloseReport {
     pub drained: bool,
 }
 
-/// 线程绑定会话；在途任务未来由本对象排空，而非由 Ticket 驱动。
+/// 线程绑定会话；本对象推进在途请求，Ticket 只收取结果。
 ///
 /// ```compile_fail
 /// use raster::{Session, schema::Schema};
@@ -83,8 +83,8 @@ impl<S: Schema> Session<S> {
     pub fn refresh(&mut self) -> Result<Progress, Error> {
         Err(Error::unimplemented("coordination::refresh"))
     }
-    pub fn poll(&mut self, _budget: PollBudget) -> Result<Progress, Error> {
-        Err(Error::unimplemented("engine::poll"))
+    pub fn poll(&mut self, budget: PollBudget) -> Result<Progress, Error> {
+        self.engine.poll_session(&mut self.runtime, budget)
     }
     pub fn try_take<T: 'static>(
         &mut self,
@@ -137,6 +137,10 @@ impl<S: Schema> Session<S> {
 
 impl<S: Schema> Drop for Session<S> {
     fn drop(&mut self) {
+        self.runtime.current.tasks.clear();
+        if let Some(previous) = &mut self.runtime.previous {
+            previous.tasks.clear();
+        }
         if let Some(participant) = self.participant.take() {
             let _ = self.engine.epoch.unregister(participant);
             let _ = self.engine.coordinator.leave(self.id);
