@@ -534,20 +534,34 @@ fn 恢复计划逐材料验证且同一完整检查点不重复计数() {
         let before = plan.remaining();
         let mut bad = bytes.clone();
         bad[0] ^= 1;
-        assert!(plan.verify_material(token, material.id, &bad).is_err());
         assert!(
-            plan.verify_material(CheckpointToken([99; 16]), material.id, &bytes)
+            plan.verify_material(token, material.id, &bad, &*store.inner.schema)
                 .is_err()
         );
+        assert!(
+            plan.verify_material(
+                CheckpointToken([99; 16]),
+                material.id,
+                &bytes,
+                &*store.inner.schema
+            )
+            .is_err()
+        );
         assert_eq!(plan.remaining(), before);
-        match plan.verify_material(token, material.id, &bytes).unwrap() {
+        match plan
+            .verify_material(token, material.id, &bytes, &*store.inner.schema)
+            .unwrap()
+        {
             ValidatedMaterial::Index(index) => assert_eq!(index.entries.len(), 1),
             ValidatedMaterial::Log(frame) => {
                 assert_eq!(frame.records().unwrap()[0].1.value, 19u64.to_le_bytes())
             }
         }
         assert_eq!(plan.remaining(), before - 1);
-        assert!(plan.verify_material(token, material.id, &bytes).is_err());
+        assert!(
+            plan.verify_material(token, material.id, &bytes, &*store.inner.schema)
+                .is_err()
+        );
     }
     assert_eq!(plan.remaining(), 0);
     session.close(deadline()).unwrap();
@@ -648,8 +662,13 @@ fn 恢复计划拒绝错配语义页布局和越界索引链头() {
     )
     .unwrap();
     assert!(
-        plan.verify_material(index.token, index.materials[0].id, &bytes)
-            .is_err()
+        plan.verify_material(
+            index.token,
+            index.materials[0].id,
+            &bytes,
+            &*store.inner.schema
+        )
+        .is_err()
     );
     image.entries[0].address = LogAddress(0);
     image.buckets *= 2;
@@ -666,9 +685,99 @@ fn 恢复计划拒绝错配语义页布局和越界索引链头() {
     )
     .unwrap();
     assert!(
-        plan.verify_material(bad_index.token, bad_index.materials[0].id, &bytes)
-            .is_err()
+        plan.verify_material(
+            bad_index.token,
+            bad_index.materials[0].id,
+            &bytes,
+            &*store.inner.schema
+        )
+        .is_err()
     );
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+
+#[test]
+fn 日志材料校验通过但键编码不规范时恢复计划不接受材料() {
+    let (_root, store) = setup(None);
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    put(&mut session, 1, 19);
+    let ticket = store
+        .maintenance()
+        .checkpoint(CheckpointKind::Full)
+        .unwrap();
+    let report = wait(&mut session, &ticket);
+    let mut manifest = manifest(&store, &report);
+    let material = manifest
+        .materials
+        .iter_mut()
+        .find(|m| m.kind == Kind::Log)
+        .unwrap();
+    let name = crate::storage::SegmentedStorage::checkpoint_material_name(
+        material.id,
+        material.generation,
+    );
+    let bytes = std::fs::read(
+        store.inner.storage.root.join(
+            store
+                .inner
+                .storage
+                .checkpoint_path(report.token, &name)
+                .unwrap(),
+        ),
+    )
+    .unwrap();
+    let frame = PageFrame::decode(&bytes, PageId(0), 4096).unwrap();
+    let records = frame.records().unwrap();
+    let original = &records[0].1;
+    let mut header = original.header.clone();
+    header.key_bytes = 7;
+    let mut payload = vec![0; 4096];
+    let length = header.encoded_len().unwrap();
+    crate::format::Record {
+        header,
+        key: &original.key[..7],
+        value: original.value,
+    }
+    .encode(&mut payload[..length])
+    .unwrap();
+    let bytes = PageFrame {
+        page: PageId(0),
+        version: frame.version,
+        payload: &payload,
+    }
+    .encode()
+    .unwrap();
+    material.checksum = crate::format::checksum(&bytes);
+    material.verify(&bytes).unwrap();
+    assert_eq!(
+        PageFrame::decode(&bytes, PageId(0), 4096)
+            .unwrap()
+            .records()
+            .unwrap()
+            .len(),
+        1
+    );
+    let id = material.id;
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.inner.id,
+        index: report.token,
+        log: report.token,
+    };
+    let mut plan = crate::checkpoint::recovery::RecoveryPlan::new(
+        &set,
+        manifest.clone(),
+        manifest,
+        &*store.inner.schema,
+        &store.inner.config,
+    )
+    .unwrap();
+    let remaining = plan.remaining();
+    assert!(matches!(
+        plan.verify_material(report.token, id, &bytes, &*store.inner.schema),
+        Err(Error::Codec(_))
+    ));
+    assert_eq!(plan.remaining(), remaining);
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }

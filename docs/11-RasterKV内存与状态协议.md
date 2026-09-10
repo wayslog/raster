@@ -17,7 +17,7 @@ pub trait Schema: Send + Sync + 'static {
 
 pub trait KeyCodec: Send + Sync + 'static {
     type Key: ?Sized;
-    type OwnedKey: 'static;
+    type OwnedKey: std::borrow::Borrow<Self::Key> + 'static;
 
     fn format_id(&self) -> FormatId;
     fn hash(&self, key: &Self::Key) -> KeyHash;

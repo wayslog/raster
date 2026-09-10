@@ -126,11 +126,12 @@ impl RecoveryPlan {
         &self.log
     }
     /// 错误和重复材料不推进完成计数；地址有效性仍不代替完整链及重放校验。
-    pub fn verify_material<'a>(
+    pub fn verify_material<'a, S: Schema>(
         &mut self,
         token: CheckpointToken,
         id: u64,
         bytes: &'a [u8],
+        schema: &S,
     ) -> Result<ValidatedMaterial<'a>, Error> {
         let key = (token, id);
         if self.verified.contains(&key) {
@@ -141,29 +142,42 @@ impl RecoveryPlan {
             .get(&key)
             .ok_or(Error::InvalidFormat("材料不属于恢复集合"))?;
         material.verify(bytes)?;
-        let parsed = match material.kind {
-            Kind::Index => {
-                let image = IndexSnapshot::decode(bytes)?;
-                if image.buckets != self.buckets as u64
-                    || image.entries.iter().any(|entry| {
-                        entry.address < material.begin || entry.address >= material.end
-                    })
-                {
-                    return Err(Error::InvalidFormat("恢复索引桶数或链头范围不匹配"));
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            schema
+                .key_codec()
+                .validate_identity(self.index.key_format, &self.index.hash)?;
+            if schema.value_layout().format_id() != self.index.value_format {
+                return Err(Error::InvalidFormat("恢复值布局发生变化"));
+            }
+            Ok(match material.kind {
+                Kind::Index => {
+                    let image = IndexSnapshot::decode(bytes)?;
+                    if image.buckets != self.buckets as u64
+                        || image.entries.iter().any(|entry| {
+                            entry.address < material.begin || entry.address >= material.end
+                        })
+                    {
+                        return Err(Error::InvalidFormat("恢复索引桶数或链头范围不匹配"));
+                    }
+                    ValidatedMaterial::Index(image)
                 }
-                ValidatedMaterial::Index(image)
-            }
-            Kind::Log => {
-                let frame = PageFrame::decode(
-                    bytes,
-                    material.begin.page_offset(self.page_bytes as u64)?.0,
-                    self.page_bytes,
-                )?;
-                frame.records()?;
-                ValidatedMaterial::Log(frame)
-            }
-            Kind::Full => return Err(Error::InvalidFormat("非法恢复材料类型")),
-        };
+                Kind::Log => {
+                    let frame = PageFrame::decode(
+                        bytes,
+                        material.begin.page_offset(self.page_bytes as u64)?.0,
+                        self.page_bytes,
+                    )?;
+                    for (_, record) in frame.records()? {
+                        if !record.header.invalid {
+                            crate::schema::key::decode_canonical(schema.key_codec(), record.key)?;
+                        }
+                    }
+                    ValidatedMaterial::Log(frame)
+                }
+                Kind::Full => return Err(Error::InvalidFormat("非法恢复材料类型")),
+            })
+        }))
+        .map_err(|_| Error::InvalidState("恢复材料语义校验恐慌"))??;
         self.verified.insert(key);
         Ok(parsed)
     }
