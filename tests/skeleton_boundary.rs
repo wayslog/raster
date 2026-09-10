@@ -79,6 +79,9 @@ unsafe impl ValueLayout for TestLayout {
     fn update<'a>(&'a self, _p: UpdatePermit<'a>) -> Result<Self::Update<'a>, Error> {
         Err(Error::unimplemented("测试布局"))
     }
+    fn stable_encoded_len(&self, _: StablePermit<'_>) -> Result<usize, Error> {
+        Err(Error::Codec("测试布局不支持稳定编码"))
+    }
     fn encode_stable(&self, _p: StablePermit<'_>, _out: &mut [u8]) -> Result<(), Error> {
         Err(Error::unimplemented("测试布局"))
     }

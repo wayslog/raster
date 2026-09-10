@@ -259,6 +259,58 @@ impl<V: ValueLayout> PageValue<V> {
         self.sealed.store(true, Ordering::SeqCst);
         Ok(())
     }
+    /// 冻结后的拥有型磁盘记录。值与内存布局分别编码，保持逻辑地址占槽不变。
+    pub fn encode_record(&self, version: CheckpointVersion) -> Result<Vec<u8>, Error> {
+        use crate::format::{HEADER_BYTES, Record, RecordHeader};
+        let _gate = self.gate.try_replace()?;
+        if !self.sealed.load(Ordering::SeqCst) || self.value_offset == 0 {
+            return Err(Error::InvalidState("刷盘需要已冻结的完整记录"));
+        }
+        let len = self.range.as_ref().expect("值范围存在").len();
+        let capacity = len
+            .checked_sub(HEADER_BYTES + self.key_len + 4)
+            .ok_or(Error::CapacityExceeded)?;
+        let value_len = if self.tombstone {
+            0
+        } else {
+            self.ready()?;
+            self.layout
+                .stable_encoded_len(permit!(self, StablePermit))?
+        };
+        if value_len > capacity {
+            return Err(Error::CapacityExceeded);
+        }
+        let mut value = Vec::new();
+        value
+            .try_reserve_exact(value_len)
+            .map_err(|_| Error::OutOfMemory)?;
+        value.resize(value_len, 0);
+        if !self.tombstone {
+            self.layout
+                .encode_stable(permit!(self, StablePermit), &mut value)?;
+        }
+        let record = Record {
+            header: RecordHeader {
+                previous: self.previous,
+                version,
+                key_bytes: u32::try_from(self.key_len).map_err(|_| Error::CapacityExceeded)?,
+                value_bytes: u32::try_from(value_len).map_err(|_| Error::CapacityExceeded)?,
+                capacity_bytes: u32::try_from(capacity).map_err(|_| Error::CapacityExceeded)?,
+                tombstone: self.tombstone,
+                invalid: false,
+                final_record: false,
+            },
+            key: self.key(),
+            value: &value,
+        };
+        let mut output = Vec::new();
+        output
+            .try_reserve_exact(len)
+            .map_err(|_| Error::OutOfMemory)?;
+        output.resize(len, 0);
+        record.encode(&mut output)?;
+        Ok(output)
+    }
     pub fn encode(&self, output: &mut [u8]) -> Result<(), Error> {
         self.ready()?;
         let _gate = self.gate.try_replace()?;
@@ -287,6 +339,57 @@ impl<V: ValueLayout> Drop for PageValue<V> {
 mod tests {
     use super::*;
     use crate::schema::builtin::{AtomicU64Value, ByteValueCodec, SerializedValue};
+    #[test]
+    fn 变长值缩短后按当前长度编码且保持占槽() {
+        use crate::format::Record;
+        let pool = PagePool::new(4096, 2).unwrap();
+        let value = PageValue::initialize_record(
+            &pool,
+            Arc::new(SerializedValue::new(ByteValueCodec)),
+            b"key",
+            None,
+            vec![7; 19],
+        )
+        .unwrap();
+        assert!(value.encode_record(CheckpointVersion(3)).is_err());
+        value.update(|mut v| v.replace(&vec![0, 255, 128])).unwrap();
+        value.seal().unwrap();
+        let encoded = value.encode_record(CheckpointVersion(3)).unwrap();
+        assert_eq!(encoded.len(), value.range.as_ref().unwrap().len());
+        let decoded = Record::decode(&encoded).unwrap();
+        assert_eq!(decoded.key, b"key");
+        assert_eq!(decoded.value, [0, 255, 128]);
+        assert_eq!(decoded.header.value_bytes, 3);
+        assert_eq!(decoded.header.version, CheckpointVersion(3));
+        assert!(decoded.header.capacity_bytes >= 19);
+        let again = value.encode_record(CheckpointVersion(3)).unwrap();
+        assert_eq!(encoded, again);
+    }
+    #[test]
+    fn 原子值与墓碑稳定记录可被格式层解码() {
+        use crate::format::Record;
+        let pool = PagePool::new(4096, 2).unwrap();
+        let value =
+            PageValue::initialize_record(&pool, Arc::new(AtomicU64Value), b"a", None, u64::MAX)
+                .unwrap();
+        value.seal().unwrap();
+        let bytes = value.encode_record(CheckpointVersion(0)).unwrap();
+        let record = Record::decode(&bytes).unwrap();
+        assert_eq!(record.value, u64::MAX.to_le_bytes());
+        let tombstone = PageValue::tombstone(
+            &pool,
+            Arc::new(AtomicU64Value),
+            b"a",
+            Some(value.address().unwrap()),
+        )
+        .unwrap();
+        let bytes = tombstone.encode_record(CheckpointVersion(1)).unwrap();
+        let record = Record::decode(&bytes).unwrap();
+        assert!(record.header.tombstone);
+        assert!(record.value.is_empty());
+        assert_eq!(record.header.previous, Some(value.address().unwrap()));
+        assert_eq!(record.key, b"a");
+    }
     #[test]
     fn 普通值初始化增长拒绝与稳定编码() {
         let pool = PagePool::new(256, 1).unwrap();

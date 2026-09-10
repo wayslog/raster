@@ -76,6 +76,10 @@ unsafe impl<C: ValueCodec> ValueLayout for SerializedValue<C> {
             permit: p,
         })
     }
+    fn stable_encoded_len(&self, p: StablePermit<'_>) -> Result<usize, Error> {
+        // SAFETY: 稳定许可排除修改，槽已经初始化，长度前缀经过边界检查。
+        Ok(unsafe { encoded(p.as_ptr(), p.len())? }.len())
+    }
     fn encode_stable(&self, p: StablePermit<'_>, output: &mut [u8]) -> Result<(), Error> {
         // SAFETY: 稳定许可排除修改并保证完整活跃字节槽。
         let bytes = unsafe { encoded(p.as_ptr(), p.len())? };
@@ -138,6 +142,15 @@ unsafe impl ValueLayout for AtomicU64Value {
         )?;
         // SAFETY: 已初始化原子单元，返回引用限制在许可寿命，原子更新允许共享。
         Ok(unsafe { p.as_ptr().cast::<AtomicU64>().as_ref() })
+    }
+    fn stable_encoded_len(&self, p: StablePermit<'_>) -> Result<usize, Error> {
+        check(
+            p.as_ptr(),
+            p.len(),
+            size_of::<AtomicU64>(),
+            align_of::<AtomicU64>(),
+        )?;
+        Ok(8)
     }
     fn encode_stable(&self, p: StablePermit<'_>, output: &mut [u8]) -> Result<(), Error> {
         check(

@@ -48,6 +48,9 @@ unsafe impl<S: Schema> ValueLayout for SharedValue<S> {
     ) -> Result<Self::Update<'a>, crate::types::Error> {
         self.0.value_layout().update(p)
     }
+    fn stable_encoded_len(&self, p: value::StablePermit<'_>) -> Result<usize, crate::types::Error> {
+        self.0.value_layout().stable_encoded_len(p)
+    }
     fn encode_stable(
         &self,
         p: value::StablePermit<'_>,

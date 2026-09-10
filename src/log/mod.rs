@@ -328,6 +328,12 @@ mod tests {
         fn update<'a>(&'a self, _: crate::schema::value::UpdatePermit<'a>) -> Result<(), Error> {
             Ok(())
         }
+        fn stable_encoded_len(
+            &self,
+            _: crate::schema::value::StablePermit<'_>,
+        ) -> Result<usize, Error> {
+            Ok(1)
+        }
         fn encode_stable(
             &self,
             _: crate::schema::value::StablePermit<'_>,

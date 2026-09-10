@@ -136,6 +136,8 @@ pub unsafe trait ValueLayout: Send + Sync + 'static {
     fn initialize(&self, permit: InitPermit<'_>, value: Self::Owned) -> Result<(), Error>;
     fn read<'a>(&'a self, permit: ReadPermit<'a>) -> Result<Self::Read<'a>, Error>;
     fn update<'a>(&'a self, permit: UpdatePermit<'a>) -> Result<Self::Update<'a>, Error>;
+    /// 在稳定许可内返回当前编码长度；须与随后 encode_stable 的精确输出长度一致。
+    fn stable_encoded_len(&self, permit: StablePermit<'_>) -> Result<usize, Error>;
     fn encode_stable(&self, permit: StablePermit<'_>, output: &mut [u8]) -> Result<(), Error>;
     fn decode_initialize(&self, encoded: &[u8], permit: InitPermit<'_>) -> Result<(), Error>;
     fn drop_value(&self, permit: DropPermit<'_>) -> Result<(), Error>;
