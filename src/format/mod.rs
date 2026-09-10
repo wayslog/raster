@@ -6,3 +6,5 @@ pub(crate) use manifest::Manifest;
 pub(crate) use record::{HEADER_BYTES, Record, RecordHeader};
 mod page;
 pub(crate) use page::PageFrame;
+
+pub(crate) use wire::checksum;

@@ -6,7 +6,7 @@ pub(super) fn invalid() -> Error {
 }
 
 /// 反射多项式 0x82f63b78，初值与最终异或均为全一。
-pub(super) fn checksum(bytes: &[u8]) -> u32 {
+pub(crate) fn checksum(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in bytes {
         crc ^= u32::from(byte);

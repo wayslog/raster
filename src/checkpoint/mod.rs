@@ -1,5 +1,6 @@
 //! 检查点材料、提交证据和恢复重放；不会把启动或文件写完当作持久化成功。
 use crate::{format::Manifest, types::*};
+pub(crate) mod material;
 
 pub(crate) enum CheckpointPhase {
     CollectIndex,
