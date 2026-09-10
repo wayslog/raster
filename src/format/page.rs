@@ -13,6 +13,14 @@ pub(crate) struct PageFrame<'a> {
     pub payload: &'a [u8],
 }
 impl PageFrame<'_> {
+    pub fn encoded_size(page_bytes: usize) -> Result<usize, Error> {
+        if !page_bytes.is_power_of_two() || u32::try_from(page_bytes).is_err() {
+            return Err(invalid());
+        }
+        page_bytes
+            .checked_add(OVERHEAD)
+            .ok_or(Error::CapacityExceeded)
+    }
     /// 物理偏移独立于日志地址；每页都计入固定帧头与尾部校验。
     pub fn physical_offset(page: PageId, page_bytes: usize) -> Result<u64, Error> {
         if !page_bytes.is_power_of_two() {

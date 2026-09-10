@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     device::{CompletionRoute, IoCompletion},
-    storage::{SegmentedStorage, write::SegmentWrite},
+    storage::{SegmentedStorage, transfer::SegmentTransfer},
 };
 pub(crate) struct PageFlush {
     control: Arc<crate::sync::Mutex<LogState>>,
@@ -10,7 +10,7 @@ pub(crate) struct PageFlush {
     storage: Arc<()>,
     page: PageId,
     generation: Generation,
-    write: SegmentWrite,
+    write: SegmentTransfer,
     terminal: bool,
 }
 impl PageFlush {
@@ -76,7 +76,7 @@ impl<V: ValueLayout> HybridLog<V> {
         };
         let encoded = self.encode_page(page, version)?;
         let start = crate::format::PageFrame::physical_offset(page, self.page_bytes)?;
-        let write = SegmentWrite::new(start, encoded.bytes, route)?;
+        let write = SegmentTransfer::write(start, encoded.bytes, route)?;
         let token = Arc::new(());
         let mut state = self
             .state
@@ -235,6 +235,49 @@ mod tests {
                 break;
             }
         }
+    }
+    #[test]
+    fn 淘汰后的页通过跨段短读恢复且损坏帧被拒绝() {
+        use crate::log::read_page::{PageRead, ReadPage};
+        let log = log();
+        let (device, storage, files) = storage();
+        flush(&log, &storage);
+        assert_eq!(log.evict_next().unwrap().completed, 1);
+        assert!(log.lease(LogAddress(0)).is_err());
+        let read = |device: &MemoryDevice| -> Result<ReadPage, Error> {
+            let mut task =
+                PageRead::new(PageId(0), 256, CheckpointVersion(0), CompletionRoute(19))?;
+            loop {
+                task.submit_next(&storage)?;
+                task.accept(&storage, complete(device))
+                    .map_err(|r| r.reason)?;
+                if let Some(page) = task.finish(&storage)? {
+                    return Ok(page);
+                }
+            }
+        };
+        device.inject_next(MemoryFault::Short(3)).unwrap();
+        let page = read(&device).unwrap();
+        assert_eq!(page.record(LogAddress(0)).unwrap().key, [0]);
+        assert_eq!(
+            page.record(LogAddress(72)).unwrap().value,
+            1u64.to_le_bytes()
+        );
+        assert!(page.record(LogAddress(1)).is_err());
+        assert!(page.record(LogAddress(256)).is_err());
+        let mut buffer = AlignedBuffer::new_zeroed(1, 8).unwrap();
+        buffer.as_mut_slice()[0] = b'X';
+        execute(
+            &*device,
+            IoOperation::Write {
+                file: files[0],
+                offset: 0,
+                buffer,
+            },
+        )
+        .result
+        .unwrap();
+        assert!(matches!(read(&device), Err(Error::InvalidFormat(_))));
     }
     #[test]
     fn 旧租约阻止安全回收而新分配只能复用新代次() {

@@ -610,3 +610,4 @@ mod tests {
 pub(crate) mod flush;
 
 mod evict;
+pub(crate) mod read_page;
