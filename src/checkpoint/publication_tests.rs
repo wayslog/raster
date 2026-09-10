@@ -720,3 +720,109 @@ fn 繁忙拒绝可重试且重命名未被接受时不标记可见() {
     fixture.reset(Some(("syncdir:.".into(), FaultMode::Complete)));
     assert!(self::prepare(&fixture).is_err());
 }
+
+#[test]
+fn 真实索引与日志记录导出材料后可同步发布并精确读取() {
+    use crate::{
+        config::{IndexConfig, LogConfig},
+        index::{IndexHead, MemIndex, PublishResult},
+        log::HybridLog,
+        schema::{
+            KeyCodec,
+            builtin::{AtomicU64Value, U64Key},
+        },
+    };
+    let index = MemIndex::new(IndexConfig { buckets: 2 }).unwrap();
+    let log = HybridLog::new(
+        LogConfig {
+            page_bytes: 512,
+            memory_pages: 2,
+            mutable_fraction: 0.5,
+        },
+        Arc::new(AtomicU64Value),
+    )
+    .unwrap();
+    for key in [0_u64, 1, u64::MAX] {
+        let hash = U64Key.hash(&key);
+        let expected = index.prepare(hash).unwrap();
+        let previous = match expected.head {
+            IndexHead::Log(address) => Some(address),
+            IndexHead::Empty => None,
+            IndexHead::Cache(_) => panic!("此测试没有缓存"),
+        };
+        let address = log
+            .finish_initialization(
+                log.reserve_record(&key.to_le_bytes(), previous, key)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            index.compare_publish(expected, IndexHead::Log(address)),
+            Ok(PublishResult::Published)
+        ));
+    }
+    let bytes = index.snapshot().unwrap().encode().unwrap();
+    let fixture = Fixture::new();
+    let directory = prepare(&fixture).unwrap();
+    let mut manifest = manifest();
+    manifest.kind = manifest.materials[0].kind;
+    manifest.materials.truncate(1);
+    manifest.session_progress.clear();
+    manifest.key_format = U64Key.format_id();
+    manifest.value_format = AtomicU64Value.format_id();
+    manifest.hash = U64Key.hash_descriptor();
+    manifest.version = CheckpointVersion(0);
+    manifest.begin = LogAddress(0);
+    manifest.end = log.frontiers().unwrap().tail;
+    manifest.replay_from = manifest.end;
+    let material = &mut manifest.materials[0];
+    material.begin = manifest.begin;
+    material.end = manifest.end;
+    material.bytes = bytes.len() as u64;
+    material.checksum = crate::format::checksum(&bytes);
+    let name = SegmentedStorage::checkpoint_material_name(material.id, material.generation);
+    let receipt = drive(
+        &fixture,
+        &mut MaterialWrite::new(
+            &fixture.storage,
+            manifest.token,
+            &name,
+            bytes.clone(),
+            17,
+            CompletionRoute(2),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    drive(
+        &fixture,
+        &mut CommitPublish::new(
+            &fixture.storage,
+            directory,
+            manifest.clone(),
+            vec![receipt],
+            19,
+            CompletionRoute(3),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let loaded_manifest = Commit::decode(&fixture.read("commit"))
+        .unwrap()
+        .verify(&fixture.read("manifest"))
+        .unwrap();
+    assert_eq!(loaded_manifest, manifest);
+    let loaded = fixture.read(&name);
+    assert_eq!(loaded, bytes);
+    loaded_manifest.materials[0].verify(&loaded).unwrap();
+    let snapshot = crate::format::IndexSnapshot::decode(&loaded).unwrap();
+    assert_eq!(snapshot.buckets, 2);
+    assert_eq!(snapshot.entries.len(), 3);
+    for entry in snapshot.entries {
+        log.lease(entry.address)
+            .unwrap()
+            .read(|value| value)
+            .unwrap();
+    }
+    assert!(loaded_manifest.session_progress.is_empty());
+}

@@ -8,3 +8,6 @@ mod page;
 pub(crate) use page::PageFrame;
 
 pub(crate) use wire::checksum;
+
+mod index;
+pub(crate) use index::{IndexEntry, IndexSnapshot};

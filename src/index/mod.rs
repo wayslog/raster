@@ -22,8 +22,38 @@ pub(crate) struct EntrySnapshot {
     revision: u64,
 }
 pub(crate) struct IndexImage {
+    pub buckets: usize,
     pub generation: Generation,
     pub entries: Vec<EntrySnapshot>,
+}
+impl IndexImage {
+    pub fn encode(&self) -> Result<Vec<u8>, Error> {
+        let owner = self.entries.first().map(|entry| entry.owner);
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(self.entries.len())
+            .map_err(|_| Error::OutOfMemory)?;
+        for entry in &self.entries {
+            if Some(entry.owner) != owner || entry.table_generation != self.generation {
+                return Err(Error::InvalidState("索引映像包含不同身份或代次"));
+            }
+            let IndexHead::Log(address) = entry.head else {
+                return Err(Error::InvalidState("持久化索引只允许日志地址"));
+            };
+            entries.push(crate::format::IndexEntry {
+                bucket: entry.bucket as u64,
+                tag: entry.tag,
+                address,
+            });
+        }
+        entries.sort_unstable_by_key(|entry| (entry.bucket, entry.tag));
+        crate::format::IndexSnapshot {
+            buckets: self.buckets as u64,
+            generation: self.generation,
+            entries,
+        }
+        .encode()
+    }
 }
 #[derive(Debug)]
 pub(crate) enum PublishResult {
@@ -175,6 +205,7 @@ impl MemIndex {
             }
         }
         Ok(IndexImage {
+            buckets: self.buckets.len(),
             generation: self.generation,
             entries,
         })
@@ -192,6 +223,59 @@ mod tests {
     use super::*;
     fn index() -> MemIndex {
         MemIndex::new(IndexConfig { buckets: 2 }).unwrap()
+    }
+    #[test]
+    fn 持久映像不含进程身份修订号且溢出桶顺序规范化() {
+        let first = index();
+        let second = index();
+        for tag in 0..30 {
+            for (index, tag) in [(&first, tag), (&second, 29 - tag)] {
+                let hash = KeyHash((tag << 48) | (tag % 2));
+                let expected = index.prepare(hash).unwrap();
+                assert!(matches!(
+                    index.compare_publish(expected, IndexHead::Log(LogAddress(tag * 64))),
+                    Ok(PublishResult::Published)
+                ));
+            }
+        }
+        let mut image = first.snapshot().unwrap();
+        let other = second.snapshot().unwrap();
+        assert_ne!(image.entries[0].owner, other.entries[0].owner);
+        let encoded = image.encode().unwrap();
+        assert_eq!(encoded, other.encode().unwrap());
+        for entry in &mut image.entries {
+            entry.revision = u64::MAX;
+        }
+        assert_eq!(encoded, image.encode().unwrap());
+        let decoded = crate::format::IndexSnapshot::decode(&encoded).unwrap();
+        assert_eq!(decoded.buckets, 2);
+        assert_eq!(decoded.entries.len(), 30);
+        for entry in decoded.entries {
+            assert_eq!(entry.bucket, u64::from(entry.tag) % 2);
+            assert_eq!(entry.address, LogAddress(u64::from(entry.tag) * 64));
+        }
+    }
+    #[test]
+    fn 持久映像拒绝混合身份代次缓存头和重复条目() {
+        let first = index();
+        for tag in 0..2 {
+            let entry = first.prepare(KeyHash(tag << 48)).unwrap();
+            first
+                .compare_publish(entry, IndexHead::Log(LogAddress(tag)))
+                .unwrap();
+        }
+        let mut image = first.snapshot().unwrap();
+        image.entries[0].owner += 1;
+        assert!(image.encode().is_err());
+        let mut image = first.snapshot().unwrap();
+        image.entries[0].table_generation = Generation(1);
+        assert!(image.encode().is_err());
+        let mut image = first.snapshot().unwrap();
+        image.entries[0].head = IndexHead::Cache(CacheAddress(0));
+        assert!(image.encode().is_err());
+        let mut image = first.snapshot().unwrap();
+        image.entries.push(image.entries[0]);
+        assert!(image.encode().is_err());
     }
     #[test]
     fn 真实键编码碰撞沿日志链查找不会串键() {
