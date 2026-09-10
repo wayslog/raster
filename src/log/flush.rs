@@ -237,6 +237,94 @@ mod tests {
         }
     }
     #[test]
+    fn 混合链按预算跨内存与磁盘查找且墓碑遮蔽旧值() {
+        use crate::log::lookup::LookupStep;
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 4,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let (device, storage, _) = storage_with_size(4096);
+        let mut head = None;
+        for key in 0..9 {
+            let reservation = if key == 5 {
+                log.reserve_tombstone(&[0], head).unwrap()
+            } else {
+                log.reserve_record(&[key], head, key as u64).unwrap()
+            };
+            head = Some(log.finish_initialization(reservation).unwrap());
+        }
+        log.advance_read_only(LogAddress(512)).unwrap();
+        for _ in 0..2 {
+            flush(&log, &storage);
+            assert_eq!(log.evict_next().unwrap().completed, 1);
+        }
+        for (key, expected, expected_reads) in [
+            (1, Some(1), 2),
+            (8, Some(8), 0),
+            (0, None, 1),
+            (99, None, 2),
+        ] {
+            let mut lookup = log
+                .lookup(
+                    &storage,
+                    vec![key],
+                    head,
+                    CheckpointVersion(0),
+                    CompletionRoute(77),
+                )
+                .unwrap();
+            let mut reads = 0;
+            let mut ended = false;
+            for _ in 0..100 {
+                match lookup
+                    .step(
+                        &log,
+                        &storage,
+                        PollBudget(std::num::NonZeroUsize::new(1).unwrap()),
+                    )
+                    .unwrap()
+                {
+                    LookupStep::Continue => {}
+                    LookupStep::AwaitingIo => {
+                        lookup
+                            .accept(&storage, complete(&*device))
+                            .map_err(|r| r.reason)
+                            .unwrap();
+                        reads += 1;
+                    }
+                    LookupStep::Resident(value) => {
+                        assert_eq!(Some(value.read(|v| v).unwrap()), expected);
+                        ended = true;
+                        break;
+                    }
+                    LookupStep::Decoded(value) => {
+                        assert_eq!(Some(value.read(|v| v).unwrap()), expected);
+                        ended = true;
+                        break;
+                    }
+                    LookupStep::Tombstone => {
+                        assert_eq!(key, 0);
+                        ended = true;
+                        break;
+                    }
+                    LookupStep::Missing => {
+                        assert_eq!(key, 99);
+                        ended = true;
+                        break;
+                    }
+                }
+            }
+            assert!(ended, "预算推进未终结");
+            assert_eq!(reads, expected_reads);
+            assert!(lookup.step(&log, &storage, PollBudget::default()).is_err());
+        }
+    }
+    #[test]
     fn 淘汰后的页通过跨段短读恢复且损坏帧被拒绝() {
         use crate::log::read_page::{PageRead, ReadPage};
         let log = log();
