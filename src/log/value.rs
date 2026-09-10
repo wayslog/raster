@@ -17,6 +17,7 @@ pub(crate) struct PageValue<V: ValueLayout> {
     layout: Arc<V>,
     range: Option<PageRange>,
     initialized: bool,
+    tombstone: bool,
     value_offset: usize,
     capacity: usize,
     key_len: usize,
@@ -45,6 +46,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
+            tombstone: false,
             value_offset: 0,
             capacity: plan.capacity.max(1),
             key_len: 0,
@@ -89,6 +91,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
+            tombstone: false,
             value_offset,
             capacity: plan.capacity.max(1),
             key_len: key.len(),
@@ -124,6 +127,41 @@ impl<V: ValueLayout> PageValue<V> {
     pub fn previous(&self) -> Option<LogAddress> {
         self.previous
     }
+    pub fn tombstone(
+        pool: &PagePool,
+        layout: Arc<V>,
+        key: &[u8],
+        previous: Option<LogAddress>,
+    ) -> Result<Self, Error> {
+        if let Some(address) = previous {
+            address.validate()?;
+        }
+        let prefix = 48usize
+            .checked_add(key.len())
+            .ok_or(Error::CapacityExceeded)?;
+        let total = prefix.checked_add(4).ok_or(Error::CapacityExceeded)?;
+        let mut range = pool.reserve(total, 8)?;
+        if previous.is_some_and(|address| range.address().is_ok_and(|current| address >= current)) {
+            return Err(Error::InvalidFormat("前驱必须早于墓碑"));
+        }
+        range.bytes_mut()[48..prefix].copy_from_slice(key);
+        Ok(Self {
+            layout,
+            range: Some(range),
+            initialized: false,
+            tombstone: true,
+            value_offset: prefix,
+            capacity: 0,
+            key_len: key.len(),
+            previous,
+            gate: MutationGate::default(),
+            failed: AtomicBool::new(false),
+            sealed: AtomicBool::new(true),
+        })
+    }
+    pub fn is_tombstone(&self) -> bool {
+        self.tombstone
+    }
     pub fn decode(
         pool: &PagePool,
         layout: Arc<V>,
@@ -139,6 +177,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
+            tombstone: false,
             value_offset: 0,
             capacity: plan.capacity.max(1),
             key_len: 0,
@@ -160,6 +199,9 @@ impl<V: ValueLayout> PageValue<V> {
         self.range.as_ref().expect("值范围存在").address()
     }
     fn ready(&self) -> Result<(), Error> {
+        if self.tombstone {
+            return Err(Error::InvalidState("墓碑不含活跃值"));
+        }
         if self.failed.load(Ordering::SeqCst) {
             Err(Error::InvalidState("值访问已失败关闭"))
         } else {

@@ -47,7 +47,11 @@ impl<S: Schema> Engine<S> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let entry = self.index.prepare(hash)?;
             let head = Self::head(entry)?;
-            if let Some(lease) = self.log.find(codec, request.key(), head)? {
+            if let Some(lease) = self
+                .log
+                .find(codec, request.key(), head)?
+                .filter(|lease| !lease.is_tombstone())
+            {
                 effect = Effect::Unknown;
                 match lease.update(|view| request.update_in_place(ValueUpdate { view }))? {
                     UpdateDecision::Updated(output) => {

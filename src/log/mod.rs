@@ -56,6 +56,9 @@ impl<V: ValueLayout> RecordLease<V> {
     ) -> Result<R, Error> {
         self.value.update(f)
     }
+    pub fn is_tombstone(&self) -> bool {
+        self.value.is_tombstone()
+    }
     pub fn key(&self) -> &[u8] {
         self.value.key()
     }
@@ -83,6 +86,16 @@ impl<V: ValueLayout> HybridLog<V> {
         Ok(RecordReservation {
             owner: self,
             value: value::PageValue::initialize(&self.pool, self.layout.clone(), value)?,
+        })
+    }
+    pub fn reserve_tombstone(
+        &self,
+        key: &[u8],
+        previous: Option<LogAddress>,
+    ) -> Result<RecordReservation<'_, V>, Error> {
+        Ok(RecordReservation {
+            owner: self,
+            value: value::PageValue::tombstone(&self.pool, self.layout.clone(), key, previous)?,
         })
     }
     pub fn reserve_record(

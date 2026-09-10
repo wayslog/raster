@@ -3,7 +3,7 @@ use super::{Engine, SessionRuntime};
 use crate::{
     api::{
         Submission,
-        completion::Outcome,
+        completion::{AbortReason, Outcome},
         operation::{ReadOperation, ReadOptions},
     },
     schema::{KeyCodec, Schema, ValueRead},
@@ -15,7 +15,7 @@ impl<S: Schema> Engine<S> {
         session: &mut SessionRuntime,
         serial: Serial,
         mut request: O,
-        _options: ReadOptions,
+        options: ReadOptions,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
         let hash = self.schema.key_codec().hash(request.key());
         let _gate = match self.operations[hash.0 as usize % self.operations.len()].try_lock() {
@@ -37,6 +37,11 @@ impl<S: Schema> Engine<S> {
                 .find(self.schema.key_codec(), request.key(), Self::head(entry)?)?
             {
                 None => Ok(Outcome::NotFound),
+                Some(lease) if lease.is_tombstone() => Ok(if options.abort_if_tombstone {
+                    Outcome::Aborted(AbortReason::Tombstone)
+                } else {
+                    Outcome::NotFound
+                }),
                 Some(lease) => lease
                     .read(|view| request.read(ValueRead { view }))?
                     .map(Outcome::Success),

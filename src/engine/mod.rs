@@ -1,4 +1,4 @@
-//! 操作编排中心；Read/Upsert 已接通，其余路径分阶段实现。
+//! 内存四操作编排中心；磁盘 Pending 与持久化路径分阶段实现。
 mod conditional_copy;
 mod delete;
 mod pending;
