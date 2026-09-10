@@ -149,6 +149,9 @@ impl SegmentedStorage {
         binding.generation = next;
         Ok((file, next))
     }
+    pub fn checkpoint_material_name(id: u64, generation: Generation) -> String {
+        format!("{id:016x}-{:016x}.material", generation.0)
+    }
     pub fn checkpoint_path(&self, token: CheckpointToken, object: &str) -> Result<PathBuf, Error> {
         token.validate()?;
         if object.is_empty()

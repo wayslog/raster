@@ -14,9 +14,18 @@ pub(crate) struct WrittenMaterial {
     pub bytes: u64,
     pub checksum: u32,
 }
+/// 只有成功写入、同步并关闭后才能从材料任务取得的文件凭据。
+pub(crate) struct SyncedFile {
+    pub(super) owner: Arc<()>,
+    pub(super) token: CheckpointToken,
+    pub(super) name: String,
+    pub(super) digest: WrittenMaterial,
+}
 pub(crate) struct MaterialWrite {
     owner: Arc<()>,
     path: PathBuf,
+    token: CheckpointToken,
+    name: String,
     route: CompletionRoute,
     bytes: Vec<u8>,
     chunk: usize,
@@ -56,6 +65,8 @@ impl MaterialWrite {
         Ok(Self {
             owner: storage.identity.clone(),
             path,
+            token,
+            name: name.to_owned(),
             route,
             bytes,
             chunk,
@@ -199,6 +210,16 @@ impl MaterialWrite {
             _ => self.fail(Error::InvalidState("材料完成类型错误")),
         }
         Ok(())
+    }
+    pub fn take_synced(&mut self) -> Option<Result<SyncedFile, Error>> {
+        self.result.take().map(|result| {
+            result.map(|digest| SyncedFile {
+                owner: self.owner.clone(),
+                token: self.token,
+                name: self.name.clone(),
+                digest,
+            })
+        })
     }
     pub fn take_result(&mut self) -> Option<Result<WrittenMaterial, Error>> {
         self.result.take()

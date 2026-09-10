@@ -1,6 +1,8 @@
 //! 检查点材料、提交证据和恢复重放；不会把启动或文件写完当作持久化成功。
 use crate::{format::Manifest, types::*};
+pub(crate) mod directory;
 pub(crate) mod material;
+pub(crate) mod publication;
 
 pub(crate) enum CheckpointPhase {
     CollectIndex,
@@ -37,3 +39,6 @@ impl RecoveryPlan {
         Err(Error::unimplemented("checkpoint::replay"))
     }
 }
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod publication_tests;

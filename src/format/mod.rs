@@ -2,7 +2,7 @@
 mod manifest;
 mod record;
 mod wire;
-pub(crate) use manifest::Manifest;
+pub(crate) use manifest::{Commit, Manifest};
 pub(crate) use record::{HEADER_BYTES, Record, RecordHeader};
 mod page;
 pub(crate) use page::PageFrame;
