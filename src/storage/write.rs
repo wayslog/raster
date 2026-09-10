@@ -129,6 +129,15 @@ impl SegmentWrite {
         }
         Ok(())
     }
+    pub fn has_inflight(&self) -> bool {
+        self.inflight.is_some()
+    }
+    pub fn validate_bindings(&self, storage: &SegmentedStorage) -> Result<(), Error> {
+        for (address, location) in &self.bindings {
+            storage.validate_completion(*address, *location)?;
+        }
+        Ok(())
+    }
     pub fn take_result(&mut self) -> Option<Result<(), Error>> {
         self.result.take()
     }

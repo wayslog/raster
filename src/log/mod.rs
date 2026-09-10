@@ -17,6 +17,7 @@ pub(crate) struct Frontiers {
 struct LogState {
     frontiers: Frontiers,
     reservations: usize,
+    flush: Option<Arc<()>>,
 }
 struct ReservationActivity<'a>(&'a crate::sync::Mutex<LogState>);
 impl Drop for ReservationActivity<'_> {
@@ -88,7 +89,7 @@ impl<V: ValueLayout> RecordLease<V> {
 pub(crate) struct HybridLog<V: ValueLayout> {
     pool: page::PagePool,
     page_bytes: usize,
-    state: crate::sync::Mutex<LogState>,
+    state: Arc<crate::sync::Mutex<LogState>>,
     layout: Arc<V>,
     records: crate::sync::Mutex<BTreeMap<LogAddress, Arc<value::PageValue<V>>>>,
 }
@@ -97,7 +98,7 @@ impl<V: ValueLayout> HybridLog<V> {
         Ok(Self {
             pool: page::PagePool::new(config.page_bytes, config.memory_pages)?,
             page_bytes: config.page_bytes,
-            state: crate::sync::Mutex::new(LogState::default()),
+            state: Arc::new(crate::sync::Mutex::new(LogState::default())),
             layout,
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
@@ -326,9 +327,6 @@ impl<V: ValueLayout> HybridLog<V> {
             generation,
             bytes,
         })
-    }
-    pub fn flush_step(&self, _budget: PollBudget) -> Result<Progress, Error> {
-        Err(Error::unimplemented("log::flush"))
     }
 }
 mod gate;
@@ -607,3 +605,5 @@ mod tests {
         assert_eq!(lease.read(|v| v).unwrap(), 2);
     }
 }
+
+pub(crate) mod flush;

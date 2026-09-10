@@ -25,6 +25,7 @@ struct Binding {
     file: Option<FileId>,
 }
 pub(crate) struct SegmentedStorage {
+    pub identity: Arc<()>,
     pub device: Arc<dyn Device>,
     pub root: PathBuf,
     pub segment_bytes: u64,
@@ -39,6 +40,7 @@ impl SegmentedStorage {
             });
         }
         Ok(Self {
+            identity: Arc::new(()),
             device,
             root,
             segment_bytes,
