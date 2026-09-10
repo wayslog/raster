@@ -339,6 +339,18 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn release_page(&self, page: PageId, generation: Generation) -> Result<(), Error> {
         self.pool.release(page, generation)
     }
+    /// 取得页对齐的检查点尾部；调用者须保存返回边界，再推进只读及刷盘。
+    /// 拒绝存在预留的时刻；新请求随后只能在下一页追加，不会回填该页尾。
+    pub fn pad_tail(&self) -> Result<LogAddress, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        if state.reservations != 0 {
+            return Err(Error::Busy);
+        }
+        self.pool.pad_tail()
+    }
     pub fn advance_read_only(&self, target: LogAddress) -> Result<(), Error> {
         target.validate()?;
         if !target.0.is_multiple_of(self.page_bytes as u64) {
@@ -589,6 +601,62 @@ mod tests {
         drop(decoded);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         assert_eq!(destructors.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn 检查点填充尾页不创建记录且后续分配不回填() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        assert_eq!(log.pad_tail().unwrap(), LogAddress(0));
+        let first = log
+            .finish_initialization(log.reserve_record(b"a", None, 11).unwrap())
+            .unwrap();
+        let before = log.frontiers().unwrap();
+        assert!(before.tail.0 < 256);
+        let boundary = log.pad_tail().unwrap();
+        assert_eq!(boundary, LogAddress(256));
+        assert_eq!(log.pad_tail().unwrap(), boundary);
+        let padded = log.frontiers().unwrap();
+        assert_eq!(padded.read_only, before.read_only);
+        assert_eq!(padded.safe_read_only, before.safe_read_only);
+        assert_eq!(padded.flushed_until, before.flushed_until);
+        assert!(log.encode_page(PageId(0), CheckpointVersion(0)).is_err());
+        log.advance_read_only(boundary).unwrap();
+        let encoded = log.encode_page(PageId(0), CheckpointVersion(0)).unwrap();
+        let frame = crate::format::PageFrame::decode(&encoded.bytes, PageId(0), 256).unwrap();
+        let records = frame.records().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, first);
+        assert_eq!(records[0].1.value, 11u64.to_le_bytes());
+        assert!(
+            frame.payload[before.tail.0 as usize..]
+                .iter()
+                .all(|b| *b == 0)
+        );
+        let next = log
+            .finish_initialization(log.reserve_record(b"b", Some(first), 22).unwrap())
+            .unwrap();
+        assert_eq!(next, boundary);
+        assert_eq!(log.frontiers().unwrap().safe_read_only, boundary);
+    }
+    #[test]
+    fn 活跃预留拒绝尾页填充且不改变分配边界() {
+        let log = log();
+        let pending = log.reserve(11).unwrap();
+        let before = log.frontiers().unwrap().tail;
+        assert!(matches!(log.pad_tail(), Err(Error::Busy)));
+        assert_eq!(log.frontiers().unwrap().tail, before);
+        drop(pending);
+        let end = log.pad_tail().unwrap();
+        assert_eq!(end, LogAddress(64));
+        log.advance_read_only(end).unwrap();
+        assert_eq!(log.frontiers().unwrap().safe_read_only, end);
     }
     #[test]
     fn 冻结页编码覆盖对齐间隙和已放弃预留() {

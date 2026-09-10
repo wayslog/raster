@@ -125,6 +125,25 @@ impl PagePool {
         LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
             .checked_add(entry.next as u64)
     }
+    /// 封闭最新页的剩余分配空间；不创建记录，也不改变已有范围的所有权。
+    pub fn pad_tail(&self) -> Result<LogAddress, Error> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+        let Some(id) = state.next_id.checked_sub(1) else {
+            return Ok(LogAddress(0));
+        };
+        let entry = state
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id.0 == id)
+            .ok_or(Error::InvalidState("最新逻辑页不存在"))?;
+        let end = LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
+            .checked_add(self.bytes as u64)?;
+        entry.next = self.bytes;
+        Ok(end)
+    }
     pub fn reserve(&self, len: usize, alignment: usize) -> Result<PageRange, Error> {
         if len == 0 || len > self.bytes || !alignment.is_power_of_two() || alignment > self.bytes {
             return Err(Error::CapacityExceeded);
