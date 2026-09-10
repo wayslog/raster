@@ -21,11 +21,12 @@ enum FaultMode {
     Busy,
     Reject,
     Complete,
+    Short,
 }
 #[derive(Default)]
 struct Trace {
     files: BTreeMap<u64, String>,
-    pending: BTreeMap<u64, (String, Option<String>, bool)>,
+    pending: BTreeMap<u64, (String, Option<String>, Option<FaultMode>)>,
     events: Vec<String>,
     fault: Option<(String, FaultMode)>,
 }
@@ -90,10 +91,7 @@ impl Device for Controlled {
             });
         }
         let id = self.inner.submit(request)?;
-        trace.pending.insert(
-            id.0,
-            (tag, opened, matches!(fault, Some(FaultMode::Complete))),
-        );
+        trace.pending.insert(id.0, (tag, opened, fault));
         Ok(id)
     }
     fn poll(&self, budget: PollBudget, out: &mut Vec<IoCompletion>) -> Result<(), Error> {
@@ -105,7 +103,12 @@ impl Device for Controlled {
             if let (Some(name), Ok(IoOutcome::Opened(file))) = (opened, &completion.result) {
                 trace.files.insert(file.slot, name);
             }
-            if fail {
+            if matches!(fail, Some(FaultMode::Short))
+                && let Ok(IoOutcome::Transferred(n)) = &mut completion.result
+            {
+                *n = (*n).min(1);
+            }
+            if matches!(fail, Some(FaultMode::Complete)) {
                 completion.result =
                     Err(std::io::Error::other(format!("注入完成失败 {tag}")).into());
             }
@@ -218,6 +221,8 @@ macro_rules! task {
 task!(DirectoryPrepare, PreparedDirectory, take_result);
 task!(MaterialWrite, SyncedFile, take_synced);
 task!(CommitPublish, PublishedCommit, take_result);
+task!(super::manifest_read::ManifestRead, Manifest, take_result);
+task!(super::read::MaterialRead, Vec<u8>, take_result);
 task!(
     super::log_material::LogMaterialWrite,
     super::log_material::LogMaterialFile,
@@ -1079,4 +1084,279 @@ fn 日志材料拒绝尚未冻结或尚未写完的源页() {
             .is_err()
     );
     assert!(fixture.device.trace.lock().unwrap().events.is_empty());
+}
+
+fn recovery_file(fixture: &Fixture, bytes: &[u8]) {
+    let _directory = prepare(fixture).unwrap();
+    drive(
+        fixture,
+        &mut MaterialWrite::new(
+            &fixture.storage,
+            CheckpointToken([2; 16]),
+            "sample",
+            bytes.to_vec(),
+            17,
+            CompletionRoute(93),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}
+fn read_task(fixture: &Fixture, bytes: u64) -> super::read::MaterialRead {
+    super::read::MaterialRead::new(
+        &fixture.storage,
+        super::read::ReadSpec {
+            token: CheckpointToken([2; 16]),
+            name: "sample",
+            bytes,
+            limit: 4096,
+            chunk: 17,
+            route: CompletionRoute(94),
+        },
+    )
+    .unwrap()
+}
+#[test]
+fn 恢复文件分块与短读精确返回且空文件必须通过结束探测() {
+    for payload in [
+        vec![],
+        (0..1047).map(|i| (i % 251) as u8).collect::<Vec<_>>(),
+    ] {
+        let fixture = Fixture::new();
+        recovery_file(&fixture, &payload);
+        let mut task = read_task(&fixture, payload.len() as u64);
+        fixture.reset(Some(("read:sample".into(), FaultMode::Short)));
+        assert_eq!(drive(&fixture, &mut task).unwrap(), payload);
+        assert!(!task.has_resources());
+        assert!(task.take_result().is_none());
+        assert!(task.submit_next(&fixture.storage).unwrap().is_none());
+        assert_eq!(
+            fixture.device.trace.lock().unwrap().events.last().unwrap(),
+            "close:sample"
+        );
+        assert_eq!(fixture.read("sample"), payload);
+    }
+}
+#[test]
+fn 恢复读取拒绝截断尾随和超限声明且不创建缺失文件() {
+    for expected in [0, 4, 6] {
+        let fixture = Fixture::new();
+        recovery_file(&fixture, b"abcde");
+        let mut task = read_task(&fixture, expected);
+        assert!(drive(&fixture, &mut task).is_err());
+        assert!(!task.has_resources());
+        assert_eq!(fixture.read("sample"), b"abcde");
+    }
+    let fixture = Fixture::new();
+    for (bytes, limit) in [(4097, 4096), (u64::MAX, usize::MAX)] {
+        assert!(
+            super::read::MaterialRead::new(
+                &fixture.storage,
+                super::read::ReadSpec {
+                    token: CheckpointToken([2; 16]),
+                    name: "sample",
+                    bytes,
+                    limit,
+                    chunk: 17,
+                    route: CompletionRoute(94),
+                }
+            )
+            .is_err()
+        );
+    }
+    assert!(fixture.device.trace.lock().unwrap().events.is_empty());
+    let _directory = prepare(&fixture).unwrap();
+    let mut task = read_task(&fixture, 5);
+    assert!(
+        matches!(drive(&fixture, &mut task), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(!task.has_resources());
+    assert!(
+        !fixture
+            .root
+            .0
+            .join(
+                fixture
+                    .storage
+                    .checkpoint_path(CheckpointToken([2; 16]), "sample")
+                    .unwrap()
+            )
+            .exists()
+    );
+}
+#[test]
+fn 恢复读取错误路由不消费请求且关闭失败保留资源状态() {
+    let fixture = Fixture::new();
+    let other = Fixture::new();
+    recovery_file(&fixture, b"abcde");
+    let mut task = read_task(&fixture, 5);
+    assert!(task.submit_next(&other.storage).is_err());
+    task.submit_next(&fixture.storage).unwrap().unwrap();
+    let completion = fixture.completion();
+    let mut completion = task.accept(&other.storage, completion).unwrap_err().request;
+    completion.route = CompletionRoute(999);
+    let mut completion = task
+        .accept(&fixture.storage, completion)
+        .unwrap_err()
+        .request;
+    assert!(task.has_resources());
+    completion.route = CompletionRoute(94);
+    task.accept(&fixture.storage, completion).unwrap();
+    fixture.reset(Some(("close:sample".into(), FaultMode::Reject)));
+    assert!(drive(&fixture, &mut task).is_err());
+    assert!(task.has_resources());
+    assert!(task.take_result().is_none());
+    assert!(task.submit_next(&fixture.storage).unwrap().is_none());
+}
+#[test]
+fn 恢复文件读失败仍关闭且忙拒绝不终结() {
+    for mode in [FaultMode::Busy, FaultMode::Reject, FaultMode::Complete] {
+        let fixture = Fixture::new();
+        recovery_file(&fixture, b"abcde");
+        let mut task = read_task(&fixture, 5);
+        fixture.reset(Some(("read:sample".into(), mode)));
+        assert_eq!(
+            drive(&fixture, &mut task).is_ok(),
+            matches!(mode, FaultMode::Busy)
+        );
+        assert!(!task.has_resources());
+        assert_eq!(
+            fixture.device.trace.lock().unwrap().events.last().unwrap(),
+            "close:sample"
+        );
+    }
+}
+
+fn published_fixture(fixture: &Fixture) -> Manifest {
+    let directory = prepare(fixture).unwrap();
+    let manifest = manifest();
+    let files = materials(fixture, &manifest);
+    drive(
+        fixture,
+        &mut CommitPublish::new(
+            &fixture.storage,
+            directory,
+            manifest.clone(),
+            files,
+            17,
+            CompletionRoute(95),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    manifest
+}
+fn manifest_reader(fixture: &Fixture, store: StoreId) -> super::manifest_read::ManifestRead {
+    super::manifest_read::ManifestRead::new(
+        &fixture.storage,
+        store,
+        CheckpointToken([2; 16]),
+        CompletionRoute(96),
+        17,
+    )
+    .unwrap()
+}
+#[test]
+fn 恢复清单先验证提交再读取且只在关闭后返回完整描述() {
+    let fixture = Fixture::new();
+    let expected = published_fixture(&fixture);
+    fixture.reset(None);
+    let mut read = manifest_reader(&fixture, expected.store);
+    assert_eq!(drive(&fixture, &mut read).unwrap(), expected);
+    assert!(!read.has_resources());
+    assert!(read.take_result().is_none());
+    let trace = fixture.device.trace.lock().unwrap();
+    let close_commit = trace
+        .events
+        .iter()
+        .position(|e| e == "close:commit")
+        .unwrap();
+    let open_manifest = trace
+        .events
+        .iter()
+        .position(|e| e == "open:manifest")
+        .unwrap();
+    assert!(close_commit < open_manifest);
+    assert_eq!(trace.events.last().unwrap(), "close:manifest");
+}
+#[test]
+fn 恢复拒绝错身份损坏清单和未发布提交() {
+    let fixture = Fixture::new();
+    let expected = published_fixture(&fixture);
+    fixture.reset(None);
+    assert!(drive(&fixture, &mut manifest_reader(&fixture, StoreId([9; 16]))).is_err());
+    assert!(
+        !fixture
+            .device
+            .trace
+            .lock()
+            .unwrap()
+            .events
+            .contains(&"open:manifest".to_owned())
+    );
+    let path = fixture.root.0.join(
+        fixture
+            .storage
+            .checkpoint_path(expected.token, "manifest")
+            .unwrap(),
+    );
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[20] ^= 1;
+    std::fs::write(path, bytes).unwrap();
+    assert!(drive(&fixture, &mut manifest_reader(&fixture, expected.store)).is_err());
+
+    let fixture = Fixture::new();
+    let directory = prepare(&fixture).unwrap();
+    let expected = manifest();
+    let files = materials(&fixture, &expected);
+    fixture.reset(Some(("rename".into(), FaultMode::Reject)));
+    assert!(
+        drive(
+            &fixture,
+            &mut CommitPublish::new(
+                &fixture.storage,
+                directory,
+                expected.clone(),
+                files,
+                17,
+                CompletionRoute(95)
+            )
+            .unwrap()
+        )
+        .is_err()
+    );
+    assert!(!fixture.read("commit.pending").is_empty());
+    assert!(drive(&fixture, &mut manifest_reader(&fixture, expected.store)).is_err());
+}
+#[test]
+fn 恢复清单解析阶段仍拒绝其他存储且损坏提交不会触发清单分配() {
+    let fixture = Fixture::new();
+    let other = Fixture::new();
+    let expected = published_fixture(&fixture);
+    let mut read = manifest_reader(&fixture, expected.store);
+    assert!(read.submit_next(&other.storage).is_err());
+    assert_eq!(drive(&fixture, &mut read).unwrap(), expected);
+    assert!(read.submit_next(&other.storage).is_err());
+    let path = fixture.root.0.join(
+        fixture
+            .storage
+            .checkpoint_path(expected.token, "commit")
+            .unwrap(),
+    );
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+    let crc = crate::format::checksum(&bytes[..52]);
+    bytes[52..].copy_from_slice(&crc.to_le_bytes());
+    std::fs::write(path, bytes).unwrap();
+    fixture.reset(None);
+    assert!(drive(&fixture, &mut manifest_reader(&fixture, expected.store)).is_err());
+    assert!(
+        !fixture
+            .device
+            .trace
+            .lock()
+            .unwrap()
+            .events
+            .contains(&"open:manifest".to_owned())
+    );
 }

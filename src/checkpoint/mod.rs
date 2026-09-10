@@ -2,8 +2,10 @@
 use crate::{format::Manifest, types::*};
 pub(crate) mod directory;
 pub(crate) mod log_material;
+pub(crate) mod manifest_read;
 pub(crate) mod material;
 pub(crate) mod publication;
+pub(crate) mod read;
 
 pub(crate) struct RecoveryPlan {
     pub manifest: Manifest,

@@ -210,8 +210,47 @@ impl MemIndex {
             entries,
         })
     }
-    pub fn restore(&mut self, _image: IndexImage) -> Result<(), Error> {
-        Err(Error::unimplemented("index::restore"))
+    /// 按持久条目构建新运行期身份；全部成功后替换，失败不改变旧索引。
+    /// 桶数量必须与恢复配置一致，不能按未可信磁盘字段任意扩大分配。
+    pub fn restore(&mut self, image: crate::format::IndexSnapshot) -> Result<(), Error> {
+        image.validate()?;
+        if usize::try_from(image.buckets).ok() != Some(self.buckets.len()) {
+            return Err(Error::InvalidFormat("恢复索引桶数量与配置不匹配"));
+        }
+        let mut restored = Self::new(IndexConfig {
+            buckets: self.buckets.len(),
+        })?;
+        restored.generation = image.generation;
+        for entry in image.entries {
+            let bucket = restored.buckets[entry.bucket as usize]
+                .get_mut()
+                .map_err(|_| Error::InvalidState("恢复索引桶锁中毒"))?;
+            if bucket
+                .blocks
+                .last()
+                .is_none_or(|block| block[SLOTS - 1].is_some())
+            {
+                bucket
+                    .blocks
+                    .try_reserve(1)
+                    .map_err(|_| Error::OutOfMemory)?;
+                bucket.blocks.push([None; SLOTS]);
+            }
+            let slot = bucket
+                .blocks
+                .last_mut()
+                .expect("已分配溢出块")
+                .iter_mut()
+                .find(|entry| entry.is_none())
+                .expect("末块尚有空槽");
+            *slot = Some(Entry {
+                tag: entry.tag,
+                head: IndexHead::Log(entry.address),
+                revision: 0,
+            });
+        }
+        *self = restored;
+        Ok(())
     }
     pub fn grow_step(&self, _budget: PollBudget) -> Result<Progress, Error> {
         Err(Error::unimplemented("index::grow"))
@@ -254,6 +293,79 @@ mod tests {
             assert_eq!(entry.bucket, u64::from(entry.tag) % 2);
             assert_eq!(entry.address, LogAddress(u64::from(entry.tag) * 64));
         }
+    }
+    #[test]
+    fn 恢复索引重建溢出桶与新身份且旧快照不能发布() {
+        let mut index = index();
+        let old = index.prepare(KeyHash(0)).unwrap();
+        let image = crate::format::IndexSnapshot {
+            buckets: 2,
+            generation: Generation(9),
+            entries: (0..30)
+                .map(|tag| crate::format::IndexEntry {
+                    bucket: 0,
+                    tag,
+                    address: LogAddress(u64::from(tag) * 64),
+                })
+                .collect(),
+        };
+        let expected = image.encode().unwrap();
+        index.restore(image).unwrap();
+        assert_eq!(index.snapshot().unwrap().encode().unwrap(), expected);
+        assert_eq!(index.buckets[0].lock().unwrap().blocks.len(), 5);
+        assert!(
+            index
+                .compare_publish(old, IndexHead::Log(LogAddress(17)))
+                .is_err()
+        );
+        for tag in 0..30 {
+            let snapshot = index.prepare(KeyHash(tag << 48)).unwrap();
+            assert_eq!(snapshot.head, IndexHead::Log(LogAddress(tag * 64)));
+            assert_eq!(snapshot.table_generation, Generation(9));
+            assert_eq!(snapshot.revision, 0);
+        }
+        let before = index.prepare(KeyHash(0)).unwrap();
+        assert!(matches!(
+            index.compare_publish(before, IndexHead::Log(LogAddress(2048))),
+            Ok(PublishResult::Published)
+        ));
+        assert!(matches!(
+            index.compare_publish(before, IndexHead::Log(LogAddress(4096))),
+            Ok(PublishResult::Conflict(_))
+        ));
+    }
+    #[test]
+    fn 无效恢复映像不改变已有索引且空映像可恢复() {
+        let mut index = index();
+        let old = index.prepare(KeyHash(0)).unwrap();
+        index
+            .compare_publish(old, IndexHead::Log(LogAddress(64)))
+            .unwrap();
+        let before = index.prepare(KeyHash(0)).unwrap();
+        let valid = crate::format::IndexSnapshot {
+            buckets: 2,
+            generation: Generation(0),
+            entries: vec![],
+        };
+        let mut bad = valid.clone();
+        bad.buckets = 4;
+        assert!(index.restore(bad).is_err());
+        assert_eq!(index.prepare(KeyHash(0)).unwrap(), before);
+        let mut bad = valid.clone();
+        bad.entries.push(crate::format::IndexEntry {
+            bucket: 0,
+            tag: 0,
+            address: LogAddress::INVALID,
+        });
+        assert!(index.restore(bad).is_err());
+        assert_eq!(index.prepare(KeyHash(0)).unwrap(), before);
+        index.restore(valid).unwrap();
+        assert!(index.locate(KeyHash(0)).unwrap().is_none());
+        assert!(
+            index
+                .compare_publish(before, IndexHead::Log(LogAddress(128)))
+                .is_err()
+        );
     }
     #[test]
     fn 持久映像拒绝混合身份代次缓存头和重复条目() {
