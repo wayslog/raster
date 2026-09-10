@@ -64,9 +64,9 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             LookupStep::Resident(lease) => {
                 if !self.skip_in_place {
                     self.effect = Effect::Unknown;
-                    match lease
-                        .update_if_mutable(|view| request.update_in_place(ValueUpdate { view }))?
-                    {
+                    match lease.update_at_version(self.version, |view| {
+                        request.update_in_place(ValueUpdate { view })
+                    })? {
                         Some(UpdateDecision::Updated(output)) => {
                             self.effect = Effect::Applied;
                             return Ok(Some(Outcome::Success(output)));
@@ -107,7 +107,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             };
         let address = engine
             .log
-            .finish_initialization(allocation.initialize(value)?)?;
+            .finish_initialization(allocation.initialize(value)?.with_version(self.version))?;
         match engine
             .index
             .compare_publish(entry, IndexHead::Log(address))?

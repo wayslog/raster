@@ -72,6 +72,7 @@ pub(crate) struct PageValue<V: ValueLayout> {
     capacity: usize,
     key_len: usize,
     previous: Option<LogAddress>,
+    version: CheckpointVersion,
     gate: MutationGate,
     failed: AtomicBool,
     sealed: AtomicBool,
@@ -101,6 +102,7 @@ impl<V: ValueLayout> PageValue<V> {
             capacity: plan.capacity.max(1),
             key_len: 0,
             previous: None,
+            version: CheckpointVersion(0),
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
@@ -145,6 +147,7 @@ impl<V: ValueLayout> PageValue<V> {
             capacity: plan.capacity.max(1),
             key_len: key.len(),
             previous,
+            version: CheckpointVersion(0),
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
@@ -178,6 +181,14 @@ impl<V: ValueLayout> PageValue<V> {
             )
         }
     }
+    pub fn version(&self) -> CheckpointVersion {
+        self.version
+    }
+    /// 仅在记录发布前持有独占拥有权时设置，发布后版本不可变。
+    pub fn with_version(mut self, version: CheckpointVersion) -> Self {
+        self.version = version;
+        self
+    }
     pub fn previous(&self) -> Option<LogAddress> {
         self.previous
     }
@@ -208,6 +219,7 @@ impl<V: ValueLayout> PageValue<V> {
             capacity: 0,
             key_len: key.len(),
             previous,
+            version: CheckpointVersion(0),
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(true),
@@ -236,6 +248,7 @@ impl<V: ValueLayout> PageValue<V> {
             capacity: plan.capacity.max(1),
             key_len: 0,
             previous: None,
+            version: CheckpointVersion(0),
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
@@ -308,15 +321,29 @@ impl<V: ValueLayout> PageValue<V> {
             }
         }
     }
+    /// 只有同版本操作可申请原地更新；不同版本在调用用户代码前返回 None。
+    pub fn update_at_version<R>(
+        &self,
+        version: CheckpointVersion,
+        f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
+    ) -> Result<Option<R>, Error> {
+        if self.version != version {
+            return Ok(None);
+        }
+        self.update_if_mutable(f)
+    }
     pub fn seal(&self) -> Result<(), Error> {
         let _gate = self.gate.try_replace()?;
         self.sealed.store(true, Ordering::SeqCst);
         Ok(())
     }
     /// 冻结后的拥有型磁盘记录。值与内存布局分别编码，保持逻辑地址占槽不变。
-    pub fn encode_record(&self, version: CheckpointVersion) -> Result<Vec<u8>, Error> {
+    pub fn encode_record(&self, maximum_version: CheckpointVersion) -> Result<Vec<u8>, Error> {
         use crate::format::{HEADER_BYTES, Record, RecordHeader};
         let _gate = self.gate.try_replace()?;
+        if self.version > maximum_version {
+            return Err(Error::InvalidState("记录版本超过刷盘范围"));
+        }
         if !self.sealed.load(Ordering::SeqCst) || self.value_offset == 0 {
             return Err(Error::InvalidState("刷盘需要已冻结的完整记录"));
         }
@@ -346,7 +373,7 @@ impl<V: ValueLayout> PageValue<V> {
         let record = Record {
             header: RecordHeader {
                 previous: self.previous,
-                version,
+                version: self.version,
                 key_bytes: u32::try_from(self.key_len).map_err(|_| Error::CapacityExceeded)?,
                 value_bytes: u32::try_from(value_len).map_err(|_| Error::CapacityExceeded)?,
                 capacity_bytes: u32::try_from(capacity).map_err(|_| Error::CapacityExceeded)?,
@@ -415,6 +442,7 @@ mod tests {
             vec![7; 19],
         )
         .unwrap();
+        let value = value.with_version(CheckpointVersion(3));
         assert!(value.encode_record(CheckpointVersion(3)).is_err());
         value.update(|mut v| v.replace(&vec![0, 255, 128])).unwrap();
         value.seal().unwrap();

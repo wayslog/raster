@@ -320,6 +320,60 @@ mod tests {
         }
     }
     #[test]
+    fn 同页不同记录版本在刷盘中保留且超范围版本拒绝() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let first = log
+            .finish_initialization(
+                log.reserve_record(b"a", None, 10)
+                    .unwrap()
+                    .with_version(CheckpointVersion(0)),
+            )
+            .unwrap();
+        log.finish_initialization(
+            log.reserve_record(b"b", None, 20)
+                .unwrap()
+                .with_version(CheckpointVersion(1)),
+        )
+        .unwrap();
+        log.finish_initialization(
+            log.reserve_tombstone(b"a", Some(first))
+                .unwrap()
+                .with_version(CheckpointVersion(2)),
+        )
+        .unwrap();
+        log.finish_initialization(log.reserve_record(b"c", None, 30).unwrap())
+            .unwrap();
+        log.advance_read_only(LogAddress(256)).unwrap();
+        assert!(matches!(
+            log.encode_page(PageId(0), CheckpointVersion(1)),
+            Err(Error::InvalidState(_))
+        ));
+        for maximum in [2, 7] {
+            let encoded = log
+                .encode_page(PageId(0), CheckpointVersion(maximum))
+                .unwrap();
+            let frame = crate::format::PageFrame::decode(&encoded.bytes, PageId(0), 256).unwrap();
+            let records = frame.records().unwrap();
+            assert_eq!(
+                records
+                    .iter()
+                    .map(|(_, record)| record.header.version.0)
+                    .collect::<Vec<_>>(),
+                vec![0, 1, 2]
+            );
+            assert!(records[2].1.header.tombstone);
+            assert_eq!(records[2].1.header.previous, Some(first));
+        }
+    }
+    #[test]
     fn 混合链按预算跨内存与磁盘查找且墓碑遮蔽旧值() {
         use crate::log::lookup::LookupStep;
         let log = HybridLog::new(

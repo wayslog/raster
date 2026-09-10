@@ -79,7 +79,9 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             }
             Err(error) => return Err(error),
         };
-        let address = engine.log.finish_initialization(reservation)?;
+        let address = engine
+            .log
+            .finish_initialization(reservation.with_version(self.version))?;
         match engine
             .index
             .compare_publish(entry, IndexHead::Log(address))?

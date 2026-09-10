@@ -48,9 +48,9 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 .filter(|lease| !lease.is_tombstone())
             {
                 self.effect = Effect::Unknown;
-                match lease
-                    .update_if_mutable(|view| request.update_in_place(ValueUpdate { view }))?
-                {
+                match lease.update_at_version(self.version, |view| {
+                    request.update_in_place(ValueUpdate { view })
+                })? {
                     Some(UpdateDecision::Updated(output)) => {
                         self.effect = Effect::Applied;
                         return Ok(Some(Outcome::Success(output)));
@@ -76,7 +76,9 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             Err(error) => return Err(error),
         };
         let reservation = allocation.initialize(prepared.value.take().expect("尚未消费值"))?;
-        let address = engine.log.finish_initialization(reservation)?;
+        let address = engine
+            .log
+            .finish_initialization(reservation.with_version(self.version))?;
         match engine
             .index
             .compare_publish(entry, IndexHead::Log(address))?

@@ -64,6 +64,10 @@ pub(crate) struct RecordReservation<'a, V: ValueLayout> {
     _activity: ReservationActivity<'a>,
 }
 impl<V: ValueLayout> RecordReservation<'_, V> {
+    pub fn with_version(mut self, version: CheckpointVersion) -> Self {
+        self.value = self.value.with_version(version);
+        self
+    }
     pub fn address(&self) -> Result<LogAddress, Error> {
         self.value.address()
     }
@@ -74,6 +78,17 @@ pub(crate) struct RecordLease<V: ValueLayout> {
     local: PhantomData<Rc<()>>,
 }
 impl<V: ValueLayout> RecordLease<V> {
+    pub fn version(&self) -> CheckpointVersion {
+        self.value.version()
+    }
+    pub fn update_at_version<R>(
+        &self,
+        version: CheckpointVersion,
+        f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
+    ) -> Result<Option<R>, Error> {
+        self.value.update_at_version(version, f)
+    }
+
     pub fn read<R>(&self, f: impl for<'a> FnOnce(V::Read<'a>) -> R) -> Result<R, Error> {
         self.value.read(f)
     }

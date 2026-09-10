@@ -1506,3 +1506,137 @@ fn 切分后接受的新序号不进入旧检查点关闭切分() {
             .any(|cut| cut.session == session.id() && cut.last_accepted == Some(Serial(9)))
     );
 }
+
+#[test]
+fn 新版本替换与读改写不原地修改旧记录但同版本仍可更新() {
+    use std::sync::atomic::Ordering::SeqCst;
+    struct Write {
+        key: u64,
+        value: u64,
+        updates: Rc<Cell<usize>>,
+    }
+    impl Keyed<Schema> for Write {
+        fn key(&self) -> &u64 {
+            &self.key
+        }
+    }
+    impl UpsertOperation<Schema> for Write {
+        type Output = ();
+        fn replacement(&mut self) -> Result<(u64, ()), Error> {
+            Ok((self.value, ()))
+        }
+        fn update_in_place(
+            &mut self,
+            mut value: ValueUpdate<'_, Schema>,
+        ) -> Result<UpdateDecision<()>, Error> {
+            self.updates.set(self.updates.get() + 1);
+            value.view_mut().store(self.value, SeqCst);
+            Ok(UpdateDecision::Updated(()))
+        }
+    }
+    impl RmwOperation<Schema> for Write {
+        type Output = ();
+        fn initial(&mut self) -> Result<(u64, ()), Error> {
+            Ok((self.value, ()))
+        }
+        fn copy_update(&mut self, value: ValueRead<'_, Schema>) -> Result<(u64, ()), Error> {
+            Ok((value.view().wrapping_add(self.value), ()))
+        }
+        fn update_in_place(
+            &mut self,
+            mut value: ValueUpdate<'_, Schema>,
+        ) -> Result<UpdateDecision<()>, Error> {
+            self.updates.set(self.updates.get() + 1);
+            value.view_mut().fetch_add(self.value, SeqCst);
+            Ok(UpdateDecision::Updated(()))
+        }
+    }
+    let store = setup();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    let locate = |key| {
+        let entry = store
+            .inner
+            .index
+            .prepare(crate::schema::KeyCodec::hash(&U64Key, &key))
+            .unwrap();
+        let head = super::Engine::<Schema>::head(entry).unwrap();
+        store.inner.log.find(&U64Key, &key, head).unwrap().unwrap()
+    };
+    let old_put = locate(59);
+    let old_rmw = locate(58);
+    session
+        .runtime
+        .switch_version(CheckpointVersion(1))
+        .unwrap();
+    let updates = Rc::new(Cell::new(0));
+    assert!(matches!(
+        session
+            .upsert(
+                Serial(0),
+                Write {
+                    key: 59,
+                    value: 100,
+                    updates: updates.clone()
+                }
+            )
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    assert!(matches!(
+        session
+            .rmw(
+                Serial(1),
+                Write {
+                    key: 58,
+                    value: 1,
+                    updates: updates.clone()
+                },
+                RmwOptions::default()
+            )
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    assert_eq!(updates.get(), 0);
+    assert_eq!(old_put.version(), CheckpointVersion(0));
+    assert_eq!(old_put.read(|v| v).unwrap(), 59);
+    assert_eq!(old_rmw.read(|v| v).unwrap(), 58);
+    let new_put = locate(59);
+    assert_eq!(new_put.version(), CheckpointVersion(1));
+    assert_eq!(locate(58).version(), CheckpointVersion(1));
+    assert_eq!(locate(58).read(|v| v).unwrap(), 59);
+    assert!(matches!(
+        session
+            .upsert(
+                Serial(2),
+                Write {
+                    key: 59,
+                    value: 200,
+                    updates: updates.clone()
+                }
+            )
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    assert!(matches!(
+        session
+            .rmw(
+                Serial(3),
+                Write {
+                    key: 58,
+                    value: 2,
+                    updates: updates.clone()
+                },
+                RmwOptions::default()
+            )
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    assert_eq!(updates.get(), 2);
+    assert_eq!(new_put.read(|v| v).unwrap(), 200);
+    assert_eq!(old_put.read(|v| v).unwrap(), 59);
+    assert_eq!(old_rmw.read(|v| v).unwrap(), 58);
+}

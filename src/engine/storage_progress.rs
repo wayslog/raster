@@ -82,12 +82,12 @@ impl<S: Schema> Engine<S> {
             Err(error) => return Err(error),
         }
         // 后台路由保留一个额外邮箱，不能被所有用户 Pending 槽占满。
+        let version = self.coordinator.snapshot()?.version;
         let id = self.io.reserve(SessionId(self.id.0))?;
-        match self.log.begin_flush(
-            &self.storage,
-            CompletionHub::route(id),
-            CheckpointVersion(0),
-        ) {
+        match self
+            .log
+            .begin_flush(&self.storage, CompletionHub::route(id), version)
+        {
             Ok(task) => {
                 state.flush = Some((id, task));
                 Ok(true)
