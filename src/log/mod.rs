@@ -500,6 +500,7 @@ impl<V: ValueLayout> HybridLog<V> {
 }
 mod gate;
 mod page;
+pub(crate) mod scan;
 mod value;
 
 #[cfg(test)]
@@ -531,6 +532,12 @@ mod tests {
                 capacity: size_of::<Box<Resource>>(),
                 alignment: align_of::<Box<Resource>>(),
             })
+        }
+        fn decode_owned(&self, bytes: &[u8]) -> Result<bool, Error> {
+            if bytes != [0] {
+                return Err(Error::Codec("资源编码损坏"));
+            }
+            Ok(false)
         }
         fn plan_decode(&self, bytes: &[u8]) -> Result<crate::schema::value::ValuePlan, Error> {
             if bytes != [0] {

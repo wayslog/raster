@@ -339,12 +339,24 @@ impl<V: ValueLayout> PageValue<V> {
     }
     /// 冻结后的拥有型磁盘记录。值与内存布局分别编码，保持逻辑地址占槽不变。
     pub fn encode_record(&self, maximum_version: CheckpointVersion) -> Result<Vec<u8>, Error> {
+        self.copy_record(Some(maximum_version))
+    }
+    /// 扫描短暂排除全部更新后复制编码，不修改 sealed 或日志边界。
+    pub fn record_bytes(&self) -> usize {
+        self.range.as_ref().expect("活跃记录持有分配").len()
+    }
+    pub fn snapshot_record(&self) -> Result<Vec<u8>, Error> {
+        self.copy_record(None)
+    }
+    fn copy_record(&self, maximum_version: Option<CheckpointVersion>) -> Result<Vec<u8>, Error> {
         use crate::format::{HEADER_BYTES, Record, RecordHeader};
         let _gate = self.gate.try_replace()?;
-        if self.version > maximum_version {
+        if maximum_version.is_some_and(|version| self.version > version) {
             return Err(Error::InvalidState("记录版本超过刷盘范围"));
         }
-        if !self.sealed.load(Ordering::SeqCst) || self.value_offset == 0 {
+        if self.value_offset == 0
+            || maximum_version.is_some() && !self.sealed.load(Ordering::SeqCst)
+        {
             return Err(Error::InvalidState("刷盘需要已冻结的完整记录"));
         }
         let len = self.range.as_ref().expect("值范围存在").len();

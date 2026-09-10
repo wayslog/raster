@@ -135,6 +135,9 @@ pub unsafe trait ValueLayout: Send + Sync + 'static {
     fn plan(&self, value: &Self::Owned) -> Result<ValuePlan, Error>;
     /// 根据稳定编码规划活跃对象；不能将磁盘槽容量直接当作活跃布局。
     fn plan_decode(&self, encoded: &[u8]) -> Result<ValuePlan, Error>;
+    /// 将稳定编码解码为独立拥有值；不得借用输入、日志页或运行期槽。
+    /// 语义须与 decode_initialize/read 一致，供扫描返回可跨页回收保存的值。
+    fn decode_owned(&self, encoded: &[u8]) -> Result<Self::Owned, Error>;
     fn initialize(&self, permit: InitPermit<'_>, value: Self::Owned) -> Result<(), Error>;
     fn read<'a>(&'a self, permit: ReadPermit<'a>) -> Result<Self::Read<'a>, Error>;
     fn update<'a>(&'a self, permit: UpdatePermit<'a>) -> Result<Self::Update<'a>, Error>;

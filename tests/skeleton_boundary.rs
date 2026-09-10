@@ -70,6 +70,13 @@ unsafe impl ValueLayout for TestLayout {
             alignment: 8,
         })
     }
+    fn decode_owned(&self, bytes: &[u8]) -> Result<u64, Error> {
+        Ok(u64::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| Error::Codec("整数需要八字节"))?,
+        ))
+    }
     fn plan_decode(&self, _: &[u8]) -> Result<ValuePlan, Error> {
         Err(Error::unimplemented("测试布局"))
     }

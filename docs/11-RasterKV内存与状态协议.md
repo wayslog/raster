@@ -207,3 +207,6 @@ P5 的实际 v1 检查点使用独立材料副本，commit/manifest 及材料目
 这些是设计验收要求，未在本轮编译或运行。Loom/Miri/属性测试、真实设备及进程崩溃测试分别覆盖不同层次，不能互相替代。
 
 P1.3 的值编码辅助接口和尺寸规则见 [值编码契约](acceptance/P1.3值编码契约.md)。ValueCodec 与 PreparedValue 可独立使用；实际页许可和内建 ValueLayout 留到 P2.2。
+
+
+P6.3 补充 ValueLayout::decode_owned 必需接口：扫描返回的 Owned 值由稳定编码重新构造，不借用日志页或运行期槽；外部专家布局须实现与 decode_initialize/read 一致的语义。可变记录扫描在独占 StablePermit 内复制，不会为扫描永久冻结记录。

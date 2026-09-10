@@ -228,3 +228,39 @@ mod tests {
 
 mod layout;
 pub use layout::SerializedUpdate;
+
+#[cfg(test)]
+mod owned_value_tests {
+    use super::*;
+    #[test]
+    fn 拥有型值解码与槽位解码一致且不依赖输入生命周期() {
+        for value in [0u64, 1, u64::MAX] {
+            let bytes = value.to_le_bytes();
+            assert_eq!(
+                ValueLayout::decode_owned(&AtomicU64Value, &bytes).unwrap(),
+                value
+            );
+        }
+        assert!(ValueLayout::decode_owned(&AtomicU64Value, &[0; 7]).is_err());
+        for input in [vec![], vec![0, 255, 128], vec![7; 1500]] {
+            let expected = input.clone();
+            let layout = std::sync::Arc::new(SerializedValue::new(ByteValueCodec));
+            let owned = ValueLayout::decode_owned(&*layout, &input).unwrap();
+            let log = crate::log::HybridLog::new(
+                crate::config::LogConfig {
+                    page_bytes: 4096,
+                    memory_pages: 2,
+                    mutable_fraction: 0.5,
+                },
+                layout,
+            )
+            .unwrap();
+            let temporary = log.decode_temporary(&input).unwrap();
+            assert_eq!(temporary.read(|value| value).unwrap(), owned);
+            drop(temporary);
+            drop(log);
+            drop(input);
+            assert_eq!(owned, expected);
+        }
+    }
+}

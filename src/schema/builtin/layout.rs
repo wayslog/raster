@@ -60,6 +60,9 @@ unsafe impl<C: ValueCodec> ValueLayout for SerializedValue<C> {
     fn plan(&self, value: &C::Value) -> Result<ValuePlan, Error> {
         Ok(self.prepare(value)?.plan())
     }
+    fn decode_owned(&self, bytes: &[u8]) -> Result<Self::Owned, Error> {
+        self.codec.decode(bytes)
+    }
     fn plan_decode(&self, bytes: &[u8]) -> Result<ValuePlan, Error> {
         let value = self.codec.decode(bytes)?;
         let mut plan = self.plan(&value)?;
@@ -113,6 +116,9 @@ unsafe impl ValueLayout for AtomicU64Value {
     }
     fn plan(&self, value: &u64) -> Result<ValuePlan, Error> {
         Ok(self.prepare(*value)?.plan())
+    }
+    fn decode_owned(&self, bytes: &[u8]) -> Result<Self::Owned, Error> {
+        AtomicU64Value::decode_owned(self, bytes)
     }
     fn plan_decode(&self, bytes: &[u8]) -> Result<ValuePlan, Error> {
         self.plan(&self.decode_owned(bytes)?)
