@@ -272,6 +272,9 @@ impl<V: ValueLayout> HybridLog<V> {
         state.frontiers.safe_read_only = target;
         Ok(())
     }
+    pub fn decode_temporary(&self, encoded: &[u8]) -> Result<value::TemporaryValue<V>, Error> {
+        value::TemporaryValue::decode(self.layout.clone(), encoded, self.page_bytes)
+    }
     pub fn encode_page(
         &self,
         page: PageId,
@@ -364,6 +367,12 @@ mod tests {
                 alignment: align_of::<Box<Resource>>(),
             })
         }
+        fn plan_decode(&self, bytes: &[u8]) -> Result<crate::schema::value::ValuePlan, Error> {
+            if bytes != [0] {
+                return Err(Error::Codec("资源编码损坏"));
+            }
+            self.plan(&false)
+        }
         fn initialize(
             &self,
             p: crate::schema::value::InitPermit<'_>,
@@ -424,6 +433,35 @@ mod tests {
             unsafe { std::ptr::drop_in_place(p.as_ptr().cast::<Box<Resource>>().as_ptr()) };
             Ok(())
         }
+    }
+    #[test]
+    fn 临时解码不占日志页且资源只销毁一次() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let log = log();
+        for value in 0..8 {
+            log.finish_initialization(log.reserve(value).unwrap())
+                .unwrap();
+        }
+        assert!(log.reserve(9).is_err());
+        let temporary = log.decode_temporary(&u64::MAX.to_le_bytes()).unwrap();
+        assert_eq!(temporary.read(|v| v).unwrap(), u64::MAX);
+        assert_eq!(log.frontiers().unwrap().tail, LogAddress(64));
+        assert!(log.reserve(9).is_err());
+        drop(log);
+        assert_eq!(temporary.read(|v| v).unwrap(), u64::MAX);
+        let drops = Arc::new(AtomicUsize::new(0));
+        let destructors = Arc::new(AtomicUsize::new(0));
+        let layout = Arc::new(ResourceLayout {
+            drops: drops.clone(),
+            destructors: destructors.clone(),
+        });
+        assert!(value::TemporaryValue::decode(layout.clone(), &[1], 64).is_err());
+        assert!(value::TemporaryValue::decode(layout.clone(), &[0], 1).is_err());
+        let decoded = value::TemporaryValue::decode(layout, &[0], 64).unwrap();
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(decoded);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert_eq!(destructors.load(Ordering::SeqCst), 1);
     }
     #[test]
     fn 冻结页编码覆盖对齐间隙和已放弃预留() {

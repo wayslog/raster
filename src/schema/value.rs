@@ -133,6 +133,8 @@ pub unsafe trait ValueLayout: Send + Sync + 'static {
     }
     fn format_id(&self) -> FormatId;
     fn plan(&self, value: &Self::Owned) -> Result<ValuePlan, Error>;
+    /// 根据稳定编码规划活跃对象；不能将磁盘槽容量直接当作活跃布局。
+    fn plan_decode(&self, encoded: &[u8]) -> Result<ValuePlan, Error>;
     fn initialize(&self, permit: InitPermit<'_>, value: Self::Owned) -> Result<(), Error>;
     fn read<'a>(&'a self, permit: ReadPermit<'a>) -> Result<Self::Read<'a>, Error>;
     fn update<'a>(&'a self, permit: UpdatePermit<'a>) -> Result<Self::Update<'a>, Error>;

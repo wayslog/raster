@@ -70,6 +70,9 @@ unsafe impl ValueLayout for TestLayout {
             alignment: 8,
         })
     }
+    fn plan_decode(&self, _: &[u8]) -> Result<ValuePlan, Error> {
+        Err(Error::unimplemented("测试布局"))
+    }
     fn initialize(&self, _p: InitPermit<'_>, _v: u64) -> Result<(), Error> {
         Err(Error::unimplemented("测试布局"))
     }

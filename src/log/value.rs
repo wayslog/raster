@@ -13,6 +13,39 @@ use std::{
     },
 };
 
+/// 磁盘值的独立只读活跃对象，生命周期与日志页池分离。
+pub(crate) struct TemporaryValue<V: ValueLayout> {
+    value: PageValue<V>,
+    local: PhantomData<std::rc::Rc<()>>,
+}
+impl<V: ValueLayout> TemporaryValue<V> {
+    pub fn decode(layout: Arc<V>, encoded: &[u8], limit: usize) -> Result<Self, Error> {
+        if encoded.len() > limit {
+            return Err(Error::CapacityExceeded);
+        }
+        let plan = layout.plan_decode(encoded)?.validate()?;
+        let bytes = plan
+            .capacity
+            .max(plan.alignment)
+            .max(1)
+            .checked_next_power_of_two()
+            .ok_or(Error::CapacityExceeded)?;
+        if bytes > limit {
+            return Err(Error::CapacityExceeded);
+        }
+        let pool = PagePool::new(bytes, 1)?;
+        let value = PageValue::decode(&pool, layout, encoded, plan)?;
+        value.seal()?;
+        Ok(Self {
+            value,
+            local: PhantomData,
+        })
+    }
+    pub fn read<R>(&self, read: impl for<'a> FnOnce(V::Read<'a>) -> R) -> Result<R, Error> {
+        self.value.read(read)
+    }
+}
+
 pub(crate) struct PageValue<V: ValueLayout> {
     layout: Arc<V>,
     range: Option<PageRange>,
@@ -339,6 +372,16 @@ impl<V: ValueLayout> Drop for PageValue<V> {
 mod tests {
     use super::*;
     use crate::schema::builtin::{AtomicU64Value, ByteValueCodec, SerializedValue};
+    #[test]
+    fn 变长临时值按编码规划且拒绝超预算输入() {
+        let layout = Arc::new(SerializedValue::new(ByteValueCodec));
+        for bytes in [vec![], vec![0, 255, 128], vec![42; 17]] {
+            let temporary = TemporaryValue::decode(layout.clone(), &bytes, 64).unwrap();
+            assert_eq!(temporary.read(|v| v).unwrap(), bytes);
+        }
+        assert!(TemporaryValue::decode(layout, &[1; 65], 64).is_err());
+        assert!(TemporaryValue::decode(Arc::new(AtomicU64Value), &[1; 7], 64).is_err());
+    }
     #[test]
     fn 变长值缩短后按当前长度编码且保持占槽() {
         use crate::format::Record;

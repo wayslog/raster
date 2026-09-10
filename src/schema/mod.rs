@@ -32,6 +32,9 @@ unsafe impl<S: Schema> ValueLayout for SharedValue<S> {
     fn plan(&self, v: &Self::Owned) -> Result<value::ValuePlan, crate::types::Error> {
         self.0.value_layout().plan(v)
     }
+    fn plan_decode(&self, bytes: &[u8]) -> Result<value::ValuePlan, crate::types::Error> {
+        self.0.value_layout().plan_decode(bytes)
+    }
     fn initialize(
         &self,
         p: value::InitPermit<'_>,

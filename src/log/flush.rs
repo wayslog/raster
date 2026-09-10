@@ -258,6 +258,10 @@ mod tests {
         };
         device.inject_next(MemoryFault::Short(3)).unwrap();
         let page = read(&device).unwrap();
+        let temporary = log
+            .decode_temporary(page.record(LogAddress(72)).unwrap().value)
+            .unwrap();
+        assert_eq!(temporary.read(|v| v).unwrap(), 1);
         assert_eq!(page.record(LogAddress(0)).unwrap().key, [0]);
         assert_eq!(
             page.record(LogAddress(72)).unwrap().value,

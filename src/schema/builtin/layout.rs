@@ -60,6 +60,13 @@ unsafe impl<C: ValueCodec> ValueLayout for SerializedValue<C> {
     fn plan(&self, value: &C::Value) -> Result<ValuePlan, Error> {
         Ok(self.prepare(value)?.plan())
     }
+    fn plan_decode(&self, bytes: &[u8]) -> Result<ValuePlan, Error> {
+        let value = self.codec.decode(bytes)?;
+        let mut plan = self.plan(&value)?;
+        plan.encoded_bytes = bytes.len();
+        plan.capacity = plan.capacity.max(bytes.len());
+        plan.validate()
+    }
     fn initialize(&self, p: InitPermit<'_>, value: C::Value) -> Result<(), Error> {
         let bytes = self.codec.encode(&value)?;
         // SAFETY: 未发布槽的初始化许可独占整个范围。
@@ -106,6 +113,9 @@ unsafe impl ValueLayout for AtomicU64Value {
     }
     fn plan(&self, value: &u64) -> Result<ValuePlan, Error> {
         Ok(self.prepare(*value)?.plan())
+    }
+    fn plan_decode(&self, bytes: &[u8]) -> Result<ValuePlan, Error> {
+        self.plan(&self.decode_owned(bytes)?)
     }
     fn initialize(&self, p: InitPermit<'_>, value: u64) -> Result<(), Error> {
         check(
