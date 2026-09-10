@@ -83,6 +83,9 @@ impl PageFrame<'_> {
             {
                 return Err(invalid());
             }
+            if record.header.final_record && self.payload[end..].iter().any(|byte| *byte != 0) {
+                return Err(invalid());
+            }
             records.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
             records.push((address, record));
             at = end;
@@ -172,5 +175,71 @@ mod tests {
         }
         assert_eq!(PageFrame::physical_offset(PageId(3), 256).unwrap(), 876);
         assert!(PageFrame::physical_offset(PageId(u64::MAX), 256).is_err());
+    }
+}
+
+#[cfg(test)]
+mod frozen_tests {
+    use super::*;
+    fn fixture() -> Vec<u8> {
+        let hex = include_str!("../../tests/fixtures/p5-page.hex").trim();
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+    #[test]
+    fn 页帧独立固定样例往返并拒绝未知版本与标志() {
+        let bytes = fixture();
+        let frame = PageFrame::decode(&bytes, PageId(2), 256).unwrap();
+        let records = frame.records().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, LogAddress(528));
+        assert_eq!(records[0].1.key, [0x6b, 0xff]);
+        assert_eq!(records[0].1.value, b"abc");
+        assert_eq!(frame.encode().unwrap(), bytes);
+        for offset in 0..bytes.len() {
+            let mut corrupt = bytes.clone();
+            corrupt[offset] ^= 1;
+            assert!(PageFrame::decode(&corrupt, PageId(2), 256).is_err());
+        }
+        for offset in [4, 6] {
+            let mut corrupt = bytes.clone();
+            corrupt[offset] = 2;
+            let head = checksum(&corrupt[..28]);
+            corrupt[28..32].copy_from_slice(&head.to_le_bytes());
+            let tail = corrupt.len() - 4;
+            let crc = checksum(&corrupt[..tail]);
+            corrupt[tail..].copy_from_slice(&crc.to_le_bytes());
+            assert!(PageFrame::decode(&corrupt, PageId(2), 256).is_err());
+        }
+    }
+    #[test]
+    fn 最后记录标志后只允许零填充() {
+        let bytes = fixture();
+        let frame = PageFrame::decode(&bytes, PageId(2), 256).unwrap();
+        let mut record = Record::decode(&frame.payload[16..74]).unwrap();
+        record.header.final_record = true;
+        let mut payload = frame.payload.to_vec();
+        record.encode(&mut payload[16..74]).unwrap();
+        assert!(
+            PageFrame {
+                page: PageId(2),
+                version: CheckpointVersion(7),
+                payload: &payload
+            }
+            .encode()
+            .is_ok()
+        );
+        record.encode(&mut payload[128..186]).unwrap();
+        assert!(
+            PageFrame {
+                page: PageId(2),
+                version: CheckpointVersion(7),
+                payload: &payload
+            }
+            .encode()
+            .is_err()
+        );
     }
 }

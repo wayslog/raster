@@ -190,6 +190,7 @@ impl DirectoryPrepare {
     pub fn take_result(&mut self) -> Option<Result<PreparedDirectory, Error>> {
         self.result.take()
     }
+    #[cfg(test)]
     pub fn has_resources(&self) -> bool {
         self.pending.is_some()
             || self

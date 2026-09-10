@@ -462,6 +462,17 @@ fn 提交可见但最终目录同步失败时公开票据保持失败() {
             .checkpoint(CheckpointKind::Index)
             .is_err()
     );
+    assert_eq!(
+        store
+            .inner
+            .checkpoints
+            .lock()
+            .unwrap()
+            .retained
+            .records()
+            .count(),
+        0
+    );
     store.shutdown(deadline()).unwrap();
     assert!(std::sync::Arc::ptr_eq(
         &first,

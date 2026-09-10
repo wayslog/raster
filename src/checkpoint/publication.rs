@@ -211,9 +211,11 @@ impl CommitPublish {
         self.result.take()
     }
     /// 重命名一旦被设备接受，就保守视为可能可见；失败时不能擅自删除目录。
+    #[cfg(test)]
     pub fn may_be_visible(&self) -> bool {
         self.visible
     }
+    #[cfg(test)]
     pub fn has_resources(&self) -> bool {
         self.pending.is_some() || self.files.iter().any(MaterialWrite::has_resources)
     }

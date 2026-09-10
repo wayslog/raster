@@ -179,10 +179,13 @@ fn 检查点崩溃子进程入口() {
         state.durability.materialize(&state.power_root);
         std::process::exit(77);
     }
-    let ticket = store
-        .maintenance()
-        .checkpoint(CheckpointKind::Full)
-        .unwrap();
+    let kind = match std::env::var("RASTER_CRASH_KIND").unwrap().as_str() {
+        "Full" => CheckpointKind::Full,
+        "Index" => CheckpointKind::Index,
+        "Log" => CheckpointKind::Log,
+        _ => panic!("未知检查点测试类型"),
+    };
+    let ticket = store.maintenance().checkpoint(kind).unwrap();
     wait(&mut session, &ticket);
     {
         let mut state = state.lock().unwrap();
@@ -194,7 +197,7 @@ fn 检查点崩溃子进程入口() {
     store.shutdown(deadline()).unwrap();
     println!("检查点崩溃基线完成");
 }
-fn child(root: &std::path::Path, stop: usize) -> std::process::Output {
+fn child(root: &std::path::Path, stop: usize, kind: &str) -> std::process::Output {
     let mut process = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -203,6 +206,7 @@ fn child(root: &std::path::Path, stop: usize) -> std::process::Output {
         ])
         .env("RASTER_CRASH_ROOT", root)
         .env("RASTER_CRASH_STOP", stop.to_string())
+        .env("RASTER_CRASH_KIND", kind)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -242,17 +246,40 @@ fn verify(root: &std::path::Path) -> (usize, usize) {
             u8::from_str_radix(&name[i * 2..i * 2 + 2], 16).unwrap()
         }));
         let committed = path.join("commit").exists();
+        let manifest = committed.then(|| {
+            Commit::decode(&std::fs::read(path.join("commit")).unwrap())
+                .unwrap()
+                .verify(&std::fs::read(path.join("manifest")).unwrap())
+                .unwrap()
+        });
         let result = recover_store(
             config(root.to_path_buf()),
             crate::api::maintenance::RecoverySet {
                 store,
-                index: token,
+                index: manifest.as_ref().map_or(token, |m| m.base_index),
                 log: token,
             },
         );
         if !committed {
             assert!(result.is_err(), "未提交目录不能恢复");
             rejected += 1;
+            continue;
+        }
+        let manifest = manifest.unwrap();
+        if manifest.kind == Kind::Index {
+            assert!(result.is_err(), "仅索引提交不得独立恢复");
+            assert!(manifest.session_progress.is_empty());
+            assert_eq!(manifest.materials.len(), 1);
+            let material = &manifest.materials[0];
+            assert_eq!(material.kind, Kind::Index);
+            let name = crate::storage::SegmentedStorage::checkpoint_material_name(
+                material.id,
+                material.generation,
+            );
+            let bytes = std::fs::read(path.join(name)).unwrap();
+            material.verify(&bytes).unwrap();
+            IndexSnapshot::decode(&bytes).unwrap();
+            accepted += 1;
             continue;
         }
         let (restored, report) = result.unwrap();
@@ -275,13 +302,24 @@ fn verify(root: &std::path::Path) -> (usize, usize) {
 }
 #[test]
 fn 每个检查点完成步骤中断进程后只接受完整提交且旧代可恢复() {
+    matrix("Full");
+}
+#[test]
+fn 仅索引检查点中断矩阵不产生会话持久化承诺() {
+    matrix("Index");
+}
+#[test]
+fn 仅日志检查点中断矩阵始终绑定既有索引恢复() {
+    matrix("Log");
+}
+fn matrix(kind: &str) {
     let parent = Directory(std::env::temp_dir().join(format!(
         "raster-crash-{:x?}",
         StoreId::generate().unwrap().0
     )));
     std::fs::create_dir(&parent.0).unwrap();
     let baseline = parent.0.join("基线");
-    let output = child(&baseline, usize::MAX);
+    let output = child(&baseline, usize::MAX, kind);
     assert!(
         output.status.success(),
         "{}",
@@ -312,7 +350,7 @@ fn 每个检查点完成步骤中断进程后只接受完整提交且旧代可�
     let mut published = 0;
     for step in 0..=count {
         let root = parent.0.join(format!("中断-{step}"));
-        let output = child(&root, step);
+        let output = child(&root, step, kind);
         assert_eq!(
             output.status.code(),
             Some(77),
@@ -330,7 +368,7 @@ fn 每个检查点完成步骤中断进程后只接受完整提交且旧代可�
         published += usize::from(accepted == 2);
     }
     assert!(rejected > 0 && published > 0, "必须覆盖提交之前与发布之后");
-    println!("检查点进程中断覆盖 {count} 个 I/O 完成步骤及启动前边界");
+    println!("{kind} 检查点进程中断覆盖 {count} 个 I/O 完成步骤及启动前边界");
 }
 
 fn verify_power(root: &std::path::Path) -> (usize, usize) {

@@ -138,3 +138,79 @@ fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材�
 
 #[path = "checkpoint_crash_tests.rs"]
 mod crash;
+
+#[test]
+fn 已发布检查点保留全部已知引用且恢复重建所选集合目录() {
+    let (_root, store) = setup(None);
+    let config = store.inner.config.clone();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    put(&mut session, 10, 7);
+    let full = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
+    let index = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Index)
+            .unwrap(),
+    );
+    put(&mut session, 30, 9);
+    let log = wait(
+        &mut session,
+        &store.maintenance().checkpoint(CheckpointKind::Log).unwrap(),
+    );
+    {
+        let runtime = store.inner.checkpoints.lock().unwrap();
+        assert_eq!(runtime.retained.records().count(), 3);
+        for report in [&full, &index, &log] {
+            let record = runtime
+                .retained
+                .records()
+                .find(|record| record.token == report.token)
+                .unwrap();
+            let manifest = manifest(&store, report);
+            assert_eq!(record.store, store.id());
+            assert_eq!(record.base_index, manifest.base_index);
+            assert_eq!(record.material_count, manifest.materials.len());
+            assert_eq!(
+                record.material_bytes,
+                manifest.materials.iter().map(|m| m.bytes).sum::<u64>()
+            );
+            assert_eq!((record.begin, record.end), (report.begin, report.end));
+            assert!(runtime.retained.references_token(report.token));
+        }
+    }
+    let first_path = store.inner.storage.root.join(
+        store
+            .inner
+            .storage
+            .checkpoint_path(full.token, "commit")
+            .unwrap(),
+    );
+    let set = crate::api::maintenance::RecoverySet {
+        store: store.id(),
+        index: index.token,
+        log: log.token,
+    };
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    let (store, _) = recover_store(config, set).unwrap();
+    let runtime = store.inner.checkpoints.lock().unwrap();
+    assert_eq!(runtime.retained.records().count(), 2);
+    assert!(runtime.retained.references_token(index.token));
+    assert!(runtime.retained.references_token(log.token));
+    assert!(!runtime.retained.references_token(full.token));
+    assert!(
+        first_path.exists(),
+        "未知的旧代仍默认保留，不能按运行期目录裁剪磁盘"
+    );
+    drop(runtime);
+    store.shutdown(deadline()).unwrap();
+}

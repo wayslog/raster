@@ -99,6 +99,7 @@ impl ManifestRead {
     ) -> Result<(), Rejected<IoCompletion>> {
         self.read.accept(storage, completion)
     }
+    #[cfg(test)]
     pub fn has_resources(&self) -> bool {
         self.read.has_resources()
     }

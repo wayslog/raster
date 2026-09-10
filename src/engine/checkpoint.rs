@@ -9,6 +9,7 @@ use crate::{
         log_material::{LogMaterialFile, LogMaterialSpec, LogMaterialWrite},
         material::{MaterialWrite, SyncedFile},
         publication::CommitPublish,
+        retention::RetentionCatalog,
     },
     coordination::{Action, Phase},
     device::IoCompletion,
@@ -23,13 +24,20 @@ use std::sync::{TryLockError, atomic::Ordering};
 pub(crate) struct CheckpointRuntime {
     job: Option<Job>,
     latest_index: Option<Manifest>,
+    pub(crate) retained: RetentionCatalog,
 }
 impl CheckpointRuntime {
-    pub(crate) fn recovered(index: Manifest) -> Self {
-        Self {
-            job: None,
-            latest_index: Some(index),
+    pub(crate) fn recovered(index: &Manifest, log: &Manifest) -> Result<Self, Error> {
+        let mut retained = RetentionCatalog::default();
+        retained.record_committed(index)?;
+        if index.token != log.token {
+            retained.record_committed(log)?;
         }
+        Ok(Self {
+            job: None,
+            latest_index: Some(index.clone()),
+            retained,
+        })
     }
 }
 enum Work {
@@ -92,7 +100,11 @@ struct Job {
     failed: bool,
 }
 impl Job {
-    fn step<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
+    fn step<S: Schema>(
+        &mut self,
+        engine: &Engine<S>,
+        retained: &mut RetentionCatalog,
+    ) -> Result<bool, Error> {
         let state = engine.coordinator.snapshot()?;
         if state.id != Some(self.id) || state.phase == Phase::Failed {
             return Err(Error::InvalidState("检查点动作已失效"));
@@ -275,6 +287,7 @@ impl Job {
                         })
                         .collect(),
                 };
+                retained.record_committed(&self.manifest)?;
                 engine.coordinator.finish_action(self.id)?;
                 self.completer.finish(Ok(report))?;
                 self.finished = true;
@@ -379,14 +392,16 @@ impl<S: Schema> Engine<S> {
             Err(TryLockError::WouldBlock) => return Ok((false, false)),
             Err(_) => return Err(Error::InvalidState("检查点任务锁中毒")),
         };
-        let Some(job) = &mut runtime.job else {
+        let CheckpointRuntime { job, retained, .. } = &mut *runtime;
+        let Some(job) = job else {
             return Ok((false, false));
         };
         if job.failed {
             return Ok((false, false));
         }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.step(self)))
-            .unwrap_or(Err(Error::InvalidState("检查点推进恐慌")));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.step(self, retained)))
+                .unwrap_or(Err(Error::InvalidState("检查点推进恐慌")));
         match result {
             Err(error) => {
                 job.completer.finish(Err(error))?;

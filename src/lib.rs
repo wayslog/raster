@@ -1,6 +1,6 @@
-//! RasterKV 模块骨架：公开类型可组合，存储算法尚未实现。
+//! RasterKV 嵌入式键值存储：会话、混合日志、检查点和恢复。
 //!
-//! 创建、恢复和业务执行不会返回伪造成功。详见模块骨架说明。
+//! 尚未接入的维护能力显式返回错误。实现进度与交付证据见项目文档。
 
 pub mod api;
 pub mod config;
@@ -12,7 +12,6 @@ pub mod types;
 // 内部协议尚未接入运行路径；每个模块实现时移除对应的临时抑制。
 #[allow(dead_code)]
 mod cache;
-#[allow(dead_code)]
 mod checkpoint;
 #[allow(dead_code)]
 mod coordination;

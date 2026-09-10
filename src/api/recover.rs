@@ -369,7 +369,7 @@ fn build<S: Schema>(
         id: set.store,
         io: CompletionHub::new(set.store, io_capacity)?,
         checkpoints: std::sync::Mutex::new(
-            crate::engine::checkpoint::CheckpointRuntime::recovered(plan.index().clone()),
+            crate::engine::checkpoint::CheckpointRuntime::recovered(plan.index(), plan.log())?,
         ),
         storage_progress: std::sync::Mutex::new(Default::default()),
         schema,

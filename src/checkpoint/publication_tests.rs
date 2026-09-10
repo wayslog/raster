@@ -308,6 +308,12 @@ fn 目录预留同步父目录且已预留的令牌不能复用() {
     let owner = fixture.read("owner");
     assert_eq!(&owner[..8], b"RCLM\x01\x00\x00\x00");
     assert_eq!(owner.len(), 44);
+    let hex = include_str!("../../tests/fixtures/p5-owner.hex").trim();
+    let fixed: Vec<_> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect();
+    assert_eq!(owner, fixed);
     assert!(
         matches!(prepare(&fixture),Err(Error::Io(error)) if error.kind()==std::io::ErrorKind::AlreadyExists)
     );

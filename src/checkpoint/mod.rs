@@ -11,3 +11,5 @@ pub(crate) mod replay;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod publication_tests;
+
+pub(crate) mod retention;

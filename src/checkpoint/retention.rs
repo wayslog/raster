@@ -1,0 +1,77 @@
+//! 已提交检查点的运行期保留目录；持久依据仍是不可变的 commit 与 manifest。
+use crate::{
+    format::{Kind, Manifest},
+    types::*,
+};
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RetentionRecord {
+    pub store: StoreId,
+    pub token: CheckpointToken,
+    pub base_index: CheckpointToken,
+    pub kind: Kind,
+    pub version: CheckpointVersion,
+    pub begin: LogAddress,
+    pub end: LogAddress,
+    pub material_count: usize,
+    pub material_bytes: u64,
+}
+#[derive(Default)]
+pub(crate) struct RetentionCatalog {
+    store: Option<StoreId>,
+    records: BTreeMap<CheckpointToken, RetentionRecord>,
+}
+impl RetentionCatalog {
+    /// 调用者必须已同步发布或从已验证恢复集合中读取清单；本函数不证明磁盘提交。
+    pub fn record_committed(&mut self, manifest: &Manifest) -> Result<(), Error> {
+        manifest.validate()?;
+        if self.store.is_some_and(|store| store != manifest.store) {
+            return Err(Error::InvalidState("保留目录不接受其他存储"));
+        }
+        if self.records.contains_key(&manifest.token) {
+            return Err(Error::InvalidState("检查点保留记录重复"));
+        }
+        let material_bytes = manifest.materials.iter().try_fold(0u64, |sum, material| {
+            sum.checked_add(material.bytes)
+                .ok_or(Error::CapacityExceeded)
+        })?;
+        let record = RetentionRecord {
+            store: manifest.store,
+            token: manifest.token,
+            base_index: manifest.base_index,
+            kind: manifest.kind,
+            version: manifest.version,
+            begin: manifest.begin,
+            end: manifest.end,
+            material_count: manifest.materials.len(),
+            material_bytes,
+        };
+        self.records.insert(manifest.token, record);
+        self.store = Some(manifest.store);
+        Ok(())
+    }
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "P7.2 回收与 P8 诊断将消费保留记录，当前由原生发布和恢复测试验证"
+        )
+    )]
+    pub fn records(&self) -> impl Iterator<Item = &RetentionRecord> {
+        self.records.values()
+    }
+    /// 仅列出本进程已知引用；未列出的磁盘 token 默认仍保留，不能据此授权删除。
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "P7.2 回收与 P8 诊断将消费保留记录，当前由原生发布和恢复测试验证"
+        )
+    )]
+    pub fn references_token(&self, token: CheckpointToken) -> bool {
+        self.records
+            .values()
+            .any(|record| record.token == token || record.base_index == token)
+    }
+}

@@ -193,6 +193,7 @@ impl MaterialRead {
         self.result.take()
     }
     /// 失败仍有句柄时须由驱动者继续清理或设备 shutdown 接管，Drop 不提交 I/O。
+    #[cfg(test)]
     pub fn has_resources(&self) -> bool {
         self.pending.is_some() || self.file.is_some()
     }
