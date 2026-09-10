@@ -265,3 +265,5 @@ mod tests {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 #[path = "tests.rs"]
 mod native_tests;
+
+pub(crate) mod write;
