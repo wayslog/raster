@@ -22,14 +22,16 @@ pub(crate) struct ExecutionContext {
     pub tasks: BTreeMap<u64, Box<dyn PendingTask>>,
 }
 pub(crate) struct SessionRuntime {
+    pub id: SessionId,
     pub current: ExecutionContext,
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
 }
 
 impl SessionRuntime {
-    pub fn new(last_accepted: Option<Serial>) -> Self {
+    pub fn new(id: SessionId, last_accepted: Option<Serial>) -> Self {
         Self {
+            id,
             current: ExecutionContext {
                 version: CheckpointVersion(0),
                 last_accepted,

@@ -60,7 +60,7 @@ impl<S: Schema> RasterKV<S> {
             engine: self.inner.clone(),
             id,
             participant: Some(participant),
-            runtime: crate::engine::SessionRuntime::new(last_accepted),
+            runtime: crate::engine::SessionRuntime::new(id, last_accepted),
             local: std::marker::PhantomData,
         })
     }
@@ -154,6 +154,8 @@ impl<S: Schema> Builder<S> {
                 storage,
                 cache,
                 shutdown_state: crate::sync::Mutex::new(false),
+                operations: (0..64).map(|_| crate::sync::Mutex::new(())).collect(),
+                failed: std::sync::atomic::AtomicBool::new(false),
             }),
         })
     }
