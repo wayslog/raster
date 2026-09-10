@@ -12,7 +12,7 @@ pub(crate) enum IndexHead {
     Log(LogAddress),
     Cache(CacheAddress),
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct EntrySnapshot {
     owner: u64,
     pub bucket: usize,
@@ -20,7 +20,20 @@ pub(crate) struct EntrySnapshot {
     pub head: IndexHead,
     pub table_generation: Generation,
     revision: u64,
+    hash: Option<KeyHash>,
 }
+// 完整哈希只用于迁移后重定位，不改变同一物理条目的相等语义。
+impl PartialEq for EntrySnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.owner == other.owner
+            && self.bucket == other.bucket
+            && self.tag == other.tag
+            && self.head == other.head
+            && self.table_generation == other.table_generation
+            && self.revision == other.revision
+    }
+}
+impl Eq for EntrySnapshot {}
 pub(crate) struct IndexImage {
     pub buckets: usize,
     pub generation: Generation,
@@ -69,12 +82,12 @@ struct Entry {
 struct Bucket {
     blocks: Vec<[Option<Entry>; SLOTS]>,
 }
-pub(crate) struct MemIndex {
+struct Table {
     owner: u64,
     buckets: Vec<Mutex<Bucket>>,
     generation: Generation,
 }
-impl MemIndex {
+impl Table {
     pub fn new(config: IndexConfig) -> Result<Self, Error> {
         if !config.buckets.is_power_of_two() {
             return Err(Error::InvalidConfig {
@@ -98,7 +111,8 @@ impl MemIndex {
             generation: Generation(0),
         })
     }
-    fn entry(&self, bucket: usize, tag: u16, entries: &Bucket) -> EntrySnapshot {
+    fn entry(&self, bucket: usize, hash: KeyHash, entries: &Bucket) -> EntrySnapshot {
+        let tag = hash.tag();
         let entry = entries
             .blocks
             .iter()
@@ -112,6 +126,7 @@ impl MemIndex {
             head: entry.map_or(IndexHead::Empty, |e| e.head),
             revision: entry.map_or(0, |e| e.revision),
             table_generation: self.generation,
+            hash: Some(hash),
         }
     }
     /// 空链头同样返回带身份快照，供首次条件发布使用。
@@ -120,7 +135,7 @@ impl MemIndex {
         let entries = self.buckets[bucket]
             .lock()
             .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
-        Ok(self.entry(bucket, hash.tag(), &entries))
+        Ok(self.entry(bucket, hash, &entries))
     }
     pub fn locate(&self, hash: KeyHash) -> Result<Option<EntrySnapshot>, Error> {
         let entry = self.prepare(hash)?;
@@ -146,7 +161,13 @@ impl MemIndex {
         let mut bucket = self.buckets[expected.bucket]
             .lock()
             .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
-        let current = self.entry(expected.bucket, expected.tag, &bucket);
+        let current = self.entry(
+            expected.bucket,
+            expected
+                .hash
+                .ok_or(Error::InvalidState("映像条目不作为发布许可"))?,
+            &bucket,
+        );
         if current != expected {
             return Ok(PublishResult::Conflict(current));
         }
@@ -200,6 +221,7 @@ impl MemIndex {
                         head: entry.head,
                         table_generation: self.generation,
                         revision: entry.revision,
+                        hash: None,
                     });
                 }
             }
@@ -252,10 +274,10 @@ impl MemIndex {
         *self = restored;
         Ok(())
     }
-    pub fn grow_step(&self, _budget: PollBudget) -> Result<Progress, Error> {
-        Err(Error::unimplemented("index::grow"))
-    }
 }
+
+mod growth;
+pub(crate) use growth::MemIndex;
 
 #[cfg(test)]
 mod tests {
@@ -312,7 +334,14 @@ mod tests {
         let expected = image.encode().unwrap();
         index.restore(image).unwrap();
         assert_eq!(index.snapshot().unwrap().encode().unwrap(), expected);
-        assert_eq!(index.buckets[0].lock().unwrap().blocks.len(), 5);
+        assert_eq!(
+            index.state.read().unwrap().active.buckets[0]
+                .lock()
+                .unwrap()
+                .blocks
+                .len(),
+            5
+        );
         assert!(
             index
                 .compare_publish(old, IndexHead::Log(LogAddress(17)))
@@ -551,7 +580,14 @@ mod tests {
                 IndexHead::Log(LogAddress(tag))
             );
         }
-        assert_eq!(index.buckets[0].lock().unwrap().blocks.len(), 5);
+        assert_eq!(
+            index.state.read().unwrap().active.buckets[0]
+                .lock()
+                .unwrap()
+                .blocks
+                .len(),
+            5
+        );
         assert_eq!(index.snapshot().unwrap().entries.len(), 30);
     }
     #[test]
