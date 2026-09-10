@@ -196,8 +196,11 @@ mod tests {
         log
     }
     fn storage() -> (Arc<MemoryDevice>, SegmentedStorage, Vec<FileId>) {
+        storage_with_size(128)
+    }
+    fn storage_with_size(segment_bytes: u64) -> (Arc<MemoryDevice>, SegmentedStorage, Vec<FileId>) {
         let device = Arc::new(MemoryDevice::new(16, 4096).unwrap());
-        let storage = SegmentedStorage::new(device.clone(), PathBuf::new(), 128).unwrap();
+        let storage = SegmentedStorage::new(device.clone(), PathBuf::new(), segment_bytes).unwrap();
         execute(&*device, IoOperation::CreateDirectory("segments".into()))
             .result
             .unwrap();
@@ -218,6 +221,93 @@ mod tests {
             files.push(file);
         }
         (device, storage, files)
+    }
+    fn flush(log: &HybridLog<AtomicU64Value>, storage: &SegmentedStorage) {
+        let mut task = log
+            .begin_flush(storage, CompletionRoute(71), CheckpointVersion(0))
+            .unwrap();
+        loop {
+            task.submit_next(storage).unwrap();
+            task.accept(storage, complete(&*storage.device))
+                .map_err(|r| r.reason)
+                .unwrap();
+            if log.finish_flush(storage, &mut task).unwrap() {
+                break;
+            }
+        }
+    }
+    #[test]
+    fn 旧租约阻止安全回收而新分配只能复用新代次() {
+        let log = log();
+        let (_, storage, _) = storage();
+        let lease = log.lease(LogAddress(0)).unwrap();
+        assert!(matches!(log.evict_next(), Err(Error::Busy)));
+        flush(&log, &storage);
+        let progress = log.evict_next().unwrap();
+        assert_eq!(progress.remaining, 1);
+        assert_eq!(log.frontiers().unwrap().head, LogAddress(256));
+        assert_eq!(log.frontiers().unwrap().safe_head, LogAddress(0));
+        assert!(log.lease(LogAddress(0)).is_err());
+        assert_eq!(lease.read(|v| v).unwrap(), 0);
+        assert!(lease.update(|_| Ok(())).is_err());
+        drop(lease);
+        assert_eq!(log.evict_next().unwrap().completed, 1);
+        assert_eq!(log.frontiers().unwrap().safe_head, LogAddress(256));
+        for key in 4..7 {
+            log.finish_initialization(log.reserve_record(&[key], None, key as u64).unwrap())
+                .unwrap();
+        }
+        assert_eq!(
+            log.lease(LogAddress(512)).unwrap().generation(),
+            Generation(1)
+        );
+        assert!(log.lease_generation(LogAddress(0), Generation(0)).is_err());
+    }
+    #[test]
+    fn 两页内存跨越多次窗口且所有刷盘页可重读() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let (device, storage, files) = storage_with_size(4096);
+        for key in 0..30 {
+            log.finish_initialization(log.reserve_record(&[key], None, key as u64).unwrap())
+                .unwrap();
+            let frontiers = log.frontiers().unwrap();
+            let boundary = LogAddress(frontiers.tail.0 / 256 * 256);
+            if boundary > frontiers.flushed_until {
+                log.advance_read_only(boundary).unwrap();
+                flush(&log, &storage);
+                assert_eq!(log.evict_next().unwrap().completed, 1);
+            }
+        }
+        assert_eq!(log.frontiers().unwrap().safe_head, LogAddress(9 * 256));
+        let done = execute(
+            &*device,
+            IoOperation::Read {
+                file: files[0],
+                offset: 0,
+                buffer: AlignedBuffer::new_zeroed(4096, 8).unwrap(),
+            },
+        );
+        let IoOutcome::Transferred(length) = done.result.unwrap() else {
+            panic!("读取")
+        };
+        assert_eq!(length, 9 * (256 + 36));
+        let buffer = done.buffer.unwrap();
+        for (page, bytes) in buffer.as_slice()[..length].chunks(292).enumerate() {
+            let frame = crate::format::PageFrame::decode(bytes, PageId(page as u64), 256).unwrap();
+            for (offset, (_, record)) in frame.records().unwrap().iter().enumerate() {
+                let key = page * 3 + offset;
+                assert_eq!(record.key, [key as u8]);
+                assert_eq!(record.value, (key as u64).to_le_bytes());
+            }
+        }
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]

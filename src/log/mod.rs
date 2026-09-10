@@ -18,6 +18,7 @@ struct LogState {
     frontiers: Frontiers,
     reservations: usize,
     flush: Option<Arc<()>>,
+    reclaim: Option<(PageId, Generation)>,
 }
 struct ReservationActivity<'a>(&'a crate::sync::Mutex<LogState>);
 impl Drop for ReservationActivity<'_> {
@@ -607,3 +608,5 @@ mod tests {
 }
 
 pub(crate) mod flush;
+
+mod evict;
