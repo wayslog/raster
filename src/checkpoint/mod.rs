@@ -7,6 +7,7 @@ pub(crate) mod publication;
 pub(crate) mod read;
 
 pub(crate) mod recovery;
+pub(crate) mod replay;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod publication_tests;

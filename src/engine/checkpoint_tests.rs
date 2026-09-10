@@ -296,6 +296,18 @@ fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
     ));
     let mut old_keys = std::collections::BTreeSet::new();
     let mut new_keys = std::collections::BTreeSet::new();
+    let mut replay =
+        crate::checkpoint::replay::Replay::new(crate::checkpoint::replay::ReplayOptions {
+            begin: report.begin,
+            end: report.end,
+            page_bytes: 4096,
+            version: report.version,
+            buckets: store.inner.config.index.buckets,
+            generation: Generation(0),
+            max_records: 1000,
+        })
+        .unwrap();
+    let mut replayed = std::collections::BTreeMap::new();
     for material in manifest.materials.iter().filter(|m| m.kind == Kind::Log) {
         let name = crate::storage::SegmentedStorage::checkpoint_material_name(
             material.id,
@@ -311,6 +323,20 @@ fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
             ),
         )
         .unwrap();
+        let rewritten = replay.page(&bytes, &U64Key).unwrap();
+        let rewritten_frame =
+            PageFrame::decode(&rewritten, PageId(material.begin.0 / 4096), 4096).unwrap();
+        for (address, record) in rewritten_frame.records().unwrap() {
+            assert!(record.header.version <= report.version);
+            replayed.insert(
+                address,
+                (
+                    u64::from_le_bytes(record.key.try_into().unwrap()),
+                    u64::from_le_bytes(record.value.try_into().unwrap()),
+                    record.header.previous,
+                ),
+            );
+        }
         let frame = PageFrame::decode(&bytes, PageId(material.begin.0 / 4096), 4096).unwrap();
         for (_, record) in frame.records().unwrap() {
             let key = u64::from_le_bytes(record.key.try_into().unwrap());
@@ -324,6 +350,29 @@ fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
     }
     assert_eq!(old_keys, (0..400).chain([999]).collect());
     assert!(new_keys.contains(&401));
+    assert_eq!(replayed.len(), old_keys.len());
+    let mut index = crate::index::MemIndex::new(store.inner.config.index.clone()).unwrap();
+    index.restore(replay.index().unwrap()).unwrap();
+    for key in old_keys.iter().copied().chain([401]) {
+        let hash = crate::schema::KeyCodec::hash(&U64Key, &key);
+        let mut address = index
+            .locate(hash)
+            .unwrap()
+            .and_then(|entry| match entry.head {
+                crate::index::IndexHead::Log(address) => Some(address),
+                _ => None,
+            });
+        let mut found = None;
+        while let Some(at) = address {
+            let &(stored, value, previous) = replayed.get(&at).unwrap();
+            if stored == key {
+                found = Some(value);
+                break;
+            }
+            address = previous;
+        }
+        assert_eq!(found, if key == 401 { None } else { Some(key) });
+    }
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }
