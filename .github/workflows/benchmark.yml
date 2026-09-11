@@ -1,68 +1,65 @@
-name: P9 完整性能矩阵
+name: P9 同主机删除性能配对复核
 on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: benchmark-${{ github.ref }}
-  cancel-in-progress: false
 jobs:
-  benchmark:
-    name: 固定矩阵与恢复（${{ matrix.os }}）
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14]
+  paired:
+    name: 同主机 AB-BA-BA-AB（macOS）
+    runs-on: macos-14
+    timeout-minutes: 30
     steps:
-      - name: 检出代码
+      - name: 检出诊断驱动与候选核心
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: 检出固定旧核心
+        uses: actions/checkout@v6
+        with:
+          ref: dbe392884be723708a0e6bdc0011de83f493f917
+          path: target/paired-baseline
+          persist-credentials: false
       - name: 安装固定工具链
         uses: dtolnay/rust-toolchain@1.98.1
-      - name: 记录原生环境
+      - name: 验证核心身份并记录原生环境
         shell: bash
         run: |
-          mkdir -p target/p9-benchmark-evidence
+          mkdir -p target/paired-evidence
+          test -z "$(git diff a834f48b53865098c8325d81cc52934bb322c26d -- src Cargo.toml Cargo.lock rust-toolchain.toml examples)"
           {
             git rev-parse HEAD
+            git rev-parse a834f48b53865098c8325d81cc52934bb322c26d
+            git -C target/paired-baseline rev-parse HEAD
             rustc -Vv
             cargo -V
             uname -srm
-            echo "镜像：${ImageOS:-未知} ${ImageVersion:-未知}"
-            echo '特性：all；模式：release；完整矩阵：48；每组业务操作：16384'
-            if [ "$(uname -s)" = Darwin ]; then
-              sw_vers
-              sysctl -n machdep.cpu.brand_string hw.memsize hw.physicalcpu hw.logicalcpu
-              diskutil info "$(df -P . | awk 'NR==2 {print $1}')" | sed -n '/File System Personality/p'
-            else
-              cat /etc/os-release
-              lscpu
-              sed -n '/MemTotal/p' /proc/meminfo
-              stat -f -c '文件系统：%T' .
-            fi
-          } > target/p9-benchmark-evidence/environment.txt
-      - name: 验证计量与运行全部场景
+            sw_vers
+            sysctl -n machdep.cpu.brand_string hw.memsize hw.physicalcpu hw.logicalcpu
+            diskutil info "$(df -P . | awk 'NR==2 {print $1}')" | sed -n '/File System Personality/p'
+          } > target/paired-evidence/environment.txt
+      - name: 两个核心使用完全相同的基准驱动
+        shell: bash
+        run: |
+          cp examples/benchmark/main.rs target/paired-baseline/examples/benchmark/main.rs
+          cp examples/benchmark/scenario.rs target/paired-baseline/examples/benchmark/scenario.rs
+          cp tests/support/model.rs target/paired-baseline/tests/support/model.rs
+          git -C target/paired-baseline diff --name-only > target/paired-evidence/baseline-driver-files.txt
+          set -o pipefail
+          export CARGO_TERM_COLOR=never
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          {
+            cargo build --locked --release --all-features --example benchmark
+            cargo build --locked --release --all-features --example benchmark --manifest-path target/paired-baseline/Cargo.toml
+          } 2>&1 | sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" | tee target/paired-evidence/build.txt
+      - name: 固定三个场景各完成四对交替顺序测量
         shell: bash
         run: |
           set -o pipefail
-          export CARGO_TERM_COLOR=never
-          export RUST_BACKTRACE=0
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
-          export RASTER_BENCH_OUTPUT=target/p9-benchmark-evidence/matrix
-          unset RASTER_BENCH_CASE
-          {
-            cargo test --locked --all-features --test p9_benchmark_support &&
-            cargo run --locked --release --all-features --example benchmark
-          } 2>&1 | sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" |
-            tee target/p9-benchmark-evidence/checks.txt
-      - name: 复核矩阵和固定输入
-        shell: bash
-        run: python3 tools/acceptance/audit_benchmark.py target/p9-benchmark-evidence/matrix
-      - name: 保存性能环境和原始证据
+          python3 -B tools/acceptance/paired_benchmark.py --baseline target/paired-baseline/target/release/examples/benchmark --candidate target/release/examples/benchmark --output target/paired-evidence/results | tee target/paired-evidence/checks.txt
+      - name: 保存全部原始配对证据
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p9-benchmark-${{ matrix.os }}
-          path: target/p9-benchmark-evidence
+          name: p9-delete-paired-macos
+          path: target/paired-evidence
           if-no-files-found: error
