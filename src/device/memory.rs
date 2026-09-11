@@ -291,6 +291,41 @@ impl MemoryDevice {
                 collect_object(state, object);
                 Ok(IoOutcome::Done)
             }
+            IoOperation::TryLock { .. } => Err(Error::UnsupportedDurability),
+            IoOperation::ReadDirectory {
+                path,
+                max_entries,
+                max_name_bytes,
+            } => {
+                if !path.as_os_str().is_empty() {
+                    valid_path(&path)?;
+                    if !state.directories.contains(&path) {
+                        return Err(Error::Io(std::io::Error::from(
+                            std::io::ErrorKind::NotFound,
+                        )));
+                    }
+                }
+                let mut result = metadata::DirectorySnapshot::new(max_entries, max_name_bytes);
+                for (name, kind) in state
+                    .files
+                    .keys()
+                    .map(|name| (name, DirectoryEntryKind::File))
+                    .chain(
+                        state
+                            .directories
+                            .iter()
+                            .map(|name| (name, DirectoryEntryKind::Directory)),
+                    )
+                {
+                    if name.parent() == Some(path.as_path()) {
+                        result.push(DirectoryEntry {
+                            name: name.file_name().expect("内存路径已验证").to_os_string(),
+                            kind,
+                        })?;
+                    }
+                }
+                Ok(result.finish())
+            }
         })();
         IoCompletion {
             id: queued.id,
@@ -359,6 +394,8 @@ impl Device for MemoryDevice {
             supports_file_sync: false,
             supports_directory_sync: false,
             supports_atomic_publish: false,
+            supports_directory_listing: true,
+            supports_file_locks: false,
         }
     }
     fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {

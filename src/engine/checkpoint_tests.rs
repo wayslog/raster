@@ -1332,3 +1332,6 @@ mod compaction;
 
 #[path = "gc_tests.rs"]
 mod gc;
+
+#[path = "catalog_tests.rs"]
+mod catalog;

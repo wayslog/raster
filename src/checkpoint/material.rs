@@ -257,6 +257,8 @@ mod tests {
                 supports_file_sync: true,
                 supports_directory_sync: false,
                 supports_atomic_publish: false,
+                supports_directory_listing: false,
+                supports_file_locks: false,
             }
         }
         fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {

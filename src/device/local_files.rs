@@ -12,7 +12,20 @@ use std::{
 };
 struct Files {
     next: u64,
-    open: BTreeMap<u64, Arc<File>>,
+    open: BTreeMap<u64, Handle>,
+}
+enum Handle {
+    Data(Arc<File>),
+    // 不克隆锁句柄；关闭时显式解锁，避免并发 fork 的临时继承延长锁寿命。
+    Lock { file: File },
+}
+impl Handle {
+    fn unlock(&self) -> Result<(), Error> {
+        if let Self::Lock { file } = self {
+            file.unlock()?;
+        }
+        Ok(())
+    }
 }
 pub(super) struct LocalFiles {
     root: Dir,
@@ -41,13 +54,27 @@ impl LocalFiles {
         if id.generation != Generation(0) {
             return Err(Error::RangeTruncated);
         }
-        self.files
+        let files = self
+            .files
             .lock()
-            .map_err(|_| Error::InvalidState("文件表锁中毒"))?
-            .open
-            .get(&id.slot)
-            .cloned()
-            .ok_or(Error::RangeTruncated)
+            .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+        match files.open.get(&id.slot) {
+            Some(Handle::Data(file)) => Ok(file.clone()),
+            Some(Handle::Lock { .. }) => Err(Error::InvalidState("锁句柄不能用于数据 I/O")),
+            None => Err(Error::RangeTruncated),
+        }
+    }
+    /// 工作线程全部退出后调用；保留设备对象也不应继续占有操作系统文件锁。
+    pub fn close_all(&self) -> Result<(), Error> {
+        let mut files = self
+            .files
+            .lock()
+            .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+        while let Some((&id, handle)) = files.open.first_key_value() {
+            handle.unlock()?;
+            files.open.remove(&id);
+        }
+        Ok(())
     }
     pub fn execute(&self, id: IoId, request: IoRequest) -> IoCompletion {
         let IoRequest { route, operation } = request;
@@ -71,8 +98,80 @@ impl LocalFiles {
                     generation: Generation(0),
                 };
                 files.next = next;
-                files.open.insert(id.slot, Arc::new(file));
+                files.open.insert(id.slot, Handle::Data(Arc::new(file)));
                 Ok(IoOutcome::Opened(id))
+            }
+            IoOperation::TryLock { path, mode } => {
+                valid(&path)?;
+                // 锁文件是固定仲裁对象；不能通过符号链接指向会被其他协议替换的材料。
+                match self.root.symlink_metadata(&path) {
+                    Ok(metadata) if !metadata.is_file() => {
+                        return Err(Error::InvalidFormat("锁路径不是普通文件"));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                let mut files = self
+                    .files
+                    .lock()
+                    .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+                if files.open.len() >= self.limit {
+                    return Err(Error::CapacityExceeded);
+                }
+                let next = files.next.checked_add(1).ok_or(Error::CapacityExceeded)?;
+                let mut options = OpenOptions::new();
+                options.read(true).write(true).create(true);
+                let file = self.root.open_with(path, &options)?.into_std();
+                if !file.metadata()?.is_file() {
+                    return Err(Error::InvalidFormat("锁目标不是普通文件"));
+                }
+                let result = match mode {
+                    FileLockMode::Shared => file.try_lock_shared(),
+                    FileLockMode::Exclusive => file.try_lock(),
+                };
+                result.map_err(|error| match error {
+                    std::fs::TryLockError::WouldBlock => Error::Busy,
+                    std::fs::TryLockError::Error(error) => Error::Io(error),
+                })?;
+                let id = FileId {
+                    slot: files.next,
+                    generation: Generation(0),
+                };
+                files.next = next;
+                files.open.insert(id.slot, Handle::Lock { file });
+                Ok(IoOutcome::Locked(id))
+            }
+            IoOperation::ReadDirectory {
+                path,
+                max_entries,
+                max_name_bytes,
+            } => {
+                let entries = if path.as_os_str().is_empty() {
+                    self.root.entries()?
+                } else {
+                    valid(&path)?;
+                    self.root.read_dir(path)?
+                };
+                let mut result = metadata::DirectorySnapshot::new(max_entries, max_name_bytes);
+                for entry in entries {
+                    let entry = entry?;
+                    let kind = entry.file_type()?;
+                    let kind = if kind.is_symlink() {
+                        DirectoryEntryKind::Symlink
+                    } else if kind.is_file() {
+                        DirectoryEntryKind::File
+                    } else if kind.is_dir() {
+                        DirectoryEntryKind::Directory
+                    } else {
+                        DirectoryEntryKind::Other
+                    };
+                    result.push(DirectoryEntry {
+                        name: entry.file_name(),
+                        kind,
+                    })?;
+                }
+                Ok(result.finish())
             }
             IoOperation::Read {
                 file,
@@ -135,12 +234,16 @@ impl LocalFiles {
                 if file.generation != Generation(0) {
                     return Err(Error::RangeTruncated);
                 }
-                self.files
+                let mut files = self
+                    .files
                     .lock()
-                    .map_err(|_| Error::InvalidState("文件表锁中毒"))?
+                    .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+                files
                     .open
-                    .remove(&file.slot)
-                    .ok_or(Error::RangeTruncated)?;
+                    .get(&file.slot)
+                    .ok_or(Error::RangeTruncated)?
+                    .unlock()?;
+                files.open.remove(&file.slot);
                 Ok(IoOutcome::Done)
             }
             IoOperation::CreateDirectory(path) => {
@@ -312,5 +415,75 @@ mod tests {
             .unwrap();
         drop(files);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn 描述符副本仍存活时关闭及设备清理显式解除原锁() {
+        struct Directory(std::path::PathBuf);
+        impl Drop for Directory {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Directory(std::env::temp_dir().join(format!(
+            "raster-lock-clone-{:x?}",
+            crate::types::StoreId::generate().unwrap().0
+        )));
+        let make = || {
+            LocalFiles::new(
+                DeviceOpenOptions {
+                    root: root.0.clone(),
+                    create_new: true,
+                },
+                8,
+            )
+            .unwrap()
+        };
+        let first = make();
+        let second = make();
+        let acquire = |files: &LocalFiles| {
+            let IoOutcome::Locked(id) = execute(
+                files,
+                IoOperation::TryLock {
+                    path: "lock".into(),
+                    mode: FileLockMode::Exclusive,
+                },
+            )
+            .result
+            .unwrap() else {
+                panic!("文件锁未取得")
+            };
+            id
+        };
+        let duplicate = |files: &LocalFiles, id: FileId| {
+            let table = files.files.lock().unwrap();
+            let Handle::Lock { file } = table.open.get(&id.slot).unwrap() else {
+                panic!("句柄不是文件锁")
+            };
+            file.try_clone().unwrap()
+        };
+        for shutdown in [false, true] {
+            let id = acquire(&first);
+            // 模拟 fork 或复制句柄仍保留同一打开文件描述；关闭必须主动解锁。
+            let duplicate = duplicate(&first, id);
+            assert!(matches!(
+                execute(
+                    &second,
+                    IoOperation::TryLock {
+                        path: "lock".into(),
+                        mode: FileLockMode::Exclusive
+                    }
+                )
+                .result,
+                Err(Error::Busy)
+            ));
+            if shutdown {
+                first.close_all().unwrap();
+            } else {
+                execute(&first, IoOperation::Close(id)).result.unwrap();
+            }
+            let other = acquire(&second);
+            execute(&second, IoOperation::Close(other)).result.unwrap();
+            drop(duplicate);
+        }
     }
 }

@@ -183,6 +183,8 @@ mod backend {
                 supports_file_sync: true,
                 supports_directory_sync: true,
                 supports_atomic_publish: true,
+                supports_directory_listing: true,
+                supports_file_locks: true,
             }
         }
         fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {
@@ -271,7 +273,7 @@ mod backend {
                     .join()
                     .map_err(|_| Error::InvalidState("文件工作线程恐慌"))?;
             }
-            Ok(())
+            self.shared.files.close_all()
         }
     }
     impl Drop for ThreadPoolDevice {

@@ -5,8 +5,10 @@ use crate::{
         CheckpointKind, CheckpointReport, DurableProgress, MaintenanceCompleter, MaintenanceTicket,
     },
     checkpoint::{
+        catalog_lock::CatalogLock,
         directory::{DirectoryPrepare, PreparedDirectory},
         log_material::{LogMaterialFile, LogMaterialSpec, LogMaterialWrite},
+        manifest_read::ManifestRead,
         material::{MaterialWrite, SyncedFile},
         publication::CommitPublish,
         retention::RetentionCatalog,
@@ -55,12 +57,14 @@ enum Work {
     Index(MaterialWrite),
     Log(LogMaterialWrite),
     Publish(CommitPublish),
+    BaseIndex(ManifestRead),
 }
 enum Output {
     Directory(PreparedDirectory),
     Index(SyncedFile),
     Log(LogMaterialFile),
     Published,
+    BaseIndex(Manifest),
 }
 impl Work {
     fn accept(
@@ -73,6 +77,7 @@ impl Work {
             Self::Index(w) => w.accept(storage, completion),
             Self::Log(w) => w.accept(storage, completion),
             Self::Publish(w) => w.accept(storage, completion),
+            Self::BaseIndex(w) => w.accept(storage, completion),
         }
         .map_err(|rejected| rejected.reason)
     }
@@ -82,6 +87,7 @@ impl Work {
             Self::Index(w) => w.submit_next(storage),
             Self::Log(w) => w.submit_next(storage),
             Self::Publish(w) => w.submit_next(storage),
+            Self::BaseIndex(w) => w.submit_next(storage),
         }
     }
     fn output(&mut self) -> Option<Result<Output, Error>> {
@@ -90,6 +96,7 @@ impl Work {
             Self::Index(w) => w.take_synced().map(|r| r.map(Output::Index)),
             Self::Log(w) => w.take_result().map(|r| r.map(Output::Log)),
             Self::Publish(w) => w.take_result().map(|r| r.map(|_| Output::Published)),
+            Self::BaseIndex(w) => w.take_result().map(|r| r.map(Output::BaseIndex)),
         }
     }
 }
@@ -108,8 +115,22 @@ struct Job {
     published: bool,
     finished: bool,
     failed: bool,
+    catalog_lock: Option<CatalogLock>,
+    base_validated: bool,
 }
 impl Job {
+    fn progress_lock<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
+        let lock = self.catalog_lock.as_mut().expect("已创建目录锁");
+        if let Some(completion) = engine.io.take(self.mailbox)? {
+            lock.accept(&engine.storage, completion)?;
+            return Ok(true);
+        }
+        match lock.submit_next(&engine.storage) {
+            Ok(id) => Ok(id.is_some()),
+            Err(Error::Busy) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
     fn step<S: Schema>(
         &mut self,
         engine: &Engine<S>,
@@ -133,6 +154,10 @@ impl Job {
                         self.next_page += 1;
                     }
                     Output::Published => self.published = true,
+                    Output::BaseIndex(index) => {
+                        crate::format::match_recovery(&index, &self.manifest)?;
+                        self.base_validated = true;
+                    }
                 }
                 self.work = None;
                 return Ok(true);
@@ -270,6 +295,26 @@ impl Job {
                         },
                     )?));
                 } else {
+                    if self.catalog_lock.is_none() {
+                        self.catalog_lock = Some(CatalogLock::new(
+                            &engine.storage,
+                            route,
+                            crate::device::FileLockMode::Shared,
+                        )?);
+                    }
+                    if !self.catalog_lock.as_ref().expect("目录锁已创建").held() {
+                        return self.progress_lock(engine);
+                    }
+                    if self.manifest.kind == Kind::Log && !self.base_validated {
+                        self.work = Some(Work::BaseIndex(ManifestRead::new(
+                            &engine.storage,
+                            engine.id,
+                            self.manifest.base_index,
+                            route,
+                            chunk,
+                        )?));
+                        return Ok(true);
+                    }
                     let work = CommitPublish::new(
                         &engine.storage,
                         self.directory.take().expect("已预留目录"),
@@ -284,6 +329,11 @@ impl Job {
                 Ok(true)
             }
             Phase::Publish if self.published => {
+                let lock = self.catalog_lock.as_mut().expect("发布持有目录锁");
+                if !lock.closed() {
+                    lock.release()?;
+                    return self.progress_lock(engine);
+                }
                 let report = CheckpointReport {
                     kind: self.kind,
                     token: self.manifest.token,
@@ -328,6 +378,7 @@ impl<S: Schema> Engine<S> {
             || !caps.supports_file_sync
             || !caps.supports_directory_sync
             || !caps.supports_atomic_publish
+            || !caps.supports_file_locks
             || caps.transfer_alignment != 1
         {
             return Err(Error::UnsupportedDurability);
@@ -397,6 +448,8 @@ impl<S: Schema> Engine<S> {
             published: false,
             finished: false,
             failed: false,
+            catalog_lock: None,
+            base_validated: false,
         });
         Ok(ticket)
     }

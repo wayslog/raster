@@ -111,6 +111,8 @@ fn 设备关闭失败不能报告成功且重试不会重新开放注册() {
                 supports_file_sync: false,
                 supports_directory_sync: false,
                 supports_atomic_publish: false,
+                supports_directory_listing: false,
+                supports_file_locks: false,
             }
         }
         fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {

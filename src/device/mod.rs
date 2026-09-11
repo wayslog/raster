@@ -2,6 +2,7 @@
 
 mod buffer;
 pub mod memory;
+mod metadata;
 pub mod null;
 pub mod thread_pool;
 #[cfg(all(feature = "io-uring", target_os = "linux"))]
@@ -34,6 +35,10 @@ pub struct DeviceCapabilities {
     pub supports_file_sync: bool,
     pub supports_directory_sync: bool,
     pub supports_atomic_publish: bool,
+    /// 可按条目数和名称字节预算枚举目录，结果拥有数据且不保证并发快照。
+    pub supports_directory_listing: bool,
+    /// 独立打开句柄上的跨实例文件锁；不能用进程内互斥冒充。
+    pub supports_file_locks: bool,
 }
 
 pub trait DeviceFactory: Send + Sync + 'static {
@@ -90,6 +95,18 @@ pub enum IoOperation {
         destination: PathBuf,
     },
     RemoveFile(PathBuf),
+    /// 空路径表示设备根目录；超出任一预算整体失败，不返回不完整的目录。
+    ReadDirectory {
+        path: PathBuf,
+        max_entries: usize,
+        max_name_bytes: usize,
+    },
+    /// 打开或创建不截断的锁文件，并仅尝试一次加锁；竞争通过完成返回 Busy。
+    /// 成功返回 Locked，必须保留句柄直至 Close；协议内不得删除或替换锁文件。
+    TryLock {
+        path: PathBuf,
+        mode: FileLockMode,
+    },
     Close(FileId),
     Cancel(IoId),
 }
@@ -109,8 +126,30 @@ pub struct IoCompletion {
 #[derive(Debug)]
 pub enum IoOutcome {
     Opened(FileId),
+    /// 独立锁句柄只可关闭，不能用于数据 I/O；设备成功 shutdown 也会释放它。
+    Locked(FileId),
+    Directory(Vec<DirectoryEntry>),
     Transferred(usize),
     Done,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectoryEntryKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    /// 单个文件名，保留非 UTF-8 字节；不包含父路径，也不跟随符号链接。
+    pub name: std::ffi::OsString,
+    pub kind: DirectoryEntryKind,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     checkpoint::{
+        catalog_lock::CatalogLock,
         manifest_read::ManifestRead,
         read::{MaterialRead, ReadSpec},
         recovery::{RecoveryPlan, ValidatedMaterial},
@@ -119,6 +120,26 @@ fn execute(
     match done.result? {
         IoOutcome::Done => Ok(()),
         _ => Err(Error::InvalidState("恢复元数据完成类型错误")),
+    }
+}
+fn drive_catalog_lock(
+    storage: &SegmentedStorage,
+    lock: &mut CatalogLock,
+    releasing: bool,
+    deadline: Deadline,
+) -> Result<(), Error> {
+    loop {
+        if (releasing && lock.closed()) || (!releasing && lock.held()) {
+            return Ok(());
+        }
+        if deadline.expired() {
+            return Err(Error::DeadlineExceeded);
+        }
+        match lock.submit_next(storage) {
+            Ok(Some(id)) => lock.accept(storage, completion(storage, id, deadline)?)?,
+            Ok(None) | Err(Error::Busy) => std::thread::yield_now(),
+            Err(error) => return Err(error),
+        }
     }
 }
 fn read_material(
@@ -237,6 +258,7 @@ fn build<S: Schema>(
         || !caps.supports_file_sync
         || !caps.supports_directory_sync
         || !caps.supports_atomic_publish
+        || !caps.supports_file_locks
     {
         return Err(Error::UnsupportedDurability);
     }
@@ -246,6 +268,8 @@ fn build<S: Schema>(
         config.storage.segment_bytes,
         CheckpointToken::generate()?,
     )?;
+    let mut catalog_lock = CatalogLock::new(&storage, ROUTE, FileLockMode::Shared)?;
+    drive_catalog_lock(&storage, &mut catalog_lock, false, deadline)?;
     let index_manifest = drive(
         &storage,
         &mut ManifestRead::new(&storage, set.store, set.index, ROUTE, config.log.page_bytes)?,
@@ -359,6 +383,8 @@ fn build<S: Schema>(
             .collect(),
     };
     let io_capacity = config.io_capacity()?;
+    catalog_lock.release()?;
+    drive_catalog_lock(&storage, &mut catalog_lock, true, deadline)?;
     let engine = Engine {
         id: set.store,
         scans: Default::default(),
