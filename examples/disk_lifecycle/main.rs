@@ -341,7 +341,7 @@ fn closed<T>(store: RasterKV<Schema>, result: Result<T>) -> Result<T> {
         (Err(error), Err(cleanup)) => Err(format!("流程失败：{error}；收尾失败：{cleanup}").into()),
     }
 }
-fn run(root: PathBuf) -> Result<()> {
+pub(crate) fn run(root: PathBuf) -> Result<()> {
     #[cfg(feature = "config-toml")]
     let mut config = Config::from_toml_str(include_str!("../../docs/examples/raster.toml"))?;
     #[cfg(not(feature = "config-toml"))]
@@ -382,6 +382,7 @@ fn run(root: PathBuf) -> Result<()> {
     );
     Ok(())
 }
+#[allow(dead_code, reason = "资源验收嵌入此模块并调用 run；独立示例使用此入口")]
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let root = args.next().map(PathBuf::from);
