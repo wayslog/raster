@@ -198,6 +198,13 @@ fn 截断边界错误无副作用且扩容后清理覆盖全部新桶() {
 }
 
 fn native_gc() -> (Directory, RasterKV<Schema>) {
+    native_gc_with_device(Box::new(device::thread_pool::ThreadPoolDeviceFactory {
+        workers: 2,
+        queue_capacity: 16,
+    }))
+}
+
+fn native_gc_with_device(factory: Box<dyn DeviceFactory>) -> (Directory, RasterKV<Schema>) {
     let root = Directory(std::env::temp_dir().join(format!(
         "raster-gc-native-{:x?}",
         StoreId::generate().unwrap().0
@@ -210,20 +217,64 @@ fn native_gc() -> (Directory, RasterKV<Schema>) {
     config.index.buckets = 16;
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .config(config)
-        .device(Box::new(device::thread_pool::ThreadPoolDeviceFactory {
-            workers: 2,
-            queue_capacity: 16,
-        }))
+        .device(factory)
         .create()
         .unwrap();
     (root, store)
+}
+
+struct DelayedCompletionFactory(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+struct DelayedCompletions {
+    inner: Box<dyn Device>,
+    remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+impl DeviceFactory for DelayedCompletionFactory {
+    fn open(&self, options: DeviceOpenOptions) -> Result<Box<dyn Device>, Error> {
+        Ok(Box::new(DelayedCompletions {
+            inner: device::thread_pool::ThreadPoolDeviceFactory {
+                workers: 2,
+                queue_capacity: 16,
+            }
+            .open(options)?,
+            remaining: self.0.clone(),
+        }))
+    }
+}
+impl Device for DelayedCompletions {
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.inner.capabilities()
+    }
+    fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {
+        self.inner.submit(request)
+    }
+    fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
+        use std::sync::atomic::Ordering;
+        // 原生设备仍实际执行 I/O；暂不取完成，模拟异步结果尚未可见。
+        if self
+            .remaining
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return Ok(());
+        }
+        self.inner.poll(budget, output)
+    }
+    fn shutdown(&self, deadline: Deadline) -> Result<(), Error> {
+        self.inner.shutdown(deadline)
+    }
 }
 
 #[test]
 fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
     use crate::api::scan::{Buffering, ScanOptions};
     use crate::api::{completion::TicketState, maintenance::PhysicalReclamation};
-    let (_root, store) = native_gc();
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let delayed_polls = Arc::new(AtomicUsize::new(0));
+    let (_root, store) =
+        native_gc_with_device(Box::new(DelayedCompletionFactory(delayed_polls.clone())));
     let mut session = store.start_session(Default::default()).unwrap();
     for key in 0..400 {
         put(&mut session, key, key);
@@ -242,16 +293,25 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
     else {
         panic!("读取需要挂起")
     };
+    // 固定存在真实后台写入，GC 必须排空该任务；不能只延迟与 GC 无关的完成。
+    let tail = store.inner.log.pad_tail().unwrap();
+    store.inner.log.advance_read_only(tail).unwrap();
+    delayed_polls.store(100_001, Ordering::SeqCst);
+    store.inner.progress_storage().unwrap();
+    assert!(store.inner.storage_progress.lock().unwrap().has_flush());
     let begin = LogAddress(3 * 4096);
     let ticket = store.maintenance().shift_begin(begin).unwrap();
     let budget = PollBudget(std::num::NonZeroUsize::new(1).unwrap());
-    for _ in 0..100_000 {
-        if ticket.try_report().unwrap().is_some() {
-            break;
+    let end = deadline();
+    let report = loop {
+        if let Some(report) = ticket.try_report().unwrap() {
+            break report;
         }
+        assert!(!end.expired(), "GC 在既有截止时间内应终结");
         store.maintenance().poll(budget).unwrap();
-    }
-    let report = ticket.try_report().unwrap().expect("有界 GC 应终结");
+        std::thread::yield_now();
+    };
+    assert_eq!(delayed_polls.load(Ordering::SeqCst), 0);
     let report = report.as_ref().as_ref().unwrap();
     assert_eq!(report.begin, begin);
     assert!(report.index_cleaned);

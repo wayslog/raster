@@ -1,0 +1,554 @@
+{
+  "conclusion": "failure",
+  "headSha": "52c0657661edc319e5e6bc4af2ab7518d88733f6",
+  "jobs": [
+    {
+      "completedAt": "2026-09-11T16:00:18Z",
+      "conclusion": "success",
+      "databaseId": 103328911490,
+      "name": "检查（ubuntu-24.04 / default）",
+      "startedAt": "2026-09-11T15:58:41Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-11T15:58:44Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-11T15:58:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:45Z",
+          "conclusion": "success",
+          "name": "检出代码",
+          "number": 2,
+          "startedAt": "2026-09-11T15:58:44Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:54Z",
+          "conclusion": "success",
+          "name": "安装固定工具链",
+          "number": 3,
+          "startedAt": "2026-09-11T15:58:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:57Z",
+          "conclusion": "success",
+          "name": "缓存构建产物",
+          "number": 4,
+          "startedAt": "2026-09-11T15:58:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:57Z",
+          "conclusion": "success",
+          "name": "记录原生环境",
+          "number": 5,
+          "startedAt": "2026-09-11T15:58:57Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:14Z",
+          "conclusion": "success",
+          "name": "执行工程检查",
+          "number": 6,
+          "startedAt": "2026-09-11T15:58:57Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:15Z",
+          "conclusion": "success",
+          "name": "保存验收证据",
+          "number": 7,
+          "startedAt": "2026-09-11T16:00:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:16Z",
+          "conclusion": "success",
+          "name": "Post 缓存构建产物",
+          "number": 13,
+          "startedAt": "2026-09-11T16:00:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:16Z",
+          "conclusion": "success",
+          "name": "Post 检出代码",
+          "number": 14,
+          "startedAt": "2026-09-11T16:00:16Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:16Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-09-11T16:00:16Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/wayslog/raster/actions/runs/34619283567/job/103328911490"
+    },
+    {
+      "completedAt": "2026-09-11T16:01:18Z",
+      "conclusion": "success",
+      "databaseId": 103328911665,
+      "name": "检查（macos-14 / all）",
+      "startedAt": "2026-09-11T15:58:47Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-11T15:58:49Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-11T15:58:48Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:51Z",
+          "conclusion": "success",
+          "name": "检出代码",
+          "number": 2,
+          "startedAt": "2026-09-11T15:58:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:59Z",
+          "conclusion": "success",
+          "name": "安装固定工具链",
+          "number": 3,
+          "startedAt": "2026-09-11T15:58:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:59:02Z",
+          "conclusion": "success",
+          "name": "缓存构建产物",
+          "number": 4,
+          "startedAt": "2026-09-11T15:58:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:59:03Z",
+          "conclusion": "success",
+          "name": "记录原生环境",
+          "number": 5,
+          "startedAt": "2026-09-11T15:59:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:01:13Z",
+          "conclusion": "success",
+          "name": "执行工程检查",
+          "number": 6,
+          "startedAt": "2026-09-11T15:59:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:01:15Z",
+          "conclusion": "success",
+          "name": "保存验收证据",
+          "number": 7,
+          "startedAt": "2026-09-11T16:01:13Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:01:15Z",
+          "conclusion": "success",
+          "name": "Post 缓存构建产物",
+          "number": 13,
+          "startedAt": "2026-09-11T16:01:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:01:16Z",
+          "conclusion": "success",
+          "name": "Post 检出代码",
+          "number": 14,
+          "startedAt": "2026-09-11T16:01:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:01:17Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-09-11T16:01:16Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/wayslog/raster/actions/runs/34619283567/job/103328911665"
+    },
+    {
+      "completedAt": "2026-09-11T16:00:50Z",
+      "conclusion": "success",
+      "databaseId": 103328911711,
+      "name": "检查（macos-14 / default）",
+      "startedAt": "2026-09-11T15:58:45Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-11T15:58:47Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-11T15:58:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:48Z",
+          "conclusion": "success",
+          "name": "检出代码",
+          "number": 2,
+          "startedAt": "2026-09-11T15:58:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:56Z",
+          "conclusion": "success",
+          "name": "安装固定工具链",
+          "number": 3,
+          "startedAt": "2026-09-11T15:58:48Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:59Z",
+          "conclusion": "success",
+          "name": "缓存构建产物",
+          "number": 4,
+          "startedAt": "2026-09-11T15:58:56Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:59Z",
+          "conclusion": "success",
+          "name": "记录原生环境",
+          "number": 5,
+          "startedAt": "2026-09-11T15:58:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:45Z",
+          "conclusion": "success",
+          "name": "执行工程检查",
+          "number": 6,
+          "startedAt": "2026-09-11T15:58:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:47Z",
+          "conclusion": "success",
+          "name": "保存验收证据",
+          "number": 7,
+          "startedAt": "2026-09-11T16:00:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:47Z",
+          "conclusion": "success",
+          "name": "Post 缓存构建产物",
+          "number": 13,
+          "startedAt": "2026-09-11T16:00:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:47Z",
+          "conclusion": "success",
+          "name": "Post 检出代码",
+          "number": 14,
+          "startedAt": "2026-09-11T16:00:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:48Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-09-11T16:00:47Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/wayslog/raster/actions/runs/34619283567/job/103328911711"
+    },
+    {
+      "completedAt": "2026-09-11T16:00:08Z",
+      "conclusion": "failure",
+      "databaseId": 103328911767,
+      "name": "检查（ubuntu-24.04 / all）",
+      "startedAt": "2026-09-11T15:58:41Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-11T15:58:43Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-11T15:58:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:45Z",
+          "conclusion": "success",
+          "name": "检出代码",
+          "number": 2,
+          "startedAt": "2026-09-11T15:58:43Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:54Z",
+          "conclusion": "success",
+          "name": "安装固定工具链",
+          "number": 3,
+          "startedAt": "2026-09-11T15:58:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:58Z",
+          "conclusion": "success",
+          "name": "缓存构建产物",
+          "number": 4,
+          "startedAt": "2026-09-11T15:58:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:58Z",
+          "conclusion": "success",
+          "name": "记录原生环境",
+          "number": 5,
+          "startedAt": "2026-09-11T15:58:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:05Z",
+          "conclusion": "failure",
+          "name": "执行工程检查",
+          "number": 6,
+          "startedAt": "2026-09-11T15:58:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:06Z",
+          "conclusion": "success",
+          "name": "保存验收证据",
+          "number": 7,
+          "startedAt": "2026-09-11T16:00:05Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:06Z",
+          "conclusion": "skipped",
+          "name": "Post 缓存构建产物",
+          "number": 13,
+          "startedAt": "2026-09-11T16:00:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:06Z",
+          "conclusion": "success",
+          "name": "Post 检出代码",
+          "number": 14,
+          "startedAt": "2026-09-11T16:00:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:06Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-09-11T16:00:06Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/wayslog/raster/actions/runs/34619283567/job/103328911767"
+    },
+    {
+      "completedAt": "2026-09-11T16:00:42Z",
+      "conclusion": "success",
+      "databaseId": 103328911879,
+      "name": "检查（ubuntu-24.04 / config-toml）",
+      "startedAt": "2026-09-11T15:58:41Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-11T15:58:44Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-11T15:58:43Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:45Z",
+          "conclusion": "success",
+          "name": "检出代码",
+          "number": 2,
+          "startedAt": "2026-09-11T15:58:44Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:53Z",
+          "conclusion": "success",
+          "name": "安装固定工具链",
+          "number": 3,
+          "startedAt": "2026-09-11T15:58:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:58Z",
+          "conclusion": "success",
+          "name": "缓存构建产物",
+          "number": 4,
+          "startedAt": "2026-09-11T15:58:53Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:58Z",
+          "conclusion": "success",
+          "name": "记录原生环境",
+          "number": 5,
+          "startedAt": "2026-09-11T15:58:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:37Z",
+          "conclusion": "success",
+          "name": "执行工程检查",
+          "number": 6,
+          "startedAt": "2026-09-11T15:58:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:39Z",
+          "conclusion": "success",
+          "name": "保存验收证据",
+          "number": 7,
+          "startedAt": "2026-09-11T16:00:37Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:39Z",
+          "conclusion": "success",
+          "name": "Post 缓存构建产物",
+          "number": 13,
+          "startedAt": "2026-09-11T16:00:39Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:39Z",
+          "conclusion": "success",
+          "name": "Post 检出代码",
+          "number": 14,
+          "startedAt": "2026-09-11T16:00:39Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:39Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-09-11T16:00:39Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/wayslog/raster/actions/runs/34619283567/job/103328911879"
+    },
+    {
+      "completedAt": "2026-09-11T16:00:51Z",
+      "conclusion": "success",
+      "databaseId": 103328911982,
+      "name": "检查（macos-14 / config-toml）",
+      "startedAt": "2026-09-11T15:58:47Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-11T15:58:49Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-11T15:58:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:50Z",
+          "conclusion": "success",
+          "name": "检出代码",
+          "number": 2,
+          "startedAt": "2026-09-11T15:58:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:58:58Z",
+          "conclusion": "success",
+          "name": "安装固定工具链",
+          "number": 3,
+          "startedAt": "2026-09-11T15:58:50Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:59:02Z",
+          "conclusion": "success",
+          "name": "缓存构建产物",
+          "number": 4,
+          "startedAt": "2026-09-11T15:58:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T15:59:02Z",
+          "conclusion": "success",
+          "name": "记录原生环境",
+          "number": 5,
+          "startedAt": "2026-09-11T15:59:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:45Z",
+          "conclusion": "success",
+          "name": "执行工程检查",
+          "number": 6,
+          "startedAt": "2026-09-11T15:59:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:47Z",
+          "conclusion": "success",
+          "name": "保存验收证据",
+          "number": 7,
+          "startedAt": "2026-09-11T16:00:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:47Z",
+          "conclusion": "success",
+          "name": "Post 缓存构建产物",
+          "number": 13,
+          "startedAt": "2026-09-11T16:00:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:48Z",
+          "conclusion": "success",
+          "name": "Post 检出代码",
+          "number": 14,
+          "startedAt": "2026-09-11T16:00:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-11T16:00:48Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 15,
+          "startedAt": "2026-09-11T16:00:48Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/wayslog/raster/actions/runs/34619283567/job/103328911982"
+    }
+  ],
+  "status": "completed",
+  "url": "https://github.com/wayslog/raster/actions/runs/34619283567"
+}
