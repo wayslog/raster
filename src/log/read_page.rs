@@ -2,13 +2,14 @@
 use crate::{
     device::{CompletionRoute, IoCompletion},
     format::{PageFrame, Record},
-    storage::{SegmentedStorage, transfer::SegmentTransfer},
+    storage::{SegmentReadLease, SegmentedStorage, transfer::SegmentTransfer},
     types::*,
 };
 pub(crate) struct PageRead {
     page: PageId,
     page_bytes: usize,
     transfer: SegmentTransfer,
+    protection: Option<(std::sync::Arc<()>, SegmentReadLease)>,
 }
 pub(crate) struct ReadPage {
     page: PageId,
@@ -63,9 +64,26 @@ impl PageRead {
             page,
             page_bytes,
             transfer: SegmentTransfer::read(start, length, route)?,
+            protection: None,
         })
     }
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
+        if self
+            .protection
+            .as_ref()
+            .is_some_and(|(owner, _)| !std::sync::Arc::ptr_eq(owner, &storage.identity))
+        {
+            return Err(Error::InvalidState("受保护页读取属于其他存储"));
+        }
+        if self.transfer.next_address()?.is_none() {
+            return Ok(None);
+        }
+        if self.protection.is_none() {
+            let start = PageFrame::physical_offset(self.page, self.page_bytes)?;
+            let length = PageFrame::encoded_size(self.page_bytes)?;
+            // 一次保护整个帧：短读与跨段续传之间也不能使尚未提交的后续段失效。
+            self.protection = Some((storage.identity.clone(), storage.lease_read(start, length)?));
+        }
         self.transfer.submit_next(storage)
     }
     #[allow(clippy::result_large_err, reason = "错误完成路由原样归还缓冲")]
@@ -81,6 +99,8 @@ impl PageRead {
         let Some(result) = self.transfer.take_read_result() else {
             return Ok(None);
         };
+        // 到达终结结果说明设备已归还所有在途缓冲；后续页解析只依赖拥有型字节。
+        self.protection = None;
         let bytes = result?;
         // 页帧上界不等于请求版本；新旧记录可共页，操作先后关系由引擎版本许可保证。
         PageFrame::decode(&bytes, self.page, self.page_bytes)?;

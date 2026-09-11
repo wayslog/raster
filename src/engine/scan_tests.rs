@@ -767,3 +767,73 @@ fn 公开压缩专家恐慌终结报告一次且关闭释放任务没有实例�
     drop(store);
     assert!(weak.upgrade().is_none());
 }
+
+#[test]
+fn 普通冷读取跨段短读期间保护全部段且完成后释放() {
+    let (store, control) = setup();
+    let mut session = store.start_session(Default::default()).unwrap();
+    control.short.store(true, Ordering::SeqCst);
+    control.paused.store(true, Ordering::SeqCst);
+    let Submission::Pending(mut ticket) = session
+        .read(Serial(0), ReadCompaction(0), Default::default())
+        .unwrap()
+    else {
+        panic!("冷读取应挂起")
+    };
+    for number in [0, 1] {
+        assert!(matches!(
+            store.inner.storage.invalidate(number, Generation(0)),
+            Err(Error::Busy)
+        ));
+    }
+    control.paused.store(false, Ordering::SeqCst);
+    store
+        .inner
+        .io
+        .poll(&*store.inner.storage.device, PollBudget::default())
+        .unwrap();
+    // 完成仍在会话邮箱中，短读后余下帧未收齐，不能提前释放后续段。
+    assert!(matches!(
+        store.inner.storage.invalidate(1, Generation(0)),
+        Err(Error::Busy)
+    ));
+    assert!(matches!(
+        session.wait(&mut ticket, deadline()).unwrap().unwrap(),
+        crate::api::completion::Outcome::Success(0)
+    ));
+    for number in [0, 1] {
+        store
+            .inner
+            .storage
+            .invalidate(number, Generation(0))
+            .unwrap();
+    }
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+#[test]
+fn 普通冷读取失败收尾释放段保护且不保留失败请求() {
+    let (store, control) = setup();
+    let mut session = store.start_session(Default::default()).unwrap();
+    control.fail.store(true, Ordering::SeqCst);
+    let Submission::Pending(mut ticket) = session
+        .read(Serial(0), ReadCompaction(0), Default::default())
+        .unwrap()
+    else {
+        panic!("冷读取应挂起")
+    };
+    assert!(matches!(
+        store.inner.storage.invalidate(0, Generation(0)),
+        Err(Error::Busy)
+    ));
+    assert!(matches!(
+        session.wait(&mut ticket, deadline()).unwrap(),
+        Err(OperationError {
+            cause: Error::Io(_),
+            effect: Effect::NotApplied
+        })
+    ));
+    store.inner.storage.invalidate(0, Generation(0)).unwrap();
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}

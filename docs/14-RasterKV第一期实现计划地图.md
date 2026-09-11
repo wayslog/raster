@@ -150,7 +150,7 @@ P2 暂不需要完整刷盘或在线扩容，但索引快照必须已有表代�
 | 编号 / 状态 | 依赖 | 交付与主要文件 | 验收条件 |
 | --- | --- | --- | --- |
 | P7.1 / 完成 | P5、P6 | `engine/conditional_copy.rs`、`maintenance/`：源记录校验、复制发布、扫描去重式和查索引式单 store 压缩 | 压缩与原地 RMW/追加/删除竞争不覆盖新值；过时源不可重发布；源许可不跨 I/O；普通 Compact 不暗中移动 begin；[验收证据](acceptance/P7.1压缩交付记录.md) |
-| P7.2 / 未开始 | P7.1 | `maintenance/`、`storage/`、`checkpoint/`：ShiftBeginAddress、索引 GC、段删除、保留集合约束及释放流程 | 逻辑 begin 与物理删除分别报告；保留恢复集所需段不删；DeferredByRecoverySet 结束本次动作，后续可检查点并再回收；删除失败可安全重试 |
+| P7.2 / 进行中 | P7.1 | `maintenance/`、`storage/`、`checkpoint/`：ShiftBeginAddress、索引 GC、段删除、保留集合约束及释放流程 | 逻辑 begin 与物理删除分别报告；保留恢复集所需段不删；DeferredByRecoverySet 结束本次动作，后续可检查点并再回收；删除失败可安全重试 |
 | P7.3 / 未开始 | P7.2 | 自动压缩调度、多工作线程、可选 shift/checkpoint 后续动作、等待和停止 | 后台维护与手动维护复用同一协议；关闭可排空；墓碑不复活；多次压缩、检查点、回收、重启后数据和会话进度仍一致 |
 
 保留集合的释放必须有显式策略/入口，不能在磁盘压力下静默删除用户仍保留的恢复点。单 store 两种压缩策略都在本期；无需为了旧 Compact 的实现方式引入 F2 或 ColdIndex。
