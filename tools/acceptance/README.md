@@ -63,3 +63,12 @@ python3 tools/acceptance/audit_ready_comparison.py docs/acceptance/data/p9-ready
 ```sh
 python3 tools/acceptance/audit_result_pool.py docs/acceptance/data/p9-result-pool-experiment
 ```
+
+
+## 接受序号预检查对照
+
+```sh
+python3 tools/acceptance/audit_serial_precheck.py docs/acceptance/data/p9-serial-precheck
+```
+
+完整八组和两批单线程热点补充共 228 行全部重算，保留负向场景；与旧 P3 的总体复核分开。

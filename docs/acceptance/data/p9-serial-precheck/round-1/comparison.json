@@ -1,0 +1,31 @@
+{
+  "基线提交": "be5ac0e93a0462be46d3b424918687ab50fe5a21",
+  "模式": "all features release",
+  "每端真实样本": 9,
+  "驱动SHA256": "314039fec392916be98be4c1229f4cb4bcfdc96e22e489104f77e68ff77beda8",
+  "二进制SHA256": {
+    "baseline": "bf5b7ba3ad3a5243119358b5ca290dd815ea105361146a6b1d918f762b401c63",
+    "candidate": "9c99f8b7f5bafff12ca4843195eec71b5f6ff5ed09d554aec152c003bfb5855b"
+  },
+  "候选源码SHA256": {
+    "src/api/completion.rs": "f872f5a34246df0db10e9e96fce63464c6f9dc4a2d0314eb8767b30c69da9e33",
+    "src/engine/upsert.rs": "bc0ab197bd8fedd3665842584b1a64c8e2cfc18735fcc2c809df5266ff408a19",
+    "src/engine/mod.rs": "c50150d3c819f720ce3685cbd7400da16e8e0ac272e1ba5e0ce1776d06b4a82b"
+  },
+  "中位数": {
+    "baseline": {
+      "每秒操作": 2826717.0,
+      "P50纳秒": 292.0,
+      "P95纳秒": 334.0,
+      "P99纳秒": 375.0
+    },
+    "candidate": {
+      "每秒操作": 2955507.0,
+      "P50纳秒": 292.0,
+      "P95纳秒": 333.0,
+      "P99纳秒": 375.0
+    }
+  },
+  "吞吐比": 1.0455616887010621,
+  "P99比": 1.0
+}

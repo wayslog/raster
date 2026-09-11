@@ -72,6 +72,102 @@ fn outcome<T: 'static>(s: Submission<T>) -> Outcome<T> {
         _ => panic!("预期同步业务结果"),
     }
 }
+
+#[derive(Debug)]
+struct UnreadableKey(u8);
+impl Keyed<Schema> for UnreadableKey {
+    fn key(&self) -> &u64 {
+        panic!("非法序号不得读取用户键")
+    }
+}
+impl ReadOperation<Schema> for UnreadableKey {
+    type Output = ();
+    fn read(&mut self, _: ValueRead<'_, Schema>) -> Result<(), Error> {
+        panic!("拒绝请求不得执行读取回调")
+    }
+}
+impl UpsertOperation<Schema> for UnreadableKey {
+    type Output = ();
+    fn replacement(&mut self) -> Result<(u64, ()), Error> {
+        panic!("拒绝请求不得计算替换值")
+    }
+    fn update_in_place(&mut self, _: ValueUpdate<'_, Schema>) -> Result<UpdateDecision<()>, Error> {
+        panic!("拒绝请求不得原地更新")
+    }
+}
+impl RmwOperation<Schema> for UnreadableKey {
+    type Output = ();
+    fn initial(&mut self) -> Result<(u64, ()), Error> {
+        panic!("拒绝请求不得计算初始值")
+    }
+    fn copy_update(&mut self, _: ValueRead<'_, Schema>) -> Result<(u64, ()), Error> {
+        panic!("拒绝请求不得复制更新")
+    }
+    fn update_in_place(&mut self, _: ValueUpdate<'_, Schema>) -> Result<UpdateDecision<()>, Error> {
+        panic!("拒绝请求不得原地读改写")
+    }
+}
+impl DeleteOperation<Schema> for UnreadableKey {
+    type Output = ();
+    fn complete(self, _: DeleteOutcome) {
+        panic!("拒绝请求不得通知删除完成")
+    }
+}
+
+#[test]
+fn 四操作非法序号在用户键之前拒绝且之后仍可接受跳号() {
+    let store = store();
+    let mut session = store.start_session(Default::default()).unwrap();
+    assert!(matches!(
+        outcome(
+            session
+                .upsert(Serial(10), put(7, 41))
+                .map_err(|r| r.reason)
+                .unwrap()
+        ),
+        Outcome::Success(41)
+    ));
+    for serial in [Serial(0), Serial(9), Serial(10)] {
+        let rejected = [
+            session.read(serial, UnreadableKey(1), Default::default()),
+            session.upsert(serial, UnreadableKey(2)),
+            session.rmw(serial, UnreadableKey(3), Default::default()),
+            session.delete(serial, UnreadableKey(4), Default::default()),
+        ];
+        for (ordinal, result) in rejected.into_iter().enumerate() {
+            let Err(rejected) = result else {
+                panic!("非法序号必须在接受前拒绝")
+            };
+            assert!(matches!(
+                rejected.reason,
+                Error::InvalidState("操作序号必须严格递增")
+            ));
+            assert_eq!(usize::from(rejected.request.0), ordinal + 1);
+            assert_eq!(session.last_accepted(), Some(Serial(10)));
+        }
+    }
+    assert!(matches!(
+        outcome(
+            session
+                .upsert(Serial(11), put(7, 42))
+                .map_err(|r| r.reason)
+                .unwrap()
+        ),
+        Outcome::Success(42)
+    ));
+    assert!(matches!(
+        outcome(
+            session
+                .read(Serial(100), Read(7), Default::default())
+                .map_err(|r| r.reason)
+                .unwrap()
+        ),
+        Outcome::Success(42)
+    ));
+    let deadline = || Deadline(std::time::Instant::now() + std::time::Duration::from_secs(2));
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
 #[test]
 fn 空存储插入原地更新与追加替换可读() {
     let store = store();

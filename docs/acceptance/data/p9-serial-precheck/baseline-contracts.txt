@@ -1,0 +1,17 @@
+   Compiling raster v0.1.0 (工作树)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.57s
+     Running tests/p3_memory.rs (target/debug/deps/p3_memory-34883e448fcdf86a)
+
+running 1 test
+test 四操作非法序号在用户键之前拒绝且之后仍可接受跳号 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+   Compiling raster v0.1.0 (工作树)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.50s
+     Running tests/p5_recovery.rs (target/debug/deps/p5_recovery-aa2887074b1362a0)
+
+running 1 test
+test 恢复会话线程名额覆盖关闭重续且序号不退回检查点 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.07s

@@ -68,9 +68,11 @@ impl<S: Schema> Engine<S> {
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::InvalidState("会话关闭或引擎失败"));
         }
-        if self
-            .coordinator
-            .last_accepted(session.id)?
+        // 活跃身份只有当前会话能够提交；创建/续接读取登记进度，admit 成功后同步本地值。
+        // 此处仅提前拒绝非法序号；最终接受仍检查全局身份、版本及序号。
+        if session
+            .current
+            .last_accepted
             .is_some_and(|last| serial <= last)
         {
             return Err(Error::InvalidState("操作序号必须严格递增"));

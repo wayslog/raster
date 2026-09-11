@@ -1,0 +1,9 @@
+diff --git a/src/engine/mod.rs b/src/engine/mod.rs
+index 616edd0..f15fa59 100644
+--- a/src/engine/mod.rs
++++ b/src/engine/mod.rs
+@@ -71,3 +71 @@ impl<S: Schema> Engine<S> {
+-        if self
+-            .coordinator
+-            .last_accepted(session.id)?
++        if session.current.last_accepted

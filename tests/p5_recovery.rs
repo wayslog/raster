@@ -49,6 +49,19 @@ impl ReadOperation<Schema> for Context {
         Ok(value.view().clone())
     }
 }
+#[derive(Debug)]
+struct UnreadableKey;
+impl Keyed<Schema> for UnreadableKey {
+    fn key(&self) -> &[u8] {
+        panic!("拒绝恢复会话的非法序号前不得读取用户键")
+    }
+}
+impl ReadOperation<Schema> for UnreadableKey {
+    type Output = Vec<u8>;
+    fn read(&mut self, _: ValueRead<'_, Schema>) -> Result<Vec<u8>, Error> {
+        panic!("拒绝请求不得执行读取回调")
+    }
+}
 impl RmwOperation<Schema> for Context {
     type Output = Vec<u8>;
     fn initial(&mut self) -> Result<(Vec<u8>, Vec<u8>), Error> {
@@ -158,16 +171,20 @@ fn 恢复会话线程名额覆盖关闭重续且序号不退回检查点() {
     assert_eq!(resumed.progress.serial, Serial(10));
     assert_eq!(resumed.session.last_accepted(), Some(Serial(20)));
     let mut resumed = resumed.session;
+    for serial in [Serial(10), Serial(11), Serial(20)] {
+        assert!(matches!(
+            resumed.read(serial, UnreadableKey, Default::default()),
+            Err(Rejected {
+                reason: Error::InvalidState("操作序号必须严格递增"),
+                ..
+            })
+        ));
+        assert_eq!(resumed.last_accepted(), Some(Serial(20)));
+    }
+    // 旧对象虽然与新会话身份相同，关闭后也不能读取用户键或接受更大的序号。
     assert!(
-        resumed
-            .read(
-                Serial(11),
-                Context {
-                    key: vec![1],
-                    value: vec![]
-                },
-                Default::default()
-            )
+        session
+            .read(Serial(999), UnreadableKey, Default::default())
             .is_err()
     );
     let submitted = resumed
