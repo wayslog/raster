@@ -270,9 +270,9 @@ Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记�
 
 ## P7.1 压缩实施契约
 
-当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup 单工作者，半开范围为当前 begin 至 until。`workers=1` 且 shift/checkpoint 均为 false；后续组合与多工作者在 P7.3 接入。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
+当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup 单工作者，半开范围为当前 begin 至 until。当前 `workers=1`；shift_begin/checkpoint 的可选后续动作已接通，多工作者与自动调度在 P7.3 继续实施。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
 
-成功报告的 copied 包含迁移的最新墓碑，gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, cause }`：until 是请求边界，copied 是已发布迁移数，cause 保留实际原因。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
+成功报告的 copied 包含迁移的最新墓碑；未请求后续动作时 gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, checkpoint, gc, cause }`：until 是请求边界，copied 是已发布迁移数，checkpoint/gc 保留已经完整成功的子步骤（错误中使用 Box），cause 保留子步骤原始错误及部分效果。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
 
 ScanDedup 的不同键数与键字节预算分别为 `maintenance.max_compaction_keys`（默认 1,000,000）和 `maintenance.max_compaction_key_bytes`（默认 64 MiB）。预算不足时本次动作失败，不能未经声明切换算法。Lookup 不累积候选表。
 
@@ -301,3 +301,14 @@ v1 检查点持有独立材料副本，工作段回收不会删除这些材料�
 实例内动作冲突在接受前返回 Busy；目录锁与其他实例发布/恢复发生竞争时，通过已接受票据报告 cause=Busy，释放本次动作，需显式重试。未知目录、链接、损坏或缺失的清单、断裂引用以及超预算均保守失败，没有按运行期目录缺项授权删除。正常失败收尾后可继续业务、检查点或再次释放；身份错误、panic 或未确认资源进入失败关闭。
 
 `maintenance.max_checkpoint_tokens` 默认 4096；`max_checkpoint_catalog_bytes` 默认 64 MiB，必须非零。后者限制整次目录名称、commit 和 manifest 字节总量；达到预算时整体拒绝，不使用不完整目录。已释放 token 的必要元数据也计入预算；应按实际保留历史调整限制，目前不自动清理这些元数据。
+
+
+## P7.3 已接通的压缩后续动作
+
+设置 checkpoint=true 时，复制动作成功结束后发起 Full 检查点；设置 shift_begin=true 时，在可选检查点成功之后发起 GC。两者均启用的顺序与固定上游一致：复制 → 完整检查点 → 逻辑截断。报告中的检查点描述截断前的恢复状态，而 gc 描述随后推进的 begin。复制或检查点失败时不继续截断。
+
+每个步骤分别争取并释放全局动作，同一张 CompactionReport 票据在最后一步结束后终结。动作之间允许其他维护进入，普通 Busy 稍后重试；已接受子步骤失败不自动重放。GC 的 DeferredByRuntime 是该子步骤的终结报告，复合任务不无限等待读者释放。检查点材料继续默认保留，压缩不会隐式调用 release_checkpoint。
+
+维护等待超时保留原票据；无活跃会话时 Maintenance::poll 也可推进后续步骤。有活跃会话时仍须各自刷新检查点屏障。动作间隙仍计为未完成复合任务，shutdown 返回 Busy，不能越过间隙提前关闭。自动维护的排空、等待和停止将在 P7.3 后续接通。
+
+普通失败先排空对应子任务并保留原始错误。例如检查点已完成而 GC 删除失败，CompactionFailed.checkpoint 保留可恢复 token，cause 为带实际 begin 和删除计数的 GcFailed。业务 panic 导致失败关闭时也先收取子步骤的部分效果。进度与验证边界见 [P7.3 交付记录](acceptance/P7.3自动维护交付记录.md)。

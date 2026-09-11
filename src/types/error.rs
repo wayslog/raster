@@ -30,6 +30,9 @@ pub enum Error {
     CompactionFailed {
         until: super::LogAddress,
         copied: u64,
+        /// 已完成后续步骤；GC 失败的部分效果仍由 cause 中的 GcFailed 给出。
+        checkpoint: Option<Box<crate::api::maintenance::CheckpointReport>>,
+        gc: Option<Box<crate::api::maintenance::GcReport>>,
         cause: Box<Error>,
     },
     NotImplemented {
@@ -84,11 +87,15 @@ impl fmt::Display for Error {
             Self::CompactionFailed {
                 until,
                 copied,
+                checkpoint,
+                gc,
                 cause,
             } => write!(
                 f,
-                "压缩失败：目标地址 {}，已迁移 {copied} 条，原因：{cause}",
-                until.0
+                "压缩失败：目标地址 {}，已迁移 {copied} 条，已完成检查点 {}，已完成 GC {}，原因：{cause}",
+                until.0,
+                checkpoint.is_some(),
+                gc.is_some()
             ),
             Self::NotImplemented { module } => write!(f, "模块尚未实现：{module}"),
             Self::InvalidConfig { field, reason } => write!(f, "配置无效：{field}，{reason}"),

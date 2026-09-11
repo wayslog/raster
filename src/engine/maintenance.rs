@@ -79,7 +79,7 @@ impl<S: Schema> Engine<S> {
         }
         Ok(Progress {
             completed,
-            remaining: usize::from(state.id.is_some()),
+            remaining: usize::from(state.id.is_some() || self.compaction_pending()?),
             phase_advanced: advanced,
         })
     }

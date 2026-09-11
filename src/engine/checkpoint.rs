@@ -375,6 +375,19 @@ impl Job {
     }
 }
 impl<S: Schema> Engine<S> {
+    pub(crate) fn checkpoint_capabilities(&self) -> Result<(), Error> {
+        let caps = self.storage.device.capabilities();
+        if !caps.supports_files
+            || !caps.supports_file_sync
+            || !caps.supports_directory_sync
+            || !caps.supports_atomic_publish
+            || !caps.supports_file_locks
+            || caps.transfer_alignment != 1
+        {
+            return Err(Error::UnsupportedDurability);
+        }
+        Ok(())
+    }
     pub(crate) fn start_checkpoint(
         &self,
         kind: CheckpointKind,
@@ -386,16 +399,7 @@ impl<S: Schema> Engine<S> {
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
             return Err(Error::InvalidState("引擎已失败或关闭"));
         }
-        let caps = self.storage.device.capabilities();
-        if !caps.supports_files
-            || !caps.supports_file_sync
-            || !caps.supports_directory_sync
-            || !caps.supports_atomic_publish
-            || !caps.supports_file_locks
-            || caps.transfer_alignment != 1
-        {
-            return Err(Error::UnsupportedDurability);
-        }
+        self.checkpoint_capabilities()?;
         let token = CheckpointToken::generate()?;
         let current = self.coordinator.snapshot()?;
         let (kind_on_disk, action) = match kind {

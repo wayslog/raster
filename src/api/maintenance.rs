@@ -93,14 +93,19 @@ pub struct IndexGrowthReport {
 }
 
 pub type SharedReport<R> = Arc<Result<R, Error>>;
+enum ReportState<R> {
+    Pending,
+    Ready(SharedReport<R>),
+    Taken,
+}
 pub struct MaintenanceTicket<R> {
     pub(crate) store: StoreId,
     pub(crate) id: MaintenanceId,
-    pub(crate) result: Arc<Mutex<Option<SharedReport<R>>>>,
+    result: Arc<Mutex<ReportState<R>>>,
 }
 impl<R> MaintenanceTicket<R> {
     pub(crate) fn pair(store: StoreId, id: MaintenanceId) -> (Self, MaintenanceCompleter<R>) {
-        let result = Arc::new(Mutex::new(None));
+        let result = Arc::new(Mutex::new(ReportState::Pending));
         (
             Self {
                 store,
@@ -115,16 +120,42 @@ impl<R> MaintenanceTicket<R> {
         self.id
     }
     pub fn try_report(&self) -> Result<Option<SharedReport<R>>, Error> {
-        Ok(self
+        let slot = self
             .result
             .lock()
-            .map_err(|_| Error::InvalidState("维护报告锁已中毒"))?
-            .clone())
+            .map_err(|_| Error::InvalidState("维护报告锁已中毒"))?;
+        match &*slot {
+            ReportState::Pending => Ok(None),
+            ReportState::Ready(report) => Ok(Some(report.clone())),
+            ReportState::Taken => Err(Error::InvalidState("内部维护结果已经取走")),
+        }
+    }
+    /// 仅由不向外发布的子任务票据使用；移动原始错误，保留 OS 原因及部分效果。
+    pub(crate) fn take_owned_report(&mut self) -> Result<Option<Result<R, Error>>, Error> {
+        let mut slot = self
+            .result
+            .lock()
+            .map_err(|_| Error::InvalidState("维护报告锁已中毒"))?;
+        match std::mem::replace(&mut *slot, ReportState::Taken) {
+            ReportState::Pending => {
+                *slot = ReportState::Pending;
+                Ok(None)
+            }
+            ReportState::Ready(report) => match Arc::try_unwrap(report) {
+                Ok(report) => Ok(Some(report)),
+                Err(report) => {
+                    // 完成端刚发布结果时可能暂持一个副本，稍后推进，不阻塞等待。
+                    *slot = ReportState::Ready(report);
+                    Ok(None)
+                }
+            },
+            ReportState::Taken => Err(Error::InvalidState("内部维护结果重复取走")),
+        }
     }
 }
 /// 动作持有唯一完成端，报告一旦设置即不可替换。
 pub(crate) struct MaintenanceCompleter<R> {
-    result: Arc<Mutex<Option<SharedReport<R>>>>,
+    result: Arc<Mutex<ReportState<R>>>,
 }
 impl<R> MaintenanceCompleter<R> {
     pub fn finish(&self, report: Result<R, Error>) -> Result<SharedReport<R>, Error> {
@@ -132,20 +163,21 @@ impl<R> MaintenanceCompleter<R> {
             .result
             .lock()
             .map_err(|_| Error::InvalidState("维护报告锁已中毒"))?;
-        if slot.is_some() {
+        if !matches!(*slot, ReportState::Pending) {
             return Err(Error::InvalidState("维护报告已经终结"));
         }
         let report = Arc::new(report);
-        *slot = Some(report.clone());
+        *slot = ReportState::Ready(report.clone());
         Ok(report)
     }
 }
 impl<R> Drop for MaintenanceCompleter<R> {
     fn drop(&mut self) {
         if let Ok(mut slot) = self.result.lock()
-            && slot.is_none()
+            && matches!(*slot, ReportState::Pending)
         {
-            *slot = Some(Arc::new(Err(Error::InvalidState("维护任务未完成即被放弃"))));
+            *slot =
+                ReportState::Ready(Arc::new(Err(Error::InvalidState("维护任务未完成即被放弃"))));
         }
     }
 }
@@ -180,5 +212,32 @@ impl<S: Schema> Maintenance<S> {
     }
     pub fn poll(&self, budget: PollBudget) -> Result<Progress, Error> {
         self.inner.poll_maintenance(budget)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn 内部子任务移交原始错误且已取走状态禁止再次终结() {
+        let (mut ticket, complete) =
+            MaintenanceTicket::<()>::pair(StoreId([1; 16]), MaintenanceId(1));
+        assert!(ticket.take_owned_report().unwrap().is_none());
+        let shared = complete
+            .finish(Err(Error::Io(std::io::Error::from_raw_os_error(13))))
+            .unwrap();
+        assert!(
+            ticket.take_owned_report().unwrap().is_none(),
+            "共享观察尚未结束"
+        );
+        drop(shared);
+        let result = ticket.take_owned_report().unwrap().unwrap();
+        assert!(matches!(result, Err(Error::Io(error)) if error.raw_os_error()==Some(13)));
+        assert!(complete.finish(Ok(())).is_err());
+        drop(complete);
+        assert!(
+            ticket.try_report().is_err(),
+            "完成端析构不能把已取走结果改成另一终结"
+        );
     }
 }

@@ -133,10 +133,25 @@ impl<S: Schema> RasterKV<S> {
                     Some(error)
                 }
             };
+            // 复合任务在两个全局动作之间也仍未终结，不能让关闭越过该间隙。
+            let compaction = self
+                .inner
+                .compaction
+                .try_lock()
+                .map_err(|error| match error {
+                    std::sync::TryLockError::WouldBlock => Error::Busy,
+                    _ => Error::InvalidState("关闭遇到压缩任务锁中毒"),
+                })?;
+            if compaction.is_active()
+                && !self.inner.failed.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(Error::Busy);
+            }
             self.inner.coordinator.shutdown()?;
             self.inner
                 .shutdown_requested
                 .store(true, std::sync::atomic::Ordering::SeqCst);
+            drop(compaction);
             let failure = match self.inner.drain_storage(deadline) {
                 Ok(()) => scan_failure,
                 Err(Error::DeadlineExceeded) => return Err(Error::DeadlineExceeded),

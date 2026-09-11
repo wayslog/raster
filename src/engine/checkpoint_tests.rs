@@ -1341,3 +1341,6 @@ mod checkpoint_release;
 
 #[path = "checkpoint_power_model.rs"]
 mod power;
+
+#[path = "compaction_chain_tests.rs"]
+mod compaction_chain;
