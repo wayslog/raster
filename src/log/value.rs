@@ -350,8 +350,23 @@ impl<V: ValueLayout> PageValue<V> {
         self.copy_record(None)
     }
     fn copy_record(&self, maximum_version: Option<CheckpointVersion>) -> Result<Vec<u8>, Error> {
-        use crate::format::{HEADER_BYTES, Record, RecordHeader};
         let _gate = self.gate.try_replace()?;
+        self.copy_record_locked(maximum_version)
+    }
+    /// 条件复制在源独占许可内取得当前字节并执行同步发布；闭包不能等待 I/O。
+    pub fn with_record_snapshot<R>(
+        &self,
+        publish: impl FnOnce(&[u8]) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        let _gate = self.gate.try_replace()?;
+        let bytes = self.copy_record_locked(None)?;
+        publish(&bytes)
+    }
+    fn copy_record_locked(
+        &self,
+        maximum_version: Option<CheckpointVersion>,
+    ) -> Result<Vec<u8>, Error> {
+        use crate::format::{HEADER_BYTES, Record, RecordHeader};
         if maximum_version.is_some_and(|version| self.version > version) {
             return Err(Error::InvalidState("记录版本超过刷盘范围"));
         }

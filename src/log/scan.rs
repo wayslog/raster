@@ -191,3 +191,38 @@ mod tests {
         assert_eq!(log.snapshot_next(first, end).unwrap().unwrap().0, first);
     }
 }
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use crate::schema::builtin::AtomicU64Value;
+    #[test]
+    fn 已初始化未判定发布的槽保持扫描背压且冲突可清理() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 4096,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let reservation = log.reserve_record(&7u64.to_le_bytes(), None, 42).unwrap();
+        let end = log.frontiers().unwrap().tail;
+        log.with_initialization(reservation, |address| {
+            assert!(matches!(
+                log.snapshot_next(LogAddress(0), end),
+                Err(Error::Busy)
+            ));
+            assert!(matches!(log.pad_tail(), Err(Error::Busy)));
+            assert!(matches!(
+                log.advance_read_only(LogAddress(0)),
+                Err(Error::Busy)
+            ));
+            log.retire(address)
+        })
+        .unwrap();
+        assert!(log.snapshot_next(LogAddress(0), end).unwrap().is_none());
+        assert!(log.pad_tail().is_ok());
+    }
+}

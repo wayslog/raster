@@ -24,7 +24,7 @@ pub(crate) use pending::SessionRuntime;
 
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
-    pub io: io_hub::CompletionHub,
+    pub io: std::sync::Arc<io_hub::CompletionHub>,
     pub scans: scan::ScanRegistry,
     pub growth: std::sync::Mutex<growth::GrowthRuntime>,
     pub checkpoints: std::sync::Mutex<checkpoint::CheckpointRuntime>,

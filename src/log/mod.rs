@@ -317,19 +317,32 @@ impl<V: ValueLayout> HybridLog<V> {
         &self,
         reservation: RecordReservation<'_, V>,
     ) -> Result<LogAddress, Error> {
+        self.with_initialization(reservation, Ok)
+    }
+    /// 同步发布闭包结束之前保留预留计数；扫描不会借出尚未完成发布判定的目标记录。
+    pub fn with_initialization<R>(
+        &self,
+        reservation: RecordReservation<'_, V>,
+        publish: impl FnOnce(LogAddress) -> Result<R, Error>,
+    ) -> Result<R, Error> {
         if !std::ptr::eq(self, reservation.owner) {
             return Err(Error::InvalidState("预留属于其他日志"));
         }
         let address = reservation.value.address()?;
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
-        if records.contains_key(&address) {
-            return Err(Error::InvalidState("记录地址重复发布"));
+        {
+            let mut records = self
+                .records
+                .lock()
+                .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+            if records.contains_key(&address) {
+                return Err(Error::InvalidState("记录地址重复发布"));
+            }
+            records.insert(address, Arc::new(reservation.value));
         }
-        records.insert(address, Arc::new(reservation.value));
-        Ok(address)
+        // 调用者处理 CAS 冲突时可摘除目标；此处不能持有记录表锁。
+        let result = publish(address);
+        drop(reservation._activity);
+        result
     }
     pub fn lease(&self, address: LogAddress) -> Result<RecordLease<V>, Error> {
         address.validate()?;

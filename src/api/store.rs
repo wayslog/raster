@@ -185,7 +185,7 @@ impl<S: Schema> Builder<S> {
         }
         let id = StoreId::generate()?;
         let io_capacity = self.config.io_capacity()?;
-        let io = crate::engine::io_hub::CompletionHub::new(id, io_capacity)?;
+        let io = Arc::new(crate::engine::io_hub::CompletionHub::new(id, io_capacity)?);
         let schema = Arc::new(self.schema);
         let index = crate::index::MemIndex::new(self.config.index.clone())?;
         let log = crate::log::HybridLog::new(

@@ -25,6 +25,7 @@ pub(crate) struct LogLookup {
     reading: Option<(PageId, PageRead)>,
     cached: Option<(PageId, ReadPage)>,
     ended: bool,
+    matched: Option<LogAddress>,
     needs_value: bool,
 }
 impl<V: ValueLayout> HybridLog<V> {
@@ -59,11 +60,58 @@ impl<V: ValueLayout> HybridLog<V> {
             reading: None,
             cached: None,
             ended: false,
+            matched: None,
             needs_value: true,
         })
     }
 }
 impl LogLookup {
+    pub fn has_inflight(&self) -> bool {
+        self.reading
+            .as_ref()
+            .is_some_and(|(_, reading)| reading.has_inflight())
+    }
+    pub fn matched_address(&self) -> Option<LogAddress> {
+        self.matched.filter(|_| self.ended)
+    }
+    /// 成功元数据匹配后的同步源快照。驻留源的独占许可一直覆盖闭包，冷源使用已校验的拥有页。
+    pub fn with_matched_record<V: ValueLayout, R>(
+        &self,
+        log: &HybridLog<V>,
+        storage: &SegmentedStorage,
+        publish: impl FnOnce(&[u8]) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        if !Arc::ptr_eq(&self.owner, &log.state) || !Arc::ptr_eq(&self.storage, &storage.identity) {
+            return Err(Error::InvalidState("源记录查询归属不匹配"));
+        }
+        let address = self
+            .matched_address()
+            .ok_or(Error::InvalidState("查询没有已完成的匹配记录"))?;
+        let frontiers = log.frontiers()?;
+        if address < frontiers.begin {
+            return Err(Error::RangeTruncated);
+        }
+        if address >= frontiers.head {
+            let lease = log.lease(address)?;
+            if lease.key() != self.key {
+                return Err(Error::InvalidState("源记录键已改变"));
+            }
+            return lease.value.with_record_snapshot(publish);
+        }
+        let (_, page) = self.cached.as_ref().ok_or(Error::Busy)?;
+        let record = page.record(address)?;
+        if record.key != self.key {
+            return Err(Error::InvalidFormat("磁盘源记录键不匹配"));
+        }
+        let length = record.header.encoded_len()?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(length)
+            .map_err(|_| Error::OutOfMemory)?;
+        bytes.resize(length, 0);
+        record.encode(&mut bytes)?;
+        publish(&bytes)
+    }
     /// 只在成功解码冷记录后调用；返回拥有型编码，不暴露页借用。
     pub fn cache_record(&self, limit: usize) -> Result<Option<(LogAddress, Vec<u8>)>, Error> {
         if !self.ended {
@@ -165,6 +213,7 @@ impl LogLookup {
                     Err(error) => return Err(error),
                 };
                 if lease.key() == self.key {
+                    self.matched = Some(address);
                     return Ok(if lease.is_tombstone() {
                         LookupStep::Tombstone
                     } else if !self.needs_value {
@@ -181,6 +230,7 @@ impl LogLookup {
                 {
                     let record = bytes.record(address)?;
                     if record.key == self.key {
+                        self.matched = Some(address);
                         return Ok(if record.header.tombstone {
                             LookupStep::Tombstone
                         } else if !self.needs_value {

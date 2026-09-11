@@ -1323,3 +1323,6 @@ mod scan_page;
 
 #[path = "online_tests.rs"]
 mod online;
+
+#[path = "conditional_copy_tests.rs"]
+mod conditional_copy;

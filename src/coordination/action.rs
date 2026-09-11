@@ -38,6 +38,7 @@ fn next_phase(action: Action, phase: Phase) -> Option<Phase> {
         (Gc, GcIndex) => Some(Publish),
         (GrowIndex, GrowPrepare) => Some(GrowCopy),
         (GrowIndex, GrowCopy) => Some(Publish),
+        (Compact, Compacting) => Some(Publish),
         _ => None,
     }
 }
@@ -99,6 +100,7 @@ impl Coordinator {
             Action::Recover => Phase::WaitFlush,
             Action::Gc => Phase::GcIo,
             Action::GrowIndex => Phase::GrowPrepare,
+            Action::Compact => Phase::Compacting,
         };
         Ok(id)
     }

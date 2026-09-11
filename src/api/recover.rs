@@ -362,7 +362,7 @@ fn build<S: Schema>(
     let engine = Engine {
         id: set.store,
         scans: Default::default(),
-        io: CompletionHub::new(set.store, io_capacity)?,
+        io: Arc::new(CompletionHub::new(set.store, io_capacity)?),
         growth: std::sync::Mutex::new(Default::default()),
         checkpoints: std::sync::Mutex::new(
             crate::engine::checkpoint::CheckpointRuntime::recovered(plan.index(), plan.log())?,
