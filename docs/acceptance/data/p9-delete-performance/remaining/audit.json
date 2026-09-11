@@ -1,0 +1,10 @@
+{
+  "group": "remaining",
+  "runs": 40,
+  "operations": 655360,
+  "recovered_keys": 81920,
+  "review_required_cases": [
+    "u64-hot-t1-disk-r1"
+  ],
+  "control_review_required_cases": []
+}

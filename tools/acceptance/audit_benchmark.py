@@ -161,8 +161,8 @@ def verify_native(root, sha, run_id):
                 "制品提交、工具链或原生 target 不匹配")
         require("特性：all；模式：release；完整矩阵：48；每组业务操作：16384" in env,
                 "性能配置不匹配")
-        require(len(re.findall(r"test result: ok\. 2 passed; 0 failed; 0 ignored;", checks)) == 1,
-                "计量与固定输入两个测试必须实际通过")
+        require(len(re.findall(r"test result: ok\. 3 passed; 0 failed; 0 ignored;", checks)) == 1,
+                "计量、固定输入与盲删契约三个测试必须实际通过")
         expected_ids = {f"{layout}-{distribution}-t{threads}-{storage}-r{round_}"
                         for layout, distribution, threads, storage, round_ in itertools.product(
                             ["u64", "bytes"], ["uniform", "hot"], [1, 4], ["memory", "disk"], [1, 2, 3])}
@@ -190,7 +190,7 @@ def main():
     with (args.directory / "audit.json").open("x") as output:
         json.dump(result, output, ensure_ascii=False, indent=2)
     platforms = 2 if args.sha else 1
-    print(f"完整矩阵已复核：{48 * platforms} 组，{48 * OPERATIONS * platforms} 次业务操作，{48 * KEYS * platforms} 个恢复键校验；原回退仍待处理。")
+    print(f"完整矩阵已复核：{48 * platforms} 组，{48 * OPERATIONS * platforms} 次业务操作，{48 * KEYS * platforms} 个恢复键校验；本矩阵不代替独立的原性能回退复核。")
 
 
 if __name__ == "__main__":

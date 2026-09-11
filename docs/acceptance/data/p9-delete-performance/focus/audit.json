@@ -1,0 +1,11 @@
+{
+  "group": "focus",
+  "runs": 24,
+  "operations": 393216,
+  "recovered_keys": 49152,
+  "review_required_cases": [
+    "u64-hot-t4-disk-r1",
+    "bytes-uniform-t1-disk-r1"
+  ],
+  "control_review_required_cases": []
+}

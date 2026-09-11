@@ -1,0 +1,182 @@
+{
+  "sha": "a834f48b53865098c8325d81cc52934bb322c26d",
+  "run": {
+    "conclusion": "success",
+    "headSha": "a834f48b53865098c8325d81cc52934bb322c26d",
+    "jobs": [
+      {
+        "completedAt": "2026-09-11T18:04:22Z",
+        "conclusion": "success",
+        "databaseId": 103367679515,
+        "name": "故障与完整历史（macos-14）",
+        "startedAt": "2026-09-11T18:02:52Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-11T18:02:54Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-11T18:02:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:56Z",
+            "conclusion": "success",
+            "name": "检出代码",
+            "number": 2,
+            "startedAt": "2026-09-11T18:02:54Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:04Z",
+            "conclusion": "success",
+            "name": "安装固定工具链",
+            "number": 3,
+            "startedAt": "2026-09-11T18:02:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:06Z",
+            "conclusion": "success",
+            "name": "记录原生环境",
+            "number": 4,
+            "startedAt": "2026-09-11T18:03:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:17Z",
+            "conclusion": "success",
+            "name": "逐项执行故障与历史矩阵",
+            "number": 5,
+            "startedAt": "2026-09-11T18:03:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:19Z",
+            "conclusion": "success",
+            "name": "保存矩阵和逐项原始输出",
+            "number": 6,
+            "startedAt": "2026-09-11T18:04:17Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:19Z",
+            "conclusion": "success",
+            "name": "Post 检出代码",
+            "number": 12,
+            "startedAt": "2026-09-11T18:04:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:20Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-11T18:04:19Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wayslog/raster/actions/runs/34630988870/job/103367679515"
+      },
+      {
+        "completedAt": "2026-09-11T18:03:21Z",
+        "conclusion": "success",
+        "databaseId": 103367679750,
+        "name": "故障与完整历史（ubuntu-24.04）",
+        "startedAt": "2026-09-11T18:02:33Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-11T18:02:35Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-11T18:02:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:37Z",
+            "conclusion": "success",
+            "name": "检出代码",
+            "number": 2,
+            "startedAt": "2026-09-11T18:02:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:43Z",
+            "conclusion": "success",
+            "name": "安装固定工具链",
+            "number": 3,
+            "startedAt": "2026-09-11T18:02:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:44Z",
+            "conclusion": "success",
+            "name": "记录原生环境",
+            "number": 4,
+            "startedAt": "2026-09-11T18:02:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:18Z",
+            "conclusion": "success",
+            "name": "逐项执行故障与历史矩阵",
+            "number": 5,
+            "startedAt": "2026-09-11T18:02:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:19Z",
+            "conclusion": "success",
+            "name": "保存矩阵和逐项原始输出",
+            "number": 6,
+            "startedAt": "2026-09-11T18:03:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:20Z",
+            "conclusion": "success",
+            "name": "Post 检出代码",
+            "number": 12,
+            "startedAt": "2026-09-11T18:03:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:20Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-11T18:03:20Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wayslog/raster/actions/runs/34630988870/job/103367679750"
+      }
+    ],
+    "status": "completed"
+  },
+  "verified": [
+    {
+      "matrix": "p9-faults-macos-14",
+      "test_entries": 40,
+      "histories": 32,
+      "crash_events": {
+        "F18": "33",
+        "F19": "23",
+        "F20": "37"
+      }
+    },
+    {
+      "matrix": "p9-faults-ubuntu-24.04",
+      "test_entries": 40,
+      "histories": 32,
+      "crash_events": {
+        "F18": "33",
+        "F19": "23",
+        "F20": "37"
+      }
+    }
+  ]
+}

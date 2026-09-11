@@ -1,0 +1,85 @@
+name: P9 同主机删除性能配对复核
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: 配对场景组
+        type: choice
+        options: [focus, remaining, control, interleaved]
+        default: focus
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: 同主机 AB-BA-BA-AB（macOS）
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: 检出诊断驱动与候选核心
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: 检出固定旧核心
+        uses: actions/checkout@v6
+        with:
+          ref: dbe392884be723708a0e6bdc0011de83f493f917
+          path: target/paired-baseline
+          persist-credentials: false
+      - name: 安装固定工具链
+        uses: dtolnay/rust-toolchain@1.98.1
+      - name: 验证核心身份并记录原生环境
+        shell: bash
+        run: |
+          mkdir -p target/paired-evidence
+          test -z "$(git diff a834f48b53865098c8325d81cc52934bb322c26d -- src Cargo.toml Cargo.lock rust-toolchain.toml examples)"
+          {
+            git rev-parse HEAD
+            git rev-parse a834f48b53865098c8325d81cc52934bb322c26d
+            git -C target/paired-baseline rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            uname -srm
+            sw_vers
+            sysctl -n machdep.cpu.brand_string hw.memsize hw.physicalcpu hw.logicalcpu
+            diskutil info "$(df -P . | awk 'NR==2 {print $1}')" | sed -n '/File System Personality/p'
+          } > target/paired-evidence/environment.txt
+      - name: 两个核心使用完全相同的基准驱动
+        shell: bash
+        run: |
+          cp examples/benchmark/main.rs target/paired-baseline/examples/benchmark/main.rs
+          cp examples/benchmark/scenario.rs target/paired-baseline/examples/benchmark/scenario.rs
+          cp tests/support/model.rs target/paired-baseline/tests/support/model.rs
+          git -C target/paired-baseline diff --name-only > target/paired-evidence/baseline-driver-files.txt
+          set -o pipefail
+          export CARGO_TERM_COLOR=never
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          {
+            cargo build --locked --release --all-features --example benchmark
+            cargo build --locked --release --all-features --example benchmark --manifest-path target/paired-baseline/Cargo.toml
+          } 2>&1 | sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" | tee target/paired-evidence/build.txt
+      - name: 指定场景各完成四对交替顺序测量
+        shell: bash
+        env:
+          PAIR_GROUP: ${{ inputs.group }}
+        run: |
+          set -o pipefail
+          cases=()
+          candidate=target/release/examples/benchmark
+          if [ "$PAIR_GROUP" = control ]; then
+            candidate=target/paired-baseline/target/release/examples/benchmark
+          fi
+          printf '%s\n' "$PAIR_GROUP" > target/paired-evidence/group.txt
+          if [ "$PAIR_GROUP" = remaining ]; then
+            cases=(--case u64-uniform-t1-memory-r1 --case u64-hot-t1-memory-r1 --case u64-hot-t1-disk-r1 --case bytes-uniform-t1-memory-r1 --case bytes-hot-t4-disk-r1)
+          fi
+          if [ "$PAIR_GROUP" = interleaved ]; then
+            cases=(--interleaved-control --case u64-hot-t4-disk-r1 --case bytes-uniform-t1-disk-r1 --case u64-hot-t1-disk-r1)
+          fi
+          python3 -B tools/acceptance/paired_benchmark.py --baseline target/paired-baseline/target/release/examples/benchmark --candidate "$candidate" --output target/paired-evidence/results "${cases[@]}" | tee target/paired-evidence/checks.txt
+      - name: 保存全部原始配对证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-delete-paired-macos
+          path: target/paired-evidence
+          if-no-files-found: error

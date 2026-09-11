@@ -1,0 +1,113 @@
+{
+  "run": {
+    "conclusion": "failure",
+    "headSha": "9777ed16bdd32b74bb21403e4213c6d599800939",
+    "jobs": [
+      {
+        "completedAt": "2026-09-11T18:29:58Z",
+        "conclusion": "failure",
+        "databaseId": 103374925942,
+        "name": "同主机 AB-BA-BA-AB（macOS）",
+        "startedAt": "2026-09-11T18:26:17Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-11T18:26:18Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-11T18:26:16Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:26:20Z",
+            "conclusion": "success",
+            "name": "检出诊断驱动与候选核心",
+            "number": 2,
+            "startedAt": "2026-09-11T18:26:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:26:22Z",
+            "conclusion": "success",
+            "name": "检出固定旧核心",
+            "number": 3,
+            "startedAt": "2026-09-11T18:26:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:26:31Z",
+            "conclusion": "success",
+            "name": "安装固定工具链",
+            "number": 4,
+            "startedAt": "2026-09-11T18:26:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:26:32Z",
+            "conclusion": "success",
+            "name": "验证核心身份并记录原生环境",
+            "number": 5,
+            "startedAt": "2026-09-11T18:26:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:27:08Z",
+            "conclusion": "success",
+            "name": "两个核心使用完全相同的基准驱动",
+            "number": 6,
+            "startedAt": "2026-09-11T18:26:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:29:53Z",
+            "conclusion": "failure",
+            "name": "指定场景各完成四对交替顺序测量",
+            "number": 7,
+            "startedAt": "2026-09-11T18:27:08Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:29:55Z",
+            "conclusion": "success",
+            "name": "保存全部原始配对证据",
+            "number": 8,
+            "startedAt": "2026-09-11T18:29:53Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:29:55Z",
+            "conclusion": "success",
+            "name": "Post 检出固定旧核心",
+            "number": 15,
+            "startedAt": "2026-09-11T18:29:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:29:55Z",
+            "conclusion": "success",
+            "name": "Post 检出诊断驱动与候选核心",
+            "number": 16,
+            "startedAt": "2026-09-11T18:29:55Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:29:56Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-09-11T18:29:55Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wayslog/raster/actions/runs/34633245907/job/103374925942"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/wayslog/raster/actions/runs/34633245907"
+  },
+  "diagnostic_sha": "9777ed16bdd32b74bb21403e4213c6d599800939",
+  "baseline": "dbe392884be723708a0e6bdc0011de83f493f917",
+  "candidate": "a834f48b53865098c8325d81cc52934bb322c26d",
+  "group": "remaining"
+}

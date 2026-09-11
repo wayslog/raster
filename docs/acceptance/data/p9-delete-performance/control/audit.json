@@ -1,0 +1,11 @@
+{
+  "group": "control",
+  "runs": 24,
+  "operations": 393216,
+  "recovered_keys": 49152,
+  "review_required_cases": [
+    "bytes-uniform-t1-disk-r1",
+    "bytes-hot-t1-memory-r1"
+  ],
+  "control_review_required_cases": []
+}

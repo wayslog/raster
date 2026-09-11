@@ -1,0 +1,22 @@
+[
+  {
+    "case": "median",
+    "rejected": true,
+    "reason": "中位数错误"
+  },
+  {
+    "case": "order",
+    "rejected": true,
+    "reason": "固定顺序错误"
+  },
+  {
+    "case": "binary",
+    "rejected": true,
+    "reason": "A/A 必须使用相同二进制"
+  },
+  {
+    "case": "recovery",
+    "rejected": true,
+    "reason": "业务或恢复未通过"
+  }
+]

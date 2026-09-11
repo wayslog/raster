@@ -1,43 +1,49 @@
 {
-  "base": "15d66666d9f8a63ee41a4567951350660fdb1486",
+  "base": "a834f48b53865098c8325d81cc52934bb322c26d",
+  "scope": "当前检出及待提交文档；运行实现 a834f48b53865098c8325d81cc52934bb322c26d",
   "documents": [
     "README.md",
+    "CONTEXT.md",
+    "docs/README.md",
     "docs/05-RasterKV第一阶段与支持库选型.md",
     "docs/09-RasterKV模块设计.md",
     "docs/10-RasterKV公开接口.md",
     "docs/11-RasterKV内存与状态协议.md",
     "docs/13-模块基础骨架.md",
     "docs/14-RasterKV第一期实现计划地图.md",
-    "docs/README.md",
-    "docs/acceptance/P9.2GC等待测试修正.md",
-    "docs/acceptance/P9.2可变记录边界查询.md",
-    "docs/acceptance/一期验收报告.md",
+    "docs/15-配置与诊断.md",
+    "docs/16-公开接口使用流程.md",
     "docs/acceptance/功能对应表.md",
-    "docs/acceptance/P9.3文档核对记录.md"
+    "docs/acceptance/一期验收报告.md",
+    "docs/acceptance/P9.1删除契约.md",
+    "docs/acceptance/P9.2性能复核结论.md",
+    "docs/acceptance/P9.2删除变更性能复核.md",
+    "docs/acceptance/P9.3文档核对记录.md",
+    "tools/acceptance/README.md"
   ],
-  "relative_links": 294,
+  "relative_links": 313,
   "missing_links": [],
   "private_path_hits": [],
-  "checked_tracked_files": 727,
+  "checked_files": 1118,
   "modules": [
     "api",
-    "types",
     "config",
+    "device",
+    "diagnostics",
     "schema",
+    "types",
+    "cache",
+    "checkpoint",
+    "coordination",
     "engine",
+    "epoch",
+    "format",
     "index",
     "log",
-    "cache",
-    "epoch",
-    "coordination",
-    "checkpoint",
     "maintenance",
     "scan",
     "storage",
-    "device",
-    "format",
-    "sync",
-    "diagnostics"
+    "sync"
   ],
   "capabilities": [
     "A01",
@@ -83,12 +89,10 @@
       "optional": true
     }
   ],
-  "checks": {
-    "git_diff_check": "通过",
-    "cargo_fmt": "通过",
-    "strict_rustdoc": "通过",
-    "cargo_metadata_locked": "通过",
-    "gc_archive_hashes": "通过"
+  "archive_hashes": {
+    "p9-delete": 21,
+    "p9-delete-performance": 358,
+    "p9-performance-review": 164
   },
   "rustdoc_inherent_methods": {
     "RasterKV": [

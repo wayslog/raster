@@ -1,0 +1,113 @@
+u64-hot-t4-disk-r1 1 baseline 3804.735 21646125
+u64-hot-t4-disk-r1 1 candidate 5320.225 21154375
+u64-hot-t4-disk-r1 2 candidate 4444.701 21599583
+u64-hot-t4-disk-r1 2 baseline 4833.130 13058291
+u64-hot-t4-disk-r1 3 candidate 8285.468 3094416
+u64-hot-t4-disk-r1 3 baseline 3329.673 21608084
+u64-hot-t4-disk-r1 4 baseline 6285.411 11401125
+u64-hot-t4-disk-r1 4 candidate 6430.954 13003916
+bytes-uniform-t1-disk-r1 1 baseline 1450.606 5346708
+bytes-uniform-t1-disk-r1 1 candidate 1340.461 10822709
+bytes-uniform-t1-disk-r1 2 candidate 1380.492 6022791
+bytes-uniform-t1-disk-r1 2 baseline 1144.949 20731625
+bytes-uniform-t1-disk-r1 3 candidate 1400.357 4495958
+bytes-uniform-t1-disk-r1 3 baseline 1437.670 2820500
+bytes-uniform-t1-disk-r1 4 baseline 1493.772 2831667
+bytes-uniform-t1-disk-r1 4 candidate 952.821 20901042
+bytes-hot-t1-memory-r1 1 baseline 896380.170 3250
+bytes-hot-t1-memory-r1 1 candidate 703962.772 11667
+bytes-hot-t1-memory-r1 2 candidate 812483.483 8250
+bytes-hot-t1-memory-r1 2 baseline 627625.241 11000
+bytes-hot-t1-memory-r1 3 candidate 881345.903 3250
+bytes-hot-t1-memory-r1 3 baseline 849713.554 2959
+bytes-hot-t1-memory-r1 4 baseline 847674.795 4917
+bytes-hot-t1-memory-r1 4 candidate 763625.583 5125
+[
+  {
+    "case": "u64-hot-t4-disk-r1",
+    "input_sha256": "f7d0162b83bae580441c8088d568893b6b414ae5eb476d549d7fe48ff366aa72",
+    "medians": {
+      "baseline": {
+        "每秒操作": 4318.9325,
+        "P99纳秒": 17333187.5,
+        "读取P99纳秒": 22083604.0,
+        "写入P99纳秒": 1479.0,
+        "RMWP99纳秒": 1646.0,
+        "删除P99纳秒": 1479.5,
+        "业务后累计读字节": 67256320.0,
+        "业务后累计写字节": 131360.0
+      },
+      "candidate": {
+        "每秒操作": 5875.5895,
+        "P99纳秒": 17079145.5,
+        "读取P99纳秒": 22097833.5,
+        "写入P99纳秒": 5521.0,
+        "RMWP99纳秒": 1083.0,
+        "删除P99纳秒": 5729.0,
+        "业务后累计读字节": 67256320.0,
+        "业务后累计写字节": 131360.0
+      }
+    },
+    "throughput_ratio": 1.3604263322013022,
+    "p99_ratio": 0.9853436074582358,
+    "review_required": false
+  },
+  {
+    "case": "bytes-uniform-t1-disk-r1",
+    "input_sha256": "5352c7e36e0a91f6a3d2176259cceb433580969d0764982b81167a4111c71cc9",
+    "medians": {
+      "baseline": {
+        "每秒操作": 1444.138,
+        "P99纳秒": 4089187.5,
+        "读取P99纳秒": 6683416.5,
+        "写入P99纳秒": 446229.0,
+        "RMWP99纳秒": 11119354.5,
+        "删除P99纳秒": 4222270.5,
+        "业务后累计读字节": 184298080.0,
+        "业务后累计写字节": 3628820.0
+      },
+      "candidate": {
+        "每秒操作": 1360.4765,
+        "P99纳秒": 8422750.0,
+        "读取P99纳秒": 15872958.5,
+        "写入P99纳秒": 431166.5,
+        "RMWP99纳秒": 12956312.5,
+        "删除P99纳秒": 20354250.5,
+        "业务后累计读字节": 184298080.0,
+        "业务后累计写字节": 3628820.0
+      }
+    },
+    "throughput_ratio": 0.942068209547841,
+    "p99_ratio": 2.0597612606416313,
+    "review_required": true
+  },
+  {
+    "case": "bytes-hot-t1-memory-r1",
+    "input_sha256": "ab0f3428395ebbd29c7f40c479b885b37e3387b473f928dc7636d198f94ce7ec",
+    "medians": {
+      "baseline": {
+        "每秒操作": 848694.1745,
+        "P99纳秒": 4083.5,
+        "读取P99纳秒": 1125.0,
+        "写入P99纳秒": 917.0,
+        "RMWP99纳秒": 7521.0,
+        "删除P99纳秒": 1604.5,
+        "业务后累计读字节": 0.0,
+        "业务后累计写字节": 0.0
+      },
+      "candidate": {
+        "每秒操作": 788054.533,
+        "P99纳秒": 6687.5,
+        "读取P99纳秒": 646.0,
+        "写入P99纳秒": 1437.5,
+        "RMWP99纳秒": 11896.0,
+        "删除P99纳秒": 1000.0,
+        "业务后累计读字节": 0.0,
+        "业务后累计写字节": 0.0
+      }
+    },
+    "throughput_ratio": 0.928549478337441,
+    "p99_ratio": 1.6376882576221379,
+    "review_required": true
+  }
+]

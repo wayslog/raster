@@ -1,6 +1,6 @@
 # RasterKV 公开接口
 
-更新日期：2026-09-12。本文对应当前源码；精确签名以 [api](../src/api/mod.rs)、[schema](../src/schema/mod.rs)、[device](../src/device/mod.rs) 和 [types](../src/types/mod.rs) 为准。P0—P8 已验收，P9 总验收仍进行中。初版草案见 [固定历史版本](https://github.com/wayslog/raster/blob/52c0657661edc319e5e6bc4af2ab7518d88733f6/docs/10-RasterKV公开接口.md)。
+更新日期：2026-09-12。本文对应当前源码；精确签名以 [api](../src/api/mod.rs)、[schema](../src/schema/mod.rs)、[device](../src/device/mod.rs) 和 [types](../src/types/mod.rs) 为准。第一期 P0—P9 已实现并完成交付验收。初版草案见 [固定历史版本](https://github.com/wayslog/raster/blob/52c0657661edc319e5e6bc4af2ab7518d88733f6/docs/10-RasterKV公开接口.md)。
 
 ## 1. 存储、创建与恢复
 

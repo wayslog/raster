@@ -1,0 +1,240 @@
+{
+  "sha": "a834f48b53865098c8325d81cc52934bb322c26d",
+  "run": {
+    "conclusion": "success",
+    "headSha": "a834f48b53865098c8325d81cc52934bb322c26d",
+    "jobs": [
+      {
+        "completedAt": "2026-09-11T18:06:37Z",
+        "conclusion": "success",
+        "databaseId": 103367746701,
+        "name": "完整生命周期与资源（macos-14）",
+        "startedAt": "2026-09-11T18:04:30Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-11T18:04:31Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-11T18:04:30Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:34Z",
+            "conclusion": "success",
+            "name": "检出代码",
+            "number": 2,
+            "startedAt": "2026-09-11T18:04:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:42Z",
+            "conclusion": "success",
+            "name": "安装固定工具链",
+            "number": 3,
+            "startedAt": "2026-09-11T18:04:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:04:43Z",
+            "conclusion": "success",
+            "name": "记录原生环境",
+            "number": 4,
+            "startedAt": "2026-09-11T18:04:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:06:32Z",
+            "conclusion": "success",
+            "name": "运行计数检查与完整循环",
+            "number": 5,
+            "startedAt": "2026-09-11T18:04:43Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:06:33Z",
+            "conclusion": "success",
+            "name": "保存逐轮资源与失败材料",
+            "number": 6,
+            "startedAt": "2026-09-11T18:06:32Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:06:34Z",
+            "conclusion": "success",
+            "name": "Post 检出代码",
+            "number": 12,
+            "startedAt": "2026-09-11T18:06:33Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:06:35Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-11T18:06:34Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wayslog/raster/actions/runs/34630988959/job/103367746701"
+      },
+      {
+        "completedAt": "2026-09-11T18:03:53Z",
+        "conclusion": "success",
+        "databaseId": 103367746920,
+        "name": "完整生命周期与资源（ubuntu-24.04）",
+        "startedAt": "2026-09-11T18:02:46Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-09-11T18:02:48Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-09-11T18:02:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:49Z",
+            "conclusion": "success",
+            "name": "检出代码",
+            "number": 2,
+            "startedAt": "2026-09-11T18:02:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:58Z",
+            "conclusion": "success",
+            "name": "安装固定工具链",
+            "number": 3,
+            "startedAt": "2026-09-11T18:02:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:02:59Z",
+            "conclusion": "success",
+            "name": "记录原生环境",
+            "number": 4,
+            "startedAt": "2026-09-11T18:02:58Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:50Z",
+            "conclusion": "success",
+            "name": "运行计数检查与完整循环",
+            "number": 5,
+            "startedAt": "2026-09-11T18:02:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:51Z",
+            "conclusion": "success",
+            "name": "保存逐轮资源与失败材料",
+            "number": 6,
+            "startedAt": "2026-09-11T18:03:50Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:51Z",
+            "conclusion": "success",
+            "name": "Post 检出代码",
+            "number": 12,
+            "startedAt": "2026-09-11T18:03:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-09-11T18:03:52Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 13,
+            "startedAt": "2026-09-11T18:03:51Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/wayslog/raster/actions/runs/34630988959/job/103367746920"
+      }
+    ],
+    "status": "completed"
+  },
+  "verified": [
+    {
+      "平台": "ubuntu-24.04",
+      "target": "x86_64-unknown-linux-gnu",
+      "完整业务循环": 72,
+      "恢复次数": 144,
+      "测量耗时毫秒": 27311,
+      "指标": {
+        "存活分配字节": {
+          "基线": 9809,
+          "最小": 9809,
+          "最大": 9809
+        },
+        "存活分配数": {
+          "基线": 6,
+          "最小": 6,
+          "最大": 6
+        },
+        "分配峰值字节": {
+          "基线": 246368,
+          "最小": 246368,
+          "最大": 246368
+        },
+        "RSS字节": {
+          "基线": 4403200,
+          "最小": 4440064,
+          "最大": 4542464
+        },
+        "文件描述符": {
+          "基线": 7,
+          "最小": 7,
+          "最大": 7
+        },
+        "线程": {
+          "基线": 1,
+          "最小": 1,
+          "最大": 1
+        }
+      }
+    },
+    {
+      "平台": "macos-14",
+      "target": "aarch64-apple-darwin",
+      "完整业务循环": 72,
+      "恢复次数": 144,
+      "测量耗时毫秒": 62192,
+      "指标": {
+        "存活分配字节": {
+          "基线": 9937,
+          "最小": 9937,
+          "最大": 9937
+        },
+        "存活分配数": {
+          "基线": 8,
+          "最小": 8,
+          "最大": 8
+        },
+        "分配峰值字节": {
+          "基线": 257792,
+          "最小": 257792,
+          "最大": 257792
+        },
+        "RSS字节": {
+          "基线": 3915776,
+          "最小": 3932160,
+          "最大": 4014080
+        },
+        "文件描述符": {
+          "基线": 9,
+          "最小": 9,
+          "最大": 9
+        },
+        "线程": {
+          "基线": 1,
+          "最小": 1,
+          "最大": 1
+        }
+      }
+    }
+  ]
+}

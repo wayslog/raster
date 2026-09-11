@@ -1,0 +1,33 @@
+[
+  {
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "cargo",
+      "doc",
+      "--locked",
+      "--no-deps",
+      "--all-features"
+    ],
+    "exit_code": 0,
+    "output": " Documenting raster v0.1.0 (工作树)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.76s\n   Generated 工作树/target/doc/raster/index.html\n"
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": ""
+  }
+]

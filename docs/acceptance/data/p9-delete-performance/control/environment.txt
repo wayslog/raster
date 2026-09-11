@@ -1,0 +1,20 @@
+f9b39afc6ee3cf009d2444b472061d6d560d56d2
+a834f48b53865098c8325d81cc52934bb322c26d
+dbe392884be723708a0e6bdc0011de83f493f917
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: aarch64-apple-darwin
+release: 1.98.1
+LLVM version: 22.1.8
+cargo 1.98.1 (797e8a9bc 2026-08-05)
+Darwin 23.6.0 arm64
+ProductName:		macOS
+ProductVersion:		14.8.9
+BuildVersion:		23J631
+Apple M1 (Virtual)
+7516192768
+3
+3
+   File System Personality:   APFS
