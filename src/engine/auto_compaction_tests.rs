@@ -589,15 +589,23 @@ fn 自动维护协议错误或设备恐慌失败关闭后仍能结束调度和�
         session.close(deadline()).unwrap();
         drop(session);
         until(|| !gate.state.lock().unwrap().held.is_empty());
-        gate.panic_poll.store(panic_poll, Ordering::SeqCst);
-        gate.fatal.store(true, Ordering::SeqCst);
-        gate.fail.store(true, Ordering::SeqCst);
+        if panic_poll {
+            // 完成仍被扣留，先确认后台实际进入 panic 点；不能让另一故障抢先终结任务，
+            // 将尚未消耗的 panic 开关留给后续主线程 shutdown。
+            gate.panic_poll.store(true, Ordering::SeqCst);
+            until(|| !gate.panic_poll.load(Ordering::SeqCst));
+        } else {
+            gate.fatal.store(true, Ordering::SeqCst);
+            gate.fail.store(true, Ordering::SeqCst);
+        }
         gate.hold.store(false, Ordering::SeqCst);
         until(|| store.maintenance().auto_compaction_status().unwrap().phase == AutoPhase::Failed);
         let status = store.maintenance().auto_compaction_status().unwrap();
         assert!(status.active.is_none());
         assert!(status.last_compaction.unwrap().is_err());
         assert!(store.inner.failed.load(Ordering::SeqCst));
+        assert!(!gate.panic_poll.load(Ordering::SeqCst));
+        assert_eq!(gate.state.lock().unwrap().failed, !panic_poll);
         store.shutdown(deadline()).unwrap();
         assert!(gate.state.lock().unwrap().held.is_empty());
     }
