@@ -1,0 +1,410 @@
+[
+  {
+    "检查": "格式",
+    "命令": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "退出码": 0,
+    "秒": 0.924
+  },
+  {
+    "检查": "default-clippy",
+    "命令": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "退出码": 0,
+    "秒": 5.211
+  },
+  {
+    "检查": "default-tests",
+    "命令": [
+      "cargo",
+      "test",
+      "--locked"
+    ],
+    "退出码": 0,
+    "秒": 60.447
+  },
+  {
+    "检查": "default-examples",
+    "命令": [
+      "cargo",
+      "test",
+      "--locked",
+      "--examples"
+    ],
+    "退出码": 0,
+    "秒": 5.316
+  },
+  {
+    "检查": "default-rustdoc",
+    "命令": [
+      "cargo",
+      "doc",
+      "--locked",
+      "--no-deps"
+    ],
+    "退出码": 0,
+    "秒": 1.352
+  },
+  {
+    "检查": "default-memory",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "memory"
+    ],
+    "退出码": 0,
+    "秒": 6.239
+  },
+  {
+    "检查": "default-memory_matrix",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "memory_matrix"
+    ],
+    "退出码": 0,
+    "秒": 3.266
+  },
+  {
+    "检查": "default-interface",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "interface"
+    ],
+    "退出码": 0,
+    "秒": 2.133
+  },
+  {
+    "检查": "default-disk_lifecycle",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "disk_lifecycle"
+    ],
+    "退出码": 0,
+    "秒": 5.057
+  },
+  {
+    "检查": "default-automatic",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "automatic"
+    ],
+    "退出码": 0,
+    "秒": 3.12
+  },
+  {
+    "检查": "default-example-io",
+    "命令": [
+      "python3",
+      "scripts/check_examples.py"
+    ],
+    "退出码": 0,
+    "秒": 2.885
+  },
+  {
+    "检查": "config-toml-clippy",
+    "命令": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--all-targets",
+      "--no-default-features",
+      "--features",
+      "config-toml",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "退出码": 0,
+    "秒": 4.524
+  },
+  {
+    "检查": "config-toml-tests",
+    "命令": [
+      "cargo",
+      "test",
+      "--locked",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 63.709
+  },
+  {
+    "检查": "config-toml-examples",
+    "命令": [
+      "cargo",
+      "test",
+      "--locked",
+      "--examples",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 4.679
+  },
+  {
+    "检查": "config-toml-rustdoc",
+    "命令": [
+      "cargo",
+      "doc",
+      "--locked",
+      "--no-deps",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 1.381
+  },
+  {
+    "检查": "config-toml-memory",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "memory",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 5.811
+  },
+  {
+    "检查": "config-toml-memory_matrix",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "memory_matrix",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 3.525
+  },
+  {
+    "检查": "config-toml-interface",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "interface",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 2.476
+  },
+  {
+    "检查": "config-toml-disk_lifecycle",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "disk_lifecycle",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 5.545
+  },
+  {
+    "检查": "config-toml-automatic",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "automatic",
+      "--no-default-features",
+      "--features",
+      "config-toml"
+    ],
+    "退出码": 0,
+    "秒": 3.72
+  },
+  {
+    "检查": "config-toml-example-io",
+    "命令": [
+      "python3",
+      "scripts/check_examples.py"
+    ],
+    "退出码": 0,
+    "秒": 2.775
+  },
+  {
+    "检查": "all-clippy",
+    "命令": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--all-targets",
+      "--all-features",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "退出码": 0,
+    "秒": 0.453
+  },
+  {
+    "检查": "all-tests",
+    "命令": [
+      "cargo",
+      "test",
+      "--locked",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 37.153
+  },
+  {
+    "检查": "all-examples",
+    "命令": [
+      "cargo",
+      "test",
+      "--locked",
+      "--examples",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 4.84
+  },
+  {
+    "检查": "all-rustdoc",
+    "命令": [
+      "cargo",
+      "doc",
+      "--locked",
+      "--no-deps",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 1.346
+  },
+  {
+    "检查": "all-memory",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "memory",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 6.021
+  },
+  {
+    "检查": "all-memory_matrix",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "memory_matrix",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 3.119
+  },
+  {
+    "检查": "all-interface",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "interface",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 2.125
+  },
+  {
+    "检查": "all-disk_lifecycle",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "disk_lifecycle",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 4.951
+  },
+  {
+    "检查": "all-automatic",
+    "命令": [
+      "cargo",
+      "run",
+      "--locked",
+      "--release",
+      "--example",
+      "automatic",
+      "--all-features"
+    ],
+    "退出码": 0,
+    "秒": 3.489
+  },
+  {
+    "检查": "all-example-io",
+    "命令": [
+      "python3",
+      "scripts/check_examples.py"
+    ],
+    "退出码": 0,
+    "秒": 2.892
+  }
+]

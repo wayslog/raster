@@ -134,7 +134,10 @@ pub fn linearizable_from(events: &[Event], initial: Option<u64>) -> bool {
                 continue;
             }
             let (next, reply) = transition(state, event.action);
-            if reply == event.reply && search(events, used | (1 << i), next) {
+            let blind_delete = state.is_none()
+                && matches!(event.action, Action::Delete)
+                && event.reply == Reply::Deleted;
+            if (reply == event.reply || blind_delete) && search(events, used | (1 << i), next) {
                 return true;
             }
         }

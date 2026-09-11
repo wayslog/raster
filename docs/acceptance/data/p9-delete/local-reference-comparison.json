@@ -1,0 +1,186 @@
+[
+  {
+    "case": "固定边界",
+    "backend": "null",
+    "trace_sha256": "611d6ebe87285ce36be17d1bac85d29b76cec5b1ce07f96beed87af2f4fe7410",
+    "steps": 8,
+    "differences": [
+      {
+        "line": 6,
+        "rust": "0 6 tombstone",
+        "cpp": "0 6 missing"
+      }
+    ],
+    "corrected_differences": [],
+    "contract": "force_tombstone 保留可达墓碑；其余原始算法不变"
+  },
+  {
+    "case": "随机种子-0",
+    "backend": "null",
+    "trace_sha256": "418a2c316fc1b0950d55fa6caab33f95e1241da23b4ed66f73969de0d9a2bc1c",
+    "steps": 1500,
+    "differences": [
+      {
+        "line": 15,
+        "rust": "0 19 tombstone",
+        "cpp": "0 19 missing"
+      },
+      {
+        "line": 43,
+        "rust": "2 31 deleted",
+        "cpp": "2 31 missing"
+      },
+      {
+        "line": 83,
+        "rust": "2 52 deleted",
+        "cpp": "2 52 missing"
+      },
+      {
+        "line": 118,
+        "rust": "1 83 tombstone",
+        "cpp": "1 83 missing"
+      },
+      {
+        "line": 140,
+        "rust": "0 86 deleted",
+        "cpp": "0 86 missing"
+      },
+      {
+        "line": 144,
+        "rust": "2 89 deleted",
+        "cpp": "2 89 missing"
+      },
+      {
+        "line": 196,
+        "rust": "2 139 tombstone",
+        "cpp": "2 139 missing"
+      },
+      {
+        "line": 264,
+        "rust": "2 167 missing",
+        "cpp": "2 167 deleted"
+      }
+    ],
+    "corrected_differences": [],
+    "contract": "force_tombstone 保留可达墓碑；其余原始算法不变"
+  },
+  {
+    "case": "随机种子-1",
+    "backend": "null",
+    "trace_sha256": "090c73e5015437e2c3137c29fca6cfa157160e7e1785230b73fe5ba1e9a6a7db",
+    "steps": 1500,
+    "differences": [
+      {
+        "line": 66,
+        "rust": "1 37 deleted",
+        "cpp": "1 37 missing"
+      },
+      {
+        "line": 71,
+        "rust": "1 40 tombstone",
+        "cpp": "1 40 missing"
+      },
+      {
+        "line": 210,
+        "rust": "1 118 deleted",
+        "cpp": "1 118 missing"
+      },
+      {
+        "line": 225,
+        "rust": "2 165 tombstone",
+        "cpp": "2 165 missing"
+      },
+      {
+        "line": 329,
+        "rust": "1 192 deleted",
+        "cpp": "1 192 missing"
+      },
+      {
+        "line": 352,
+        "rust": "1 213 tombstone",
+        "cpp": "1 213 missing"
+      },
+      {
+        "line": 464,
+        "rust": "2 318 deleted",
+        "cpp": "2 318 missing"
+      },
+      {
+        "line": 636,
+        "rust": "0 429 tombstone",
+        "cpp": "0 429 missing"
+      }
+    ],
+    "corrected_differences": [],
+    "contract": "force_tombstone 保留可达墓碑；其余原始算法不变"
+  },
+  {
+    "case": "随机种子-42",
+    "backend": "null",
+    "trace_sha256": "1be2f00002c54d06ae667e097ca2db4c6cd872b3d0c53f0f93be43d50ee32700",
+    "steps": 1500,
+    "differences": [
+      {
+        "line": 198,
+        "rust": "1 116 tombstone",
+        "cpp": "1 116 missing"
+      },
+      {
+        "line": 199,
+        "rust": "0 124 deleted",
+        "cpp": "0 124 missing"
+      },
+      {
+        "line": 284,
+        "rust": "0 205 deleted",
+        "cpp": "0 205 missing"
+      }
+    ],
+    "corrected_differences": [],
+    "contract": "force_tombstone 保留可达墓碑；其余原始算法不变"
+  },
+  {
+    "case": "随机种子-11259375",
+    "backend": "null",
+    "trace_sha256": "d24df736b8a93398b051de2c8c0889331597440dd2fa49ec987a13f6f3c39092",
+    "steps": 1500,
+    "differences": [],
+    "corrected_differences": [],
+    "contract": "force_tombstone 保留可达墓碑；其余原始算法不变"
+  },
+  {
+    "case": "随机种子-18446744073709551615",
+    "backend": "null",
+    "trace_sha256": "753601ad249b5d54fceb563a284c442a97ada34b6a357ce3a59a5412fd9cfa4c",
+    "steps": 1500,
+    "differences": [
+      {
+        "line": 104,
+        "rust": "2 91 tombstone",
+        "cpp": "2 91 missing"
+      },
+      {
+        "line": 271,
+        "rust": "0 192 tombstone",
+        "cpp": "0 192 missing"
+      },
+      {
+        "line": 294,
+        "rust": "1 152 tombstone",
+        "cpp": "1 152 missing"
+      },
+      {
+        "line": 306,
+        "rust": "1 159 deleted",
+        "cpp": "1 159 missing"
+      },
+      {
+        "line": 374,
+        "rust": "1 202 tombstone",
+        "cpp": "1 202 missing"
+      }
+    ],
+    "corrected_differences": [],
+    "contract": "force_tombstone 保留可达墓碑；其余原始算法不变"
+  }
+]

@@ -1,4 +1,4 @@
-name: P9 上游执行环境基线
+name: P9 上游契约及生命周期对照
 on:
   push:
     branches: [main]
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   upstream:
-    name: 固定上游构建及文件后端探测（非兼容性验收）
+    name: 固定上游、强制墓碑契约及生命周期
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -58,8 +58,18 @@ jobs:
           export CARGO_TERM_COLOR=never
           export RUST_BACKTRACE=0
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
-          python3 tools/upstream/probe.py --cpp target/p9-build/faster-replay --output target/p9-upstream-evidence |
+          python3 tools/upstream/probe.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-upstream-evidence |
             tee target/p9-upstream-evidence/checks.txt
+      - name: Null 与文件后端固定种子契约对照
+        shell: bash
+        run: |
+          set -o pipefail
+          export CARGO_TERM_COLOR=never
+          export RUST_BACKTRACE=0
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          cp target/p9-build/forced-tombstone.diff target/p9-build/forced-tombstone.json target/p9-upstream-evidence/
+          python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-upstream-evidence/random-null
+          python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-upstream-evidence/random-file --disk
       - name: 三种检查点与超内存生命周期对照
         shell: bash
         env:

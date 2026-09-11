@@ -1,4 +1,4 @@
-//! Delete 查询键与墓碑元数据，发布后才执行一次完成回调。
+//! Delete 只检查驻留记录，盲删发布后执行一次完成回调。
 use super::{
     Engine, SessionRuntime,
     pending::{PendingTask, TaskStep},
@@ -11,7 +11,7 @@ use crate::{
     },
     device::IoCompletion,
     index::{IndexHead, PublishResult},
-    log::lookup::{LogLookup, LookupStep},
+    log::ValueAccess,
     schema::Schema,
     types::*,
 };
@@ -23,7 +23,6 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     engine: Arc<Engine<S>>,
     monitor: super::metrics::Monitor,
     request: Option<O>,
-    lookup: Option<(crate::index::EntrySnapshot, LogLookup)>,
     options: DeleteOptions,
     completed: bool,
     key: Vec<u8>,
@@ -36,45 +35,48 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     permit: super::version_permit::VersionPermit,
 }
 impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
-    fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
+    fn advance(&mut self, _budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = self.engine.clone();
-        let entry = if self.options.force_tombstone {
-            engine.index.prepare(self.hash)?
-        } else {
-            if self.lookup.is_none() {
-                let resolved = engine.resolve_index(self.hash, &self.key)?;
-                let entry = resolved.entry;
-                let lookup = engine.log.lookup_metadata(
-                    &engine.storage,
-                    self.key.clone(),
-                    resolved.head,
-                    super::io_hub::CompletionHub::route(self.id),
-                )?;
-                self.lookup = Some((entry, lookup));
+        let resolved = engine.resolve_index(self.hash, &self.key)?;
+        let entry = resolved.entry;
+        if !self.options.force_tombstone && !entry.present {
+            return Ok(Some(Outcome::NotFound));
+        }
+        if let Some(lease) = engine.log.find_mutable(&self.key, resolved.head)? {
+            let begin = engine.log.frontiers()?.begin;
+            let remove = !self.options.force_tombstone
+                && resolved.head == Some(lease.address()?)
+                && lease.previous().is_none_or(|previous| previous < begin);
+            let head = if remove {
+                IndexHead::Empty
+            } else {
+                resolved.head.map_or(IndexHead::Empty, IndexHead::Log)
+            };
+            match lease.tombstone_at_version(self.version, || {
+                engine
+                    .index
+                    .compare_publish(entry, head)
+                    .map(|result| matches!(result, PublishResult::Published))
+            })? {
+                ValueAccess::Ready(Some(true)) => {
+                    self.effect = Effect::Applied;
+                    return Ok(Some(Outcome::Success(
+                        self.request
+                            .take()
+                            .expect("请求尚未完成")
+                            .complete(if remove {
+                                DeleteOutcome::IndexRemoved
+                            } else {
+                                DeleteOutcome::TombstoneWritten
+                            }),
+                    )));
+                }
+                ValueAccess::Contended | ValueAccess::Ready(Some(false)) => return Ok(None),
+                ValueAccess::Ready(None) => {}
             }
-            let (snapshot, lookup) = self.lookup.as_mut().expect("查询已创建");
-            let source = lookup.step(&engine.log, &engine.storage, budget)?;
-            if matches!(source, LookupStep::AwaitingIo | LookupStep::Continue) {
-                return Ok(None);
-            }
-            let entry = engine.index.prepare(self.hash)?;
-            let changed = entry != *snapshot;
-            self.lookup = None;
-            if changed {
-                return Ok(None);
-            }
-            match source {
-                LookupStep::Tombstone | LookupStep::Missing => return Ok(Some(Outcome::NotFound)),
-                LookupStep::Present => {}
-                _ => return Err(Error::InvalidState("删除查询返回了意外的值状态")),
-            }
-            entry
-        };
+        }
         engine.log.tombstone_fits(self.key.len())?;
-        let reservation = match engine
-            .log
-            .reserve_tombstone(&self.key, engine.resolve_index(self.hash, &self.key)?.head)
-        {
+        let reservation = match engine.log.reserve_tombstone(&self.key, resolved.head) {
             Ok(reservation) => reservation,
             Err(Error::CapacityExceeded) if engine.storage.device.capabilities().supports_files => {
                 return Ok(None);
@@ -100,7 +102,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
                 self.monitor.invalidate();
-                Err(Error::Busy)
+                Ok(None)
             }
         }
     }
@@ -170,13 +172,8 @@ impl<S: Schema, O: DeleteOperation<S>> PendingTask for DeleteTask<S, O> {
     fn version(&self) -> CheckpointVersion {
         self.version
     }
-    fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
-        self.lookup
-            .as_mut()
-            .ok_or(Error::InvalidState("Delete 没有等待磁盘查询"))?
-            .1
-            .accept(&self.engine.storage, completion)
-            .map_err(|rejected| rejected.reason)
+    fn on_io(&mut self, _: IoCompletion) -> Result<(), Error> {
+        Err(Error::InvalidState("盲删没有等待磁盘查询"))
     }
     fn step(&mut self, budget: PollBudget) -> TaskStep {
         let engine = self.engine.clone();
@@ -263,7 +260,6 @@ impl<S: Schema> Engine<S> {
             monitor: self.metrics.accept(super::metrics::Kind::Delete),
             engine: self.clone(),
             request: Some(request),
-            lookup: None,
             options,
             completed: false,
             key,

@@ -1,0 +1,11 @@
+--- 原始上游/cc/src/core/faster.h
++++ 强制墓碑修正/cc/src/core/faster.h
+@@ -1904,7 +1904,7 @@
+     // If the record is the head of the hash chain, try to update the hash chain and completely
+     // elide record only if the previous address points to invalid address
+     // NOTE: this is an optimization enabled for hot log; disabled when cold index is used.
+-    if(hash_index_.IsSync() && expected_entry.address() == address) {
++    if(!force_tombstone && hash_index_.IsSync() && expected_entry.address() == address) {
+       Address previous_address = record->header.previous_address();
+       if (previous_address < begin_address) {
+         hash_index_.TryUpdateEntry(thread_context, pending_context, HashBucketEntry::kInvalidEntry);

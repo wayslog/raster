@@ -30,6 +30,37 @@ fn 检查器接受合法重叠但拒绝错误结果及实时顺序违例() {
         reply: Reply::Value(1),
     };
     assert!(linearizable(&[first, read]));
+    let deleted = Event {
+        start: 4,
+        end: 5,
+        action: Action::Delete,
+        reply: Reply::Deleted,
+    };
+    assert!(linearizable(&[
+        first,
+        deleted,
+        Event {
+            start: 6,
+            end: 7,
+            ..deleted
+        }
+    ]));
+    assert!(!linearizable(&[
+        first,
+        Event {
+            reply: Reply::Missing,
+            ..deleted
+        }
+    ]));
+    assert!(!linearizable(&[
+        first,
+        deleted,
+        Event {
+            start: 6,
+            end: 7,
+            ..read
+        }
+    ]));
     assert!(!linearizable(&[
         first,
         Event {

@@ -76,3 +76,92 @@ impl Model {
         Submission::Accepted(outcome)
     }
 }
+
+/// 盲删契约的非确定性观察模型。只放宽声明为表示方式相关的两个结果，
+/// 强制墓碑、活跃值、序号拒绝和四操作的逻辑副作用仍精确检查。
+#[derive(Default)]
+pub struct ContractModel {
+    logical: Model,
+    tombstones: BTreeMap<Vec<u8>, bool>,
+    reserved: std::collections::BTreeSet<Vec<u8>>,
+}
+impl ContractModel {
+    pub fn last_accepted(&self, session: u64) -> Option<u64> {
+        self.logical.last_accepted(session)
+    }
+    pub fn verify(&mut self, step: Step, observed: &Submission) -> Result<(), String> {
+        if self
+            .last_accepted(step.session)
+            .is_some_and(|last| step.serial <= last)
+        {
+            return if *observed == Submission::Rejected(step) {
+                Ok(())
+            } else {
+                Err("非法序号必须拒绝且无副作用".into())
+            };
+        }
+        let live = self
+            .logical
+            .records
+            .get(&step.key)
+            .is_some_and(Option::is_some);
+        let required = self.tombstones.get(&step.key) == Some(&true);
+        let has_history = !self.logical.records.is_empty() || !self.reserved.is_empty();
+        let visibility = self.tombstones.get(&step.key).copied();
+        let expected = self.logical.submit(step.clone());
+        let accepted = |value| *observed == Submission::Accepted(value);
+        let valid = match &step.operation {
+            Operation::Delete {
+                force_tombstone: true,
+            } => accepted(ResultValue::Deleted),
+            Operation::Delete {
+                force_tombstone: false,
+            } => {
+                if live || required {
+                    accepted(ResultValue::Deleted)
+                } else {
+                    accepted(ResultValue::NotFound) || has_history && accepted(ResultValue::Deleted)
+                }
+            }
+            Operation::Read {
+                abort_if_tombstone: true,
+            } if !live => match visibility {
+                Some(true) => accepted(ResultValue::Tombstone),
+                Some(false) => accepted(ResultValue::Tombstone) || accepted(ResultValue::NotFound),
+                None => accepted(ResultValue::NotFound),
+            },
+            _ => *observed == expected,
+        };
+        if !valid {
+            return Err(format!(
+                "契约结果不匹配：{step:?}，观察 {observed:?}，逻辑结果 {expected:?}，墓碑可达性 {visibility:?}"
+            ));
+        }
+        if matches!(step.operation, Operation::Rmw { .. }) {
+            // 不预测物理槽是否经维护清除，只记录盲删可能找到槽的业务来源。
+            self.reserved.insert(step.key.clone());
+        }
+        match step.operation {
+            Operation::Delete { force_tombstone } => {
+                if accepted(ResultValue::Deleted) {
+                    self.logical.records.insert(step.key.clone(), None);
+                    self.tombstones.insert(step.key, force_tombstone);
+                } else {
+                    self.logical.records.remove(&step.key);
+                    self.tombstones.remove(&step.key);
+                }
+            }
+            Operation::Upsert(_) | Operation::Rmw { .. }
+                if self
+                    .logical
+                    .records
+                    .get(&step.key)
+                    .is_some_and(Option::is_some) =>
+            {
+                self.tombstones.remove(&step.key);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}

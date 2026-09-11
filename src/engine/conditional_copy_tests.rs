@@ -110,7 +110,7 @@ fn 候选捕获后原地更新保持源地址但复制当前值且只终结一�
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 追加和删除使旧源失效且最新墓碑可迁移但不复活旧值() {
+fn 追加使旧源失效且原地删除后只复制当前墓碑() {
     let (_root, store) = setup(None);
     store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -134,7 +134,10 @@ fn 追加和删除使旧源失效且最新墓碑可迁移但不复活旧值() {
     session
         .delete(Serial(2), Delete(9), Default::default())
         .unwrap();
-    assert_eq!(drive(&store.inner, &mut task), CopyResult::Obsolete);
+    let CopyResult::Copied(deleted) = drive(&store.inner, &mut task) else {
+        panic!("原地删除保留源地址，复制必须取得当前墓碑");
+    };
+    assert!(store.inner.log.lease(deleted).unwrap().is_tombstone());
     let tombstone = source(&store.inner, 9);
     let mut task = store
         .inner

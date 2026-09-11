@@ -1,4 +1,4 @@
-name: P9 原始随机对照（差异即失败）
+name: P9 随机契约对照（保留原始差异）
 on:
   workflow_dispatch:
 permissions:
@@ -57,7 +57,7 @@ jobs:
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
           options=()
           if [ "$BACKEND" = file ]; then options+=(--disk); fi
-          python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --output target/p9-random/comparison "${options[@]}" |
+          python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-random/comparison "${options[@]}" |
             tee target/p9-random/checks.txt
       - name: 保存原始输入输出及全部差异
         if: always()

@@ -178,7 +178,13 @@ fn 四操作统计区分缺失中止失败与删除生效后的恐慌且拒绝�
     assert_eq!(read_value(&mut session, 4, 7), Some(8));
     assert!(matches!(
         session
-            .delete(Serial(5), Delete(7, false), Default::default())
+            .delete(
+                Serial(5),
+                Delete(7, false),
+                crate::api::operation::DeleteOptions {
+                    force_tombstone: true
+                }
+            )
             .unwrap(),
         Submission::Ready(Ok(Outcome::Success(())))
     ));

@@ -103,13 +103,10 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
     let worker_store = store.clone();
     let deleter = crate::engine::session_actor::Actor::new(move || {
         let mut session = worker_store.start_session(Default::default()).unwrap();
-        let Submission::Pending(ticket) = session
+        let submission = session
             .delete(Serial(0), Delete(2), Default::default())
-            .unwrap()
-        else {
-            panic!("冷页删除必须挂起");
-        };
-        (session, ticket)
+            .unwrap();
+        (session, submission)
     });
     let growth = store.maintenance().grow_index().unwrap();
     assert!(matches!(store.maintenance().grow_index(), Err(Error::Busy)));
@@ -149,11 +146,14 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         Outcome::Success(6)
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    deleter.call(|(session, ticket)| {
-        assert!(matches!(
-            session.wait(ticket, deadline()).unwrap().unwrap(),
-            crate::api::Outcome::Success(())
-        ));
+    deleter.call(|(session, submission)| {
+        let result = match submission {
+            Submission::Ready(result) => {
+                std::mem::replace(result, Ok(crate::api::Outcome::NotFound))
+            }
+            Submission::Pending(ticket) => session.wait(ticket, deadline()).unwrap(),
+        };
+        assert!(matches!(result.unwrap(), crate::api::Outcome::Success(())));
         session.close(deadline()).unwrap();
     });
     let Submission::Pending(mut reading) = session

@@ -13,7 +13,7 @@ use raster::{
 };
 use replay::{Codec, Schema, actual};
 use support::{
-    model::Model,
+    model::ContractModel,
     trace::{Operation, Step, Trace, Value},
 };
 fn replay(trace: Trace) {
@@ -26,20 +26,21 @@ fn replay(trace: Trace) {
 fn replay_store(trace: Trace, store: RasterKV<Schema>) -> [usize; 4] {
     let mut pending = [0; 4];
     let mut sessions = std::collections::BTreeMap::new();
-    let mut model = Model::default();
+    let mut model = ContractModel::default();
     for (i, step) in trace.steps.iter().enumerate() {
         let session = sessions.entry(step.session).or_insert_with(|| {
             let store = store.clone();
             actor::Actor::new(move || store.start_session(SessionOptions::default()).unwrap())
         });
-        let expected = model.submit(step.clone());
         let input = step.clone();
         let (observed, step_pending, last) = session.call(move |session| {
             let mut pending = [0; 4];
-            let observed = actual(session, &input, &mut pending);
+            let observed = actual(session, &input, &mut pending, false);
             (observed, pending, session.last_accepted())
         });
-        assert_eq!(observed, expected, "种子 {} 步骤 {i}", trace.seed);
+        model
+            .verify(step.clone(), &observed)
+            .unwrap_or_else(|error| panic!("种子 {} 步骤 {i}：{error}", trace.seed));
         assert_eq!(last.map(|s| s.0), model.last_accepted(step.session));
         for (sum, count) in pending.iter_mut().zip(step_pending) {
             *sum += count;

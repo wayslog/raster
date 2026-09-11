@@ -50,6 +50,7 @@ def run(command, log, env=None, timeout=180):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cpp", type=Path, required=True, help="已经构建的上游执行器")
+    parser.add_argument("--corrected-cpp", type=Path, help="仅补上强制墓碑保护的参考副本；仍保存原始差异")
     parser.add_argument("--output", type=Path, required=True, help="本次全新结果目录")
     parser.add_argument("--disk", action="store_true", help="两端均使用原生文件后端")
     args = parser.parse_args()
@@ -83,17 +84,31 @@ def main():
                 command += ["--disk", str(Path(root) / "cpp")]
             run([executables[0], "--exact", "同一拥有型轨迹输出真实引擎结果供上游对照", "--nocapture"], output / (name + ".rust.log"), env)
             run(command, output / (name + ".cpp.log"))
+            if args.corrected_cpp:
+                corrected_result = output / (name + ".corrected.cpp")
+                command = [str(args.corrected_cpp.resolve()), str(source), str(corrected_result)]
+                if args.disk:
+                    command += ["--disk", str(Path(root) / "corrected")]
+                run(command, output / (name + ".corrected.cpp.log"))
         rust_lines, cpp_lines = rust_result.read_text().splitlines(), cpp_result.read_text().splitlines()
         differences = [{"line": i + 1, "rust": a, "cpp": b} for i, (a, b) in enumerate(zip(rust_lines, cpp_lines)) if a != b]
         if len(rust_lines) != len(cpp_lines):
             differences.append({"error": "结果行数不同", "rust_lines": len(rust_lines), "cpp_lines": len(cpp_lines)})
         summary = {"case": name, "backend": "file" if args.disk else "null", "trace_sha256": hashlib.sha256(trace.encode()).hexdigest(), "steps": len(trace.splitlines()) - 1, "differences": differences}
+        if args.corrected_cpp:
+            corrected_lines = corrected_result.read_text().splitlines()
+            from itertools import zip_longest
+            corrected_differences = [{"line": i + 1, "rust": a, "corrected_cpp": b}
+                                     for i, (a, b) in enumerate(zip_longest(rust_lines, corrected_lines)) if a != b]
+            summary["corrected_differences"] = corrected_differences
+            summary["contract"] = "force_tombstone 保留可达墓碑；其余原始算法不变"
         summaries.append(summary)
         (output / "comparison.json").write_text(json.dumps(summaries, ensure_ascii=False, indent=2))
         print(f"{name}：{summary['steps']} 步，{len(differences)} 处结果差异", flush=True)
-    if any(s["differences"] for s in summaries):
+    field = "corrected_differences" if args.corrected_cpp else "differences"
+    if any(s[field] for s in summaries):
         raise RuntimeError("上游与 Rust 存在差异；已保存逐项结果，尚不能声明对照通过")
-    print("上游与 Rust 的全部轨迹逐操作结果一致")
+    print("约定契约逐操作通过，原始上游差异完整保留" if args.corrected_cpp else "上游与 Rust 的全部轨迹逐操作结果一致")
 
 
 if __name__ == "__main__":

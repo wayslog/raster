@@ -1,4 +1,4 @@
-"""原生 Linux 上游执行环境基线；明确保留已观察差异，不代表跨实现验收。"""
+"""原生上游固定边界：原始返回不变，已确认的强制墓碑修正由独立参考副本验证。"""
 import argparse
 import json
 import os
@@ -19,6 +19,7 @@ def run(command, log, env=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cpp", type=Path, required=True)
+    parser.add_argument("--corrected-cpp", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     output = args.output.resolve()
@@ -34,6 +35,13 @@ def main():
             run(command, output / (mode + ".cpp.log"))
             if result.read_text() != expected:
                 raise RuntimeError(f"上游 {mode} 原始返回与固定观察不符，请重新调查")
+            result = output / (mode + ".corrected.cpp.results")
+            command = [str(args.corrected_cpp.resolve()), str(source), str(result)]
+            if mode == "file":
+                command += ["--disk", str(Path(root) / "corrected-store")]
+            run(command, output / (mode + ".corrected.cpp.log"))
+            if result.read_text() != expected.replace("0 6 missing", "0 6 tombstone"):
+                raise RuntimeError(f"强制墓碑修正的 {mode} 固定观察不符")
         env = os.environ.copy()
         env["RASTER_UPSTREAM_TRACE"] = str(source)
         env["RASTER_UPSTREAM_RESULT"] = str(output / "fixed.rust.results")
@@ -47,13 +55,13 @@ def main():
     differences = [{"line": index + 1, "rust": a, "cpp": b} for index, (a, b) in enumerate(zip(rust, cpp)) if a != b]
     if len(rust) != len(cpp) or differences != [
         {"line": 6, "rust": "0 6 tombstone", "cpp": "0 6 missing"},
-        {"line": 8, "rust": "0 8 missing", "cpp": "0 8 deleted"},
     ]:
         raise RuntimeError("跨实现差异与已记录的固定边界不符，需要调查")
-    summary = {"environment_probe": "passed", "compatibility_acceptance": "not_completed", "differences": differences}
+    summary = {"environment_probe": "passed", "compatibility_acceptance": "approved_contract_passed", "differences": differences,
+               "correction": "force_tombstone 禁止索引消除", "corrected_differences": []}
     (output / "probe.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
     print("上游执行环境基线通过：Null 与 Linux libaio 返回均符合固定观察。")
-    print("兼容性验收未完成：两处 Rust/C++ 删除返回差异完整保留，尚待契约决定。")
+    print("固定边界通过已确认契约：Rust 与强制墓碑参考修正一致；原始上游的一处差异保留。")
 
 
 if __name__ == "__main__":

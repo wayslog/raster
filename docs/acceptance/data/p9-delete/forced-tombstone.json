@@ -1,0 +1,9 @@
+{
+  "contract": "force_tombstone 禁止索引消除",
+  "changed_files": [
+    "cc/src/core/faster.h"
+  ],
+  "original_sha256": "4b17488f22d46d00d963bbf2279b4eefc6017819ddd3166eafb3eb1899588e68",
+  "corrected_sha256": "2b959be3555ab2a3c424d8b5c4f80de59005289f44963e38602b6029b62c6587",
+  "patch_sha256": "1b45a8b986571b116ac3d44a967b0567d9004bd424117bdfeb8db9e947ca81ee"
+}

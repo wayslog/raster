@@ -1,5 +1,5 @@
 #!/bin/sh
-# 构建固定上游核心源和本仓库的行为驱动器，不修改或替换上游实现。
+# 原始上游与仅修正强制墓碑保护的参考副本分别构建，保留两个可执行文件。
 set -eu
 if [ "$#" -ne 2 ]; then
   echo '用法：build.sh 上游检出目录 构建目录' >&2
@@ -25,3 +25,11 @@ ${CXX:-g++} -std=c++17 -O2 -pthread -I"$upstream/cc/src" \
   "$upstream/cc/src/core/thread.cc" \
   "$upstream/cc/src/environment/file_linux.cc" \
   -laio -luuid -ltbb -lstdc++fs -o "$output/faster-replay"
+python3 tools/upstream/retain_forced.py "$upstream" "$output/retained-src"
+${CXX:-g++} -std=c++17 -O2 -pthread -I"$output/retained-src" \
+  tools/upstream/replay.cc \
+  "$output/retained-src/core/address.cc" \
+  "$output/retained-src/core/lss_allocator.cc" \
+  "$output/retained-src/core/thread.cc" \
+  "$output/retained-src/environment/file_linux.cc" \
+  -laio -luuid -ltbb -lstdc++fs -o "$output/faster-replay-retained"

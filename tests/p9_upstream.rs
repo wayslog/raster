@@ -22,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 use support::{
-    model::{Model, ResultValue, Submission},
+    model::{ContractModel, ResultValue, Submission},
     trace::{Trace, Value},
 };
 fn encode(result: &Submission) -> String {
@@ -190,7 +190,7 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
     };
     let mut store = builder(config.clone(), native).create().unwrap();
     let mut sessions = Sessions::new();
-    let mut model = Model::default();
+    let mut model = ContractModel::default();
     let mut output = format!("raster-results 1 {}\n", trace.seed);
     let mut pending = [0usize; 4];
     for (index, step) in trace.steps.iter().enumerate() {
@@ -198,14 +198,16 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
             let store = store.clone();
             actor::Actor::new(move || store.start_session(SessionOptions::default()).unwrap())
         });
-        let expected = model.submit(step.clone());
         let input = step.clone();
         let (observed, counts, serial) = session.call(move |session| {
             let mut pending = [0; 4];
-            let observed = replay::actual(session, &input, &mut pending);
+            // 与 C++ 上下文保持相同策略：数字允许原地，普通字节总是追加。
+            let observed = replay::actual(session, &input, &mut pending, true);
             (observed, pending, session.last_accepted())
         });
-        assert_eq!(observed, expected, "种子 {} 步骤 {index}", trace.seed);
+        model
+            .verify(step.clone(), &observed)
+            .unwrap_or_else(|error| panic!("种子 {} 步骤 {index}：{error}", trace.seed));
         assert_eq!(serial.map(|s| s.0), model.last_accepted(step.session));
         for (sum, count) in pending.iter_mut().zip(counts) {
             *sum += count;

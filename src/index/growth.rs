@@ -75,6 +75,21 @@ impl MemIndex {
         expected: EntrySnapshot,
         head: IndexHead,
     ) -> Result<PublishResult, Error> {
+        self.compare_publish_mode(expected, head, false)
+    }
+    /// RMW 与上游 FindOrCreateEntry 对齐；空地址槽不含值，仍参与后续盲删。
+    pub fn reserve_empty(&self, expected: EntrySnapshot) -> Result<PublishResult, Error> {
+        if expected.present {
+            return Err(Error::InvalidState("不能把已占用索引槽改成空预留"));
+        }
+        self.compare_publish_mode(expected, IndexHead::Empty, true)
+    }
+    fn compare_publish_mode(
+        &self,
+        expected: EntrySnapshot,
+        head: IndexHead,
+        reserve_empty: bool,
+    ) -> Result<PublishResult, Error> {
         let state = self
             .state
             .read()
@@ -99,7 +114,11 @@ impl MemIndex {
         let result = if expected.table_generation != table.generation {
             PublishResult::Conflict(table.prepare(hash)?)
         } else {
-            table.compare_publish(expected, head)?
+            if reserve_empty {
+                table.compare_publish_mode(expected, head, true)?
+            } else {
+                table.compare_publish(expected, head)?
+            }
         };
         if matches!(result, PublishResult::Conflict(_)) {
             self.metrics

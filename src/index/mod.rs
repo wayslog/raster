@@ -18,6 +18,8 @@ pub(crate) struct EntrySnapshot {
     pub bucket: usize,
     pub tag: u16,
     pub head: IndexHead,
+    /// 已占用标签但尚无日志地址的槽仍可被盲删找到。
+    pub present: bool,
     pub table_generation: Generation,
     revision: u64,
     hash: Option<KeyHash>,
@@ -29,6 +31,7 @@ impl PartialEq for EntrySnapshot {
             && self.bucket == other.bucket
             && self.tag == other.tag
             && self.head == other.head
+            && self.present == other.present
             && self.table_generation == other.table_generation
             && self.revision == other.revision
     }
@@ -138,6 +141,7 @@ impl Table {
             bucket,
             tag,
             head: entry.map_or(IndexHead::Empty, |e| e.head),
+            present: entry.is_some(),
             revision: entry.map_or(entries.empty_revision, |e| e.revision),
             table_generation: self.generation,
             hash: Some(hash),
@@ -156,6 +160,14 @@ impl Table {
         &self,
         expected: EntrySnapshot,
         head: IndexHead,
+    ) -> Result<PublishResult, Error> {
+        self.compare_publish_mode(expected, head, false)
+    }
+    fn compare_publish_mode(
+        &self,
+        expected: EntrySnapshot,
+        head: IndexHead,
+        reserve_empty: bool,
     ) -> Result<PublishResult, Error> {
         if expected.owner != self.owner
             || expected.table_generation != self.generation
@@ -185,6 +197,18 @@ impl Table {
             .revision
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
+        if head == IndexHead::Empty && !reserve_empty {
+            for slot in bucket.blocks.iter_mut().flatten() {
+                if slot.is_some_and(|entry| entry.tag == expected.tag) {
+                    *slot = None;
+                    break;
+                }
+            }
+            // 移除条目后仍保留空槽历史，旧空快照不能越过一次插入再删除。
+            bucket.revision = revision;
+            bucket.empty_revision = revision;
+            return Ok(PublishResult::Published);
+        }
         let next = Entry {
             tag: expected.tag,
             head,
@@ -230,6 +254,7 @@ impl Table {
                         bucket: number,
                         tag: entry.tag,
                         head: entry.head,
+                        present: true,
                         table_generation: self.generation,
                         revision: entry.revision,
                         hash: None,
@@ -618,6 +643,22 @@ mod tests {
         let first = index.prepare(KeyHash(1)).unwrap();
         index.compare_publish(first, IndexHead::Empty).unwrap();
         let cleared = index.prepare(KeyHash(1)).unwrap();
+        assert_eq!(
+            index
+                .diagnostics()
+                .unwrap()
+                .0
+                .bucket_distribution
+                .iter()
+                .sum::<u64>(),
+            0
+        );
+        assert!(matches!(
+            index
+                .compare_publish(empty, IndexHead::Log(LogAddress(1)))
+                .unwrap(),
+            PublishResult::Conflict(_)
+        ));
         index
             .compare_publish(cleared, IndexHead::Log(LogAddress(0)))
             .unwrap();

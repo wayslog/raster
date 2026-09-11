@@ -105,8 +105,12 @@ def verify_matrix(root):
         numbers = {name: int(value) for name, value in row.items() if name not in ["布局", "分布", "存储", "输入标识", "每秒操作", "写放大含预装检查点"]}
         require(all(n >= 0 for n in numbers.values()), "计数不能为负数")
         require(numbers["种子"] == SEED and numbers["键数"] == KEYS and numbers["操作数"] == OPERATIONS, "固定运行参数错误")
-        for name in ["应用写入字节", "成功", "缺失", "墓碑"]:
+        for name in ["应用写入字节", "墓碑"]:
             require(numbers[name] == expected[name], f"{identity} 的 {name} 与独立模型不符")
+        # 此固定输入先完成 Read/Upsert/RMW，再普通删除；唯一可变返回来自重复删除。
+        # 活跃值首次删除必须成功，重复删除可成功或缺失，业务总数仍精确守恒。
+        require(expected["成功"] <= numbers["成功"] <= expected["成功"] + expected["缺失"], "成功数超出普通盲删允许范围")
+        require(0 <= numbers["缺失"] <= expected["缺失"] and numbers["成功"] + numbers["缺失"] == OPERATIONS, "缺失数或业务总数不符")
         require(0 < numbers["P50纳秒"] <= numbers["P95纳秒"] <= numbers["P99纳秒"], "分位数错误")
         for kind in KINDS:
             require(numbers[f"{kind}操作数"] == OPERATIONS // 4 and numbers[f"{kind}P99纳秒"] > 0, "四操作采样不完整")

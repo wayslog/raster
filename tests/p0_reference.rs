@@ -23,6 +23,156 @@ fn read(serial: u64) -> Step {
     )
 }
 #[test]
+fn 盲删观察模型拒绝错误值强制墓碑丢失及伪造成功() {
+    use support::model::ContractModel;
+    let accepted = |value| Submission::Accepted(value);
+    let mut empty = ContractModel::default();
+    assert!(
+        empty
+            .verify(
+                step(
+                    0,
+                    Operation::Delete {
+                        force_tombstone: false
+                    }
+                ),
+                &accepted(R::Deleted)
+            )
+            .is_err()
+    );
+    let mut live = ContractModel::default();
+    live.verify(
+        step(0, Operation::Upsert(Value::Number(7))),
+        &accepted(R::Written),
+    )
+    .unwrap();
+    assert!(
+        live.verify(read(1), &accepted(R::Value(Value::Number(8))))
+            .is_err()
+    );
+    for wrong in [R::NotFound, R::Value(Value::Number(7)), R::TypeMismatch] {
+        let mut forced = ContractModel::default();
+        forced
+            .verify(
+                step(
+                    0,
+                    Operation::Delete {
+                        force_tombstone: true,
+                    },
+                ),
+                &accepted(R::Deleted),
+            )
+            .unwrap();
+        assert!(
+            forced
+                .verify(
+                    step(
+                        1,
+                        Operation::Read {
+                            abort_if_tombstone: true
+                        }
+                    ),
+                    &accepted(wrong)
+                )
+                .is_err()
+        );
+    }
+    let mut live = ContractModel::default();
+    live.verify(
+        step(0, Operation::Upsert(Value::Number(7))),
+        &accepted(R::Written),
+    )
+    .unwrap();
+    assert!(
+        live.verify(
+            step(
+                1,
+                Operation::Delete {
+                    force_tombstone: false
+                }
+            ),
+            &accepted(R::NotFound)
+        )
+        .is_err()
+    );
+}
+#[test]
+fn 盲删观察模型限定普通墓碑的可达性且拒绝非法序号无副作用() {
+    use support::model::ContractModel;
+    for visible in [R::NotFound, R::Tombstone] {
+        let mut model = ContractModel::default();
+        for (request, result) in [
+            (step(0, Operation::Upsert(Value::Number(7))), R::Written),
+            (
+                step(
+                    2,
+                    Operation::Delete {
+                        force_tombstone: false,
+                    },
+                ),
+                R::Deleted,
+            ),
+            (
+                step(
+                    3,
+                    Operation::Read {
+                        abort_if_tombstone: true,
+                    },
+                ),
+                visible,
+            ),
+            (
+                step(
+                    5,
+                    Operation::Rmw {
+                        create_if_missing: false,
+                        operand: Value::Number(1),
+                    },
+                ),
+                R::NotFound,
+            ),
+            (
+                step(
+                    7,
+                    Operation::Delete {
+                        force_tombstone: true,
+                    },
+                ),
+                R::Deleted,
+            ),
+            (
+                step(
+                    9,
+                    Operation::Read {
+                        abort_if_tombstone: true,
+                    },
+                ),
+                R::Tombstone,
+            ),
+        ] {
+            model
+                .verify(request, &Submission::Accepted(result))
+                .unwrap();
+        }
+        let rejected = step(9, Operation::Upsert(Value::Number(9)));
+        model
+            .verify(rejected.clone(), &Submission::Rejected(rejected))
+            .unwrap();
+        assert_eq!(model.last_accepted(0), Some(9));
+        model
+            .verify(
+                step(
+                    10,
+                    Operation::Read {
+                        abort_if_tombstone: true,
+                    },
+                ),
+                &Submission::Accepted(R::Tombstone),
+            )
+            .unwrap();
+    }
+}
+#[test]
 fn 固定轨迹与独立预期逐步一致() {
     let trace = Trace::decode(include_str!("fixtures/p0.trace")).unwrap();
     let expected = [

@@ -93,7 +93,7 @@ impl RmwOperation<Schema> for Add {
     }
 }
 #[test]
-fn 磁盘读改写读取与删除挂起跨越扩容且回调只执行一次() {
+fn 磁盘读改写和读取挂起跨越扩容且盲删只完成一次() {
     let (_root, store) = setup(None);
     let mut config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -111,13 +111,10 @@ fn 磁盘读改写读取与删除挂起跨越扩容且回调只执行一次() {
     let worker_store = store.clone();
     let deleter = crate::engine::session_actor::Actor::new(move || {
         let mut session = worker_store.start_session(Default::default()).unwrap();
-        let Submission::Pending(ticket) = session
+        let submission = session
             .delete(Serial(10), Delete(1), Default::default())
-            .unwrap()
-        else {
-            panic!("冷页删除必须挂起");
-        };
-        (session, ticket)
+            .unwrap();
+        (session, submission)
     });
     let growth = store.maintenance().grow_index().unwrap();
     assert!(matches!(
@@ -133,11 +130,14 @@ fn 磁盘读改写读取与删除挂起跨越扩容且回调只执行一次() {
         crate::api::completion::Outcome::Success(5)
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    deleter.call(|(session, ticket)| {
-        assert!(matches!(
-            session.wait(ticket, deadline()).unwrap().unwrap(),
-            crate::api::Outcome::Success(())
-        ));
+    deleter.call(|(session, submission)| {
+        let result = match submission {
+            Submission::Ready(result) => {
+                std::mem::replace(result, Ok(crate::api::Outcome::NotFound))
+            }
+            Submission::Pending(ticket) => session.wait(ticket, deadline()).unwrap(),
+        };
+        assert!(matches!(result.unwrap(), crate::api::Outcome::Success(())));
         session.close(deadline()).unwrap();
     });
     let Submission::Pending(mut read) = session

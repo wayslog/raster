@@ -41,11 +41,11 @@ replacement/initial/copy_update 的接收者为 `&mut self`，结果包装在 `R
 | `read(serial, request, ReadOptions)` | abort_if_tombstone=false | 命中 Success；缺失 NotFound；墓碑默认 NotFound，选项开启为 Aborted(Tombstone) |
 | `upsert(serial, request)` | 无额外选项 | 覆盖或创建，用户输出包装为 Success |
 | `rmw(serial, request, RmwOptions)` | create_if_missing=true | 缺失可初始化；禁止创建则 NotFound |
-| `delete(serial, request, DeleteOptions)` | force_tombstone=false | 默认缺失或已有墓碑为 NotFound；强制选项允许写墓碑遮蔽 |
+| `delete(serial, request, DeleteOptions)` | force_tombstone=false | 无标签索引入口为 NotFound；其他路径盲删，不为存在性判断读取旧磁盘记录；强制选项保留可达墓碑 |
 
-四种提交均返回 `Result<Submission<Output>, Rejected<Request>>`。同一会话 Serial 必须严格递增但可跳号；接受前拒绝不消费序号。DeleteOutcome 声明 TombstoneWritten/IndexRemoved，当前成功删除实现交付 TombstoneWritten，不能假定已经存在索引移除优化。
+四种提交均返回 `Result<Submission<Output>, Rejected<Request>>`。同一会话 Serial 必须严格递增但可跳号；接受前拒绝不消费序号。DeleteOutcome::TombstoneWritten 表示已追加或原地标记墓碑，IndexRemoved 表示普通删除安全清除了索引入口；成功不证明此前存在活跃值。已有可达墓碑也可以再次删除成功。
 
-上游有路径相关的缺失删除成功及墓碑读回缺失差异；A02/A05 的最终选择尚待完成，见 [一期验收报告](acceptance/一期验收报告.md)。
+普通删除遵循上游盲删和安全索引移除策略。强制墓碑禁止该移除，保证未被后续写入覆盖或显式截断的墓碑可由 abort_if_tombstone 读取；这是已确认的兼容修正，见 [删除契约](acceptance/P9.1删除契约.md)。
 
 ## 3. 接受、结果与票据
 

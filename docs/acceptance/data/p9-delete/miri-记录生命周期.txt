@@ -1,0 +1,59 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/miri/aarch64-apple-darwin/debug/build/raster/105e57178bacc282/out/raster-105e57178bacc282)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/engine/conditional_copy_tests.rs:268:18
+    |
+268 |                 .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+    |                  ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+268 -                 .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+268 +                 .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+  --> src/epoch/mod.rs:39:14
+   |
+39 |             .fetch_update(
+   |              ^^^^^^^^^^^^
+   |
+help: replace the use of the deprecated method
+   |
+39 -             .fetch_update(
+39 +             .try_update(
+   |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/index/mod.rs:112:14
+    |
+112 |             .fetch_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+112 -             .fetch_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
+112 +             .try_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
+    |
+
+
+running 14 tests
+test log::tests::临时解码不占日志页且资源只销毁一次 ... ok
+test log::tests::冷恢复日志边界一致且拒绝无效尾部 ... ok
+test log::tests::冻结页编码覆盖对齐间隙和已放弃预留 ... ok
+test log::tests::原始记录槽放弃不销毁未初始化值且成功初始化仅销毁一次 ... ok
+test log::tests::发布后可租用且旧租约阻止销毁 ... ok
+test log::tests::可变查找区分冷历史与缺失记录 ... ok
+test log::tests::可变查找尊重页内截断和冻结且旧租约无法更新 ... ok
+test log::tests::未发布预留阻止冻结且放弃后可以推进 ... ok
+test log::tests::检查点填充尾页不创建记录且后续分配不回填 ... ok
+test log::tests::正在更新时冻结不推进安全边界且重试可完成 ... ok
+test log::tests::活跃预留拒绝尾页填充且不改变分配边界 ... ok
+test log::tests::租约比日志存活更久但预留不能跨日志发布 ... ok
+test log::tests::部分初始化失败自行清理且成功值仅销毁一次 ... ok
+test log::tests::预留不可见且放弃不留下地址记录 ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 327 filtered out; finished in 9.89s
+
+warning: 3 warnings emitted

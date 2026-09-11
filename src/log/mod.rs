@@ -75,6 +75,22 @@ pub(crate) struct RecordLease<V: ValueLayout> {
     local: PhantomData<Rc<()>>,
 }
 impl<V: ValueLayout> RecordLease<V> {
+    pub fn address(&self) -> Result<LogAddress, Error> {
+        self.value.address()
+    }
+    pub fn tombstone_at_version(
+        &self,
+        version: CheckpointVersion,
+        publish: impl FnOnce() -> Result<bool, Error>,
+    ) -> Result<ValueAccess<Option<bool>>, Error> {
+        self.value.tombstone_at_version(version, publish)
+    }
+    pub fn try_read_live<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Read<'a>) -> R,
+    ) -> Result<ValueAccess<Option<R>>, Error> {
+        self.value.try_read_live(f)
+    }
     #[cfg(test)]
     pub fn version(&self) -> CheckpointVersion {
         self.value.version()

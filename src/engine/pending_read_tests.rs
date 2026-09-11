@@ -609,7 +609,7 @@ impl DeleteOperation<Schema> for Erase {
     }
 }
 #[test]
-fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
+fn 冷键盲删后更新可见且强制墓碑可以等待空间() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let second = crate::engine::session_actor::session(&store);
@@ -623,7 +623,8 @@ fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
         .delete(Serial(0), delete(0), DeleteOptions::default())
         .map_err(|r| r.reason)
         .unwrap();
-    assert!(matches!(pending, Submission::Pending(_)));
+    assert!(matches!(pending, Submission::Ready(_)));
+    assert_eq!(finish_number(&mut first, pending), 0);
     second.call(|second| {
         let replace = second
             .upsert(
@@ -638,18 +639,41 @@ fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
             .unwrap();
         assert_eq!(finish_number(second, replace), 100);
     });
-    assert_eq!(finish_number(&mut first, pending), 0);
+    let read = first
+        .read(
+            Serial(1),
+            request(0, &Rc::new(Cell::new(0))),
+            Default::default(),
+        )
+        .map_err(|r| r.reason)
+        .unwrap();
+    let read = match read {
+        Submission::Ready(result) => result,
+        Submission::Pending(mut ticket) => first.wait(&mut ticket, wait_deadline()).unwrap(),
+    };
+    assert!(matches!(read, Ok(Outcome::Success(value)) if *value == 100));
+    let forced = first
+        .delete(
+            Serial(2),
+            delete(0),
+            DeleteOptions {
+                force_tombstone: true,
+            },
+        )
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert_eq!(finish_number(&mut first, forced), 0);
     let missing = first
-        .delete(Serial(1), delete(999), DeleteOptions::default())
+        .delete(Serial(3), delete(999), DeleteOptions::default())
         .map_err(|r| r.reason)
         .unwrap();
     assert!(matches!(missing, Submission::Ready(Ok(Outcome::NotFound))));
-    assert_eq!(calls.get(), 1);
+    assert_eq!(calls.get(), 2);
     let mut waiting = 0;
     for i in 0..400 {
         let result = first
             .delete(
-                Serial(i + 2),
+                Serial(i + 4),
                 delete(i + 1000),
                 DeleteOptions {
                     force_tombstone: true,
@@ -661,7 +685,7 @@ fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
             waiting += 1;
         }
         assert_eq!(finish_number(&mut first, result), i + 1000);
-        assert_eq!(calls.get(), i as usize + 2);
+        assert_eq!(calls.get(), i as usize + 3);
     }
     assert!(waiting >= 3);
     second.call(|second| {
@@ -705,7 +729,7 @@ fn 磁盘删除完成回调恐慌只终结一次且保留已生效墓碑() {
     let store = setup();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     let calls = Rc::new(Cell::new(0));
-    let Submission::Pending(mut ticket) = session
+    let submission = session
         .delete(
             Serial(0),
             Erase {
@@ -716,20 +740,17 @@ fn 磁盘删除完成回调恐慌只终结一次且保留已生效墓碑() {
             DeleteOptions::default(),
         )
         .map_err(|r| r.reason)
-        .unwrap()
-    else {
-        panic!("应等待磁盘")
-    };
-    let mut result = None;
-    for _ in 0..100 {
-        session.poll(PollBudget::default()).unwrap();
-        if let TicketState::Ready(value) = ticket.try_take().unwrap() {
-            result = Some(value);
-            break;
+        .unwrap();
+    let result = match submission {
+        Submission::Ready(result) => result,
+        Submission::Pending(mut ticket) => {
+            let result = session.wait(&mut ticket, wait_deadline()).unwrap();
+            assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
+            result
         }
-    }
+    };
     assert!(matches!(
-        result.unwrap(),
+        result,
         Err(OperationError {
             effect: Effect::Applied,
             ..
@@ -748,7 +769,6 @@ fn 磁盘删除完成回调恐慌只终结一次且保留已生效墓碑() {
             .unwrap()
             .is_tombstone()
     );
-    assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
 }
 
 fn wait_deadline() -> Deadline {

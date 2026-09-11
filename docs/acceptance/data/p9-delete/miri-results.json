@@ -1,0 +1,135 @@
+[
+  {
+    "检查": "页范围及预分配",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "log::page::",
+      "--",
+      "--skip",
+      "log::page::tests::无效长度对齐溢出与遗忘范围均安全拒绝"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 7,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "页内值布局",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "log::value::tests::"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 9,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "记录生命周期",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "log::tests::"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 14,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "缓存字节区",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "cache::arena::tests::"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 1,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "缓存读者及淘汰",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "cache::tests::"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 5,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "验收分配器",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--test",
+      "p9_allocator"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 1,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "结果预算所有权",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "engine::pending::result_budget_tests::"
+    ],
+    "MIRIFLAGS": "",
+    "预期测试数": 3,
+    "退出码": 0,
+    "通过": true
+  },
+  {
+    "检查": "故意遗忘范围",
+    "命令": [
+      "cargo",
+      "+nightly",
+      "miri",
+      "test",
+      "--locked",
+      "--lib",
+      "log::page::tests::无效长度对齐溢出与遗忘范围均安全拒绝",
+      "--",
+      "--exact"
+    ],
+    "MIRIFLAGS": "-Zmiri-ignore-leaks",
+    "预期测试数": 1,
+    "退出码": 0,
+    "通过": true
+  }
+]

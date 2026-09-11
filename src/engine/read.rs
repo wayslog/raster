@@ -148,9 +148,16 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                         Outcome::NotFound
                     })),
                     LookupStep::Resident(value) => {
-                        match value.try_read(|view| request.read(ValueRead { view }))? {
-                            crate::log::ValueAccess::Ready(value) => {
+                        match value.try_read_live(|view| request.read(ValueRead { view }))? {
+                            crate::log::ValueAccess::Ready(Some(value)) => {
                                 value.map(|value| Some(Outcome::Success(value)))
+                            }
+                            crate::log::ValueAccess::Ready(None) => {
+                                Ok(Some(if self.options.abort_if_tombstone {
+                                    Outcome::Aborted(AbortReason::Tombstone)
+                                } else {
+                                    Outcome::NotFound
+                                }))
                             }
                             crate::log::ValueAccess::Contended => {
                                 self.lookup = None;

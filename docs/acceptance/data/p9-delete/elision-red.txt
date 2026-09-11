@@ -1,0 +1,22 @@
+   Compiling raster v0.1.0 (仓库)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
+     Running tests/p9_delete.rs (target/debug/deps/p9_delete-f9b980675cadea2f)
+
+running 1 test
+test 普通可变链头删除释放索引槽而强制删除保留墓碑 ... FAILED
+
+failures:
+
+---- 普通可变链头删除释放索引槽而强制删除保留墓碑 stdout ----
+
+thread '普通可变链头删除释放索引槽而强制删除保留墓碑' (101999868) panicked at tests/p9_delete.rs:82:22:
+删除结果错误 (false, Success(TombstoneWritten))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    普通可变链头删除释放索引槽而强制删除保留墓碑
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test p9_delete`

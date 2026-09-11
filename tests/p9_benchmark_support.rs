@@ -2,6 +2,10 @@
 #[path = "../examples/benchmark/meter.rs"]
 mod meter;
 #[path = "support/model.rs"]
+#[allow(
+    dead_code,
+    reason = "固定基准只使用确定值模型；盲删观察模型由 P0/P3/P9 轨迹验收"
+)]
 mod model;
 #[allow(dead_code, reason = "复用基准生成器，测试不执行整套计时矩阵")]
 #[path = "../examples/benchmark/scenario.rs"]
@@ -13,6 +17,52 @@ use model::ResultValue;
 use raster::{device::*, types::*};
 use std::sync::Arc;
 use trace::Value;
+
+#[test]
+fn 基准只接受普通删除的有限结果且保留逻辑负载口径() {
+    use trace::{Operation, Step};
+    let step = |operation| Step {
+        session: 0,
+        serial: 0,
+        key: vec![],
+        operation,
+    };
+    assert!(scenario::matches_result(
+        &step(Operation::Delete {
+            force_tombstone: false
+        }),
+        &ResultValue::Deleted,
+        &ResultValue::NotFound
+    ));
+    assert!(!scenario::matches_result(
+        &step(Operation::Delete {
+            force_tombstone: true
+        }),
+        &ResultValue::NotFound,
+        &ResultValue::Deleted
+    ));
+    assert!(!scenario::matches_result(
+        &step(Operation::Delete {
+            force_tombstone: false
+        }),
+        &ResultValue::NotFound,
+        &ResultValue::Deleted
+    ));
+    assert!(!scenario::matches_result(
+        &step(Operation::Read {
+            abort_if_tombstone: true
+        }),
+        &ResultValue::Value(Value::Number(7)),
+        &ResultValue::Tombstone
+    ));
+    assert!(!scenario::matches_result(
+        &step(Operation::Read {
+            abort_if_tombstone: false
+        }),
+        &ResultValue::NotFound,
+        &ResultValue::Value(Value::Number(7))
+    ));
+}
 
 #[test]
 fn 计量只累计实际完成字节且拒绝错误和旧输出不重复计数() {

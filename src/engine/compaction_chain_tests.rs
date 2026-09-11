@@ -29,7 +29,13 @@ fn 两算法后续检查点先于截断且各选项保留数据墓碑和会话�
                 put(&mut session, key, key);
             }
             let submission = session
-                .delete(Serial(96), Delete(5), Default::default())
+                .delete(
+                    Serial(96),
+                    Delete(5),
+                    crate::api::operation::DeleteOptions {
+                        force_tombstone: true,
+                    },
+                )
                 .unwrap();
             match submission {
                 Submission::Ready(result) => {

@@ -68,7 +68,7 @@ pub(crate) struct PageValue<V: ValueLayout> {
     layout: Arc<V>,
     range: Option<PageRange>,
     initialized: bool,
-    tombstone: bool,
+    tombstone: AtomicBool,
     value_offset: usize,
     capacity: usize,
     key_len: usize,
@@ -99,7 +99,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
-            tombstone: false,
+            tombstone: AtomicBool::new(false),
             value_offset: 0,
             capacity: plan.capacity.max(1),
             key_len: 0,
@@ -145,7 +145,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
-            tombstone: false,
+            tombstone: AtomicBool::new(false),
             value_offset,
             capacity: plan.capacity.max(1),
             key_len: key.len(),
@@ -157,7 +157,7 @@ impl<V: ValueLayout> PageValue<V> {
         })
     }
     pub fn initialize_owned(mut self, value: V::Owned) -> Result<Self, Error> {
-        if self.initialized || self.tombstone {
+        if self.initialized || self.is_tombstone() {
             return Err(Error::InvalidState("值不能重复初始化"));
         }
         self.layout.initialize(permit!(self, InitPermit), value)?;
@@ -218,7 +218,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
-            tombstone: true,
+            tombstone: AtomicBool::new(true),
             value_offset: prefix,
             capacity: 0,
             key_len: key.len(),
@@ -226,11 +226,11 @@ impl<V: ValueLayout> PageValue<V> {
             version: CheckpointVersion(0),
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
-            sealed: AtomicBool::new(true),
+            sealed: AtomicBool::new(false),
         })
     }
     pub fn is_tombstone(&self) -> bool {
-        self.tombstone
+        self.tombstone.load(Ordering::SeqCst)
     }
     pub fn decode(
         pool: &PagePool,
@@ -247,7 +247,7 @@ impl<V: ValueLayout> PageValue<V> {
             layout,
             range: Some(range),
             initialized: false,
-            tombstone: false,
+            tombstone: AtomicBool::new(false),
             value_offset: 0,
             capacity: plan.capacity.max(1),
             key_len: 0,
@@ -271,7 +271,7 @@ impl<V: ValueLayout> PageValue<V> {
         self.range.as_ref().expect("值范围存在").address()
     }
     fn ready(&self) -> Result<(), Error> {
-        if self.tombstone {
+        if self.is_tombstone() {
             return Err(Error::InvalidState("墓碑不含活跃值"));
         }
         if self.failed.load(Ordering::SeqCst) {
@@ -290,16 +290,55 @@ impl<V: ValueLayout> PageValue<V> {
         &self,
         f: impl for<'a> FnOnce(V::Read<'a>) -> R,
     ) -> Result<ValueAccess<R>, Error> {
-        self.ready()?;
+        match self.try_read_live(f)? {
+            ValueAccess::Ready(Some(value)) => Ok(ValueAccess::Ready(value)),
+            ValueAccess::Ready(None) => Err(Error::InvalidState("墓碑不含活跃值")),
+            ValueAccess::Contended => Ok(ValueAccess::Contended),
+        }
+    }
+    /// 墓碑检查和用户值视图共享独占许可，避免并发删除被误报为布局错误。
+    pub fn try_read_live<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Read<'a>) -> R,
+    ) -> Result<ValueAccess<Option<R>>, Error> {
         let _gate = match self.gate.try_replace() {
             Ok(gate) => gate,
             Err(Error::Busy) => return Ok(ValueAccess::Contended),
             Err(error) => return Err(error),
         };
+        if self.is_tombstone() {
+            return Ok(ValueAccess::Ready(None));
+        }
         self.ready()?;
-        Ok(ValueAccess::Ready(f(self
+        Ok(ValueAccess::Ready(Some(f(self
             .layout
-            .read(permit!(self, ReadPermit))?)))
+            .read(permit!(self, ReadPermit))?))))
+    }
+    /// 发布与墓碑标记处于同一源许可内；争用、冻结和跨版本均不修改记录。
+    pub fn tombstone_at_version(
+        &self,
+        version: CheckpointVersion,
+        publish: impl FnOnce() -> Result<bool, Error>,
+    ) -> Result<ValueAccess<Option<bool>>, Error> {
+        if self.version != version {
+            return Ok(ValueAccess::Ready(None));
+        }
+        let _gate = match self.gate.try_replace() {
+            Ok(gate) => gate,
+            Err(Error::Busy) => return Ok(ValueAccess::Contended),
+            Err(error) => return Err(error),
+        };
+        if self.failed.load(Ordering::SeqCst) {
+            return Err(Error::InvalidState("值访问已失败关闭"));
+        }
+        if self.sealed.load(Ordering::SeqCst) {
+            return Ok(ValueAccess::Ready(None));
+        }
+        let published = publish()?;
+        if published {
+            self.tombstone.store(true, Ordering::SeqCst);
+        }
+        Ok(ValueAccess::Ready(Some(published)))
     }
     #[cfg(test)]
     pub fn update<R>(
@@ -418,7 +457,7 @@ impl<V: ValueLayout> PageValue<V> {
         let capacity = len
             .checked_sub(HEADER_BYTES + self.key_len + 4)
             .ok_or(Error::CapacityExceeded)?;
-        let value_len = if self.tombstone {
+        let value_len = if self.is_tombstone() {
             0
         } else {
             self.ready()?;
@@ -433,7 +472,7 @@ impl<V: ValueLayout> PageValue<V> {
             .try_reserve_exact(value_len)
             .map_err(|_| Error::OutOfMemory)?;
         value.resize(value_len, 0);
-        if !self.tombstone {
+        if !self.is_tombstone() {
             self.layout
                 .encode_stable(permit!(self, StablePermit), &mut value)?;
         }
@@ -444,7 +483,7 @@ impl<V: ValueLayout> PageValue<V> {
                 key_bytes: u32::try_from(self.key_len).map_err(|_| Error::CapacityExceeded)?,
                 value_bytes: u32::try_from(value_len).map_err(|_| Error::CapacityExceeded)?,
                 capacity_bytes: u32::try_from(capacity).map_err(|_| Error::CapacityExceeded)?,
-                tombstone: self.tombstone,
+                tombstone: self.is_tombstone(),
                 invalid: false,
                 final_record: false,
             },
@@ -488,6 +527,69 @@ impl<V: ValueLayout> Drop for PageValue<V> {
 mod tests {
     use super::*;
     use crate::schema::builtin::{AtomicU64Value, ByteValueCodec, SerializedValue};
+    #[test]
+    fn 原地墓碑必须通过源许可版本冻结与发布判定() {
+        let pool = PagePool::new(4096, 2).unwrap();
+        let value = PageValue::initialize_record(&pool, Arc::new(AtomicU64Value), b"key", None, 7)
+            .unwrap()
+            .with_version(CheckpointVersion(3));
+        let entered = std::sync::Barrier::new(2);
+        let release = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                value
+                    .read(|v| {
+                        entered.wait();
+                        release.wait();
+                        assert_eq!(v, 7);
+                    })
+                    .unwrap()
+            });
+            entered.wait();
+            assert!(matches!(
+                value.tombstone_at_version(CheckpointVersion(3), || panic!("读许可尚未释放")),
+                Ok(ValueAccess::Contended)
+            ));
+            release.wait();
+        });
+        assert!(matches!(
+            value.tombstone_at_version(CheckpointVersion(4), || panic!("版本不符不能发布")),
+            Ok(ValueAccess::Ready(None))
+        ));
+        assert!(matches!(
+            value.tombstone_at_version(CheckpointVersion(3), || Ok(false)),
+            Ok(ValueAccess::Ready(Some(false)))
+        ));
+        assert_eq!(value.read(|v| v).unwrap(), 7);
+        value
+            .with_record_snapshot(|bytes| {
+                assert!(!crate::format::Record::decode(bytes)?.header.tombstone);
+                assert!(matches!(
+                    value.tombstone_at_version(CheckpointVersion(3), || panic!("复制许可尚未释放")),
+                    Ok(ValueAccess::Contended)
+                ));
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(
+            value.tombstone_at_version(CheckpointVersion(3), || Ok(true)),
+            Ok(ValueAccess::Ready(Some(true)))
+        ));
+        assert!(matches!(
+            value.try_read_live(|_| panic!("墓碑不得调用值回调")),
+            Ok(ValueAccess::Ready(None))
+        ));
+        value.seal().unwrap();
+        assert!(matches!(
+            value.tombstone_at_version(CheckpointVersion(3), || panic!("冻结记录不得原地发布")),
+            Ok(ValueAccess::Ready(None))
+        ));
+        let encoded = value.encode_record(CheckpointVersion(3)).unwrap();
+        let record = crate::format::Record::decode(&encoded).unwrap();
+        assert!(record.header.tombstone);
+        assert!(record.value.is_empty());
+        assert_eq!(record.header.version, CheckpointVersion(3));
+    }
     #[test]
     fn 布局和操作返回繁忙错误不能伪装成许可争用() {
         struct BusyCodec;
@@ -592,6 +694,7 @@ mod tests {
             Some(value.address().unwrap()),
         )
         .unwrap();
+        tombstone.seal().unwrap();
         let bytes = tombstone.encode_record(CheckpointVersion(1)).unwrap();
         let record = Record::decode(&bytes).unwrap();
         assert!(record.header.tombstone);

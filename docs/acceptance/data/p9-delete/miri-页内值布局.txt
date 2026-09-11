@@ -1,0 +1,54 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/miri/aarch64-apple-darwin/debug/build/raster/105e57178bacc282/out/raster-105e57178bacc282)
+warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
+   --> src/engine/conditional_copy_tests.rs:268:18
+    |
+268 |                 .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+    |                  ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+268 -                 .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+268 +                 .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+    |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+  --> src/epoch/mod.rs:39:14
+   |
+39 |             .fetch_update(
+   |              ^^^^^^^^^^^^
+   |
+help: replace the use of the deprecated method
+   |
+39 -             .fetch_update(
+39 +             .try_update(
+   |
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> src/index/mod.rs:112:14
+    |
+112 |             .fetch_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
+    |              ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+112 -             .fetch_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
+112 +             .try_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
+    |
+
+
+running 9 tests
+test log::value::tests::原地墓碑必须通过源许可版本冻结与发布判定 ... ok
+test log::value::tests::原子值与墓碑稳定记录可被格式层解码 ... ok
+test log::value::tests::原子布局跨线程更新与逻辑落盘 ... ok
+test log::value::tests::变长临时值按编码规划且拒绝超预算输入 ... ok
+test log::value::tests::变长值缩短后按当前长度编码且保持占槽 ... ok
+test log::value::tests::布局和操作返回繁忙错误不能伪装成许可争用 ... ok
+test log::value::tests::损坏解码不返回可见值且范围可释放 ... ok
+test log::value::tests::普通值初始化增长拒绝与稳定编码 ... ok
+test log::value::tests::用户恐慌之后拒绝继续修改 ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 332 filtered out; finished in 6.43s
+
+warning: 3 warnings emitted

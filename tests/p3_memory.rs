@@ -350,7 +350,7 @@ fn 四操作墓碑条件创建及复制更新闭环() {
                 .map_err(|r| r.reason)
                 .unwrap()
         ),
-        Outcome::NotFound
+        Outcome::Success(DeleteOutcome::TombstoneWritten)
     ));
     assert!(matches!(
         outcome(

@@ -50,6 +50,7 @@ pub type Schema = SchemaPair<ByteKey, SerializedValue<Codec>>;
 struct Request {
     key: Vec<u8>,
     value: Value,
+    append_bytes: bool,
 }
 impl Keyed<Schema> for Request {
     fn key(&self) -> &[u8] {
@@ -71,6 +72,9 @@ impl UpsertOperation<Schema> for Request {
         &mut self,
         mut v: ValueUpdate<'_, Schema>,
     ) -> Result<UpdateDecision<ResultValue>, Error> {
+        if self.append_bytes && matches!(self.value, Value::Bytes(_)) {
+            return Ok(UpdateDecision::Append);
+        }
         match v.view_mut().replace(&self.value) {
             Ok(()) => Ok(UpdateDecision::Updated(ResultValue::Written)),
             Err(Error::Codec(_)) => Ok(UpdateDecision::Append),
@@ -103,6 +107,9 @@ impl RmwOperation<Schema> for Request {
         mut v: ValueUpdate<'_, Schema>,
     ) -> Result<UpdateDecision<ResultValue>, Error> {
         let old = v.view_mut().read_owned()?;
+        if self.append_bytes && matches!(old, Value::Bytes(_)) {
+            return Ok(UpdateDecision::Append);
+        }
         let Ok(value) = add(&old, &self.value) else {
             return Ok(UpdateDecision::Append);
         };
@@ -123,6 +130,7 @@ pub fn actual(
     session: &mut raster::Session<Schema>,
     step: &Step,
     pending: &mut [usize; 4],
+    append_bytes: bool,
 ) -> ModelSubmission {
     let value = match &step.operation {
         Operation::Upsert(v) => v.clone(),
@@ -132,6 +140,7 @@ pub fn actual(
     let request = Request {
         key: step.key.clone(),
         value,
+        append_bytes,
     };
     let serial = Serial(step.serial);
     let result = match step.operation {

@@ -42,7 +42,16 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
     fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = self.engine.clone();
         if self.lookup.is_none() {
-            let resolved = engine.resolve_index(self.hash, &self.key)?;
+            let mut resolved = engine.resolve_index(self.hash, &self.key)?;
+            if !resolved.entry.present {
+                if matches!(
+                    engine.index.reserve_empty(resolved.entry)?,
+                    PublishResult::Conflict(_)
+                ) {
+                    return Ok(None);
+                }
+                resolved = engine.resolve_index(self.hash, &self.key)?;
+            }
             let entry = resolved.entry;
             let lookup = engine.log.lookup(
                 &engine.storage,

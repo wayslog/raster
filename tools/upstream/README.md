@@ -6,12 +6,12 @@
 
 ```sh
 sh tools/upstream/build.sh ../FASTER target/p9-build
-python3 tools/upstream/compare.py --cpp target/p9-build/faster-replay --output target/p9-comparison
+python3 tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-comparison
 ```
 
-结果目录必须是本次全新目录，已有材料不自动清理。程序保存输入、Rust/C++ 输出、构建和运行日志及逐行差异。当前已有删除相关差异，compare.py 会返回失败；这表示兼容性尚未验收。不能仅因为执行器自身正常退出就声称两端行为一致。
+结果目录必须是本次全新目录，已有材料不自动清理。程序保存输入、Rust/C++ 输出、构建和运行日志及逐行差异。原始上游的强制墓碑差异仍保留；提供修正执行端时以其完整结果作为已确认契约的精确对照。不能仅因为执行器自身正常退出就声称两端行为一致。
 
-`compare.py --disk` 让 Rust 与 C++ 都使用各自原生文件后端。手动工作流“P9 原始随机对照（差异即失败）”分别执行 Null 和文件两组，每组使用相同的固定边界及五个种子，共 7,508 步。它不自动随每次 push 启动；已知差异仍使任务失败，所有输入、两端结果和差异完整归档。
+`compare.py --disk` 让 Rust 与 C++ 都使用各自原生文件后端。自动工作流和手动工作流“P9 随机契约对照（保留原始差异）”均执行 Null 和文件两组，每组使用相同的固定边界及五个种子，共 7,508 步。原始及修正 C++ 输出、Rust 输出和全部差异完整归档。
 
 直接执行 `faster-replay 输入.trace 输出.results` 使用 NullDisk；添加 `--disk 全新目录` 使用 Linux QueueIoHandler/libaio 文件后端。上游 ThreadPoolIoHandler 仅存在于 Windows，Linux 对照不能使用该类型；它与 RasterKV 的 Linux/macOS 工作线程后端不是同一个实现。
 
@@ -30,9 +30,11 @@ Rust 执行端是 `cargo test --locked --test p9_upstream -- --nocapture`；默�
 | RASTER_UPSTREAM_TIMEOUT | 单次检查点及边界关闭的等待秒数，默认 60，上限 600；不改变引擎默认恢复预算 |
 | RASTER_UPSTREAM_SEGMENT_BYTES | Rust 文件段大小，默认 1 MiB；大生命周期使用 32 MiB，页窗口仍是 4×32 KiB |
 
-上游相同业务轨迹、Rust 参考模型、并发历史和协议故障是不相互替代的证据层次。原生随机、磁盘/恢复对照及两平台故障矩阵已执行；指定生命周期通过，原始随机仍有两类删除相关差异，完整证据和未完成门槛见一期验收报告。
+上游相同业务轨迹、Rust 参考模型、并发历史和协议故障是不相互替代的证据层次。原生随机、磁盘/恢复对照及两平台故障矩阵已执行；指定生命周期通过，删除契约已确认，修改后的证据和未完成门槛见一期验收报告。
 
-独立 CI“P9 上游执行环境基线”先原生验证 libaio 可用、Null/文件两种执行端的固定原始结果。它保留已观察的两处状态差异，明确不是跨实现兼容性通过；`probe.json` 的 compatibility_acceptance 为 not_completed。
+CI“P9 上游契约及生命周期对照”构建原始可执行文件 `faster-replay`，以及 `faster-replay-retained`：后者只在构建目录副本的索引移除条件中增加 `!force_tombstone`。`forced-tombstone.diff/json` 记录唯一修改、源文件与补丁 SHA-256；上游检出保持不变。
+
+固定边界保留原始上游的一处强制墓碑可达性差异。随机对照要求 Rust 与修正副本逐行完全相等，原始上游输出及所有差异同时归档；没有按操作类型忽略结果。省略 `--corrected-cpp` 仍运行原始严格对照，任何差异失败。`probe.json` 只报告固定边界的 `approved_contract_passed`，不能代替随机或生命周期验收。
 
 ## 检查点与超内存生命周期
 
@@ -46,4 +48,4 @@ python3 -B tools/upstream/lifecycle.py --cpp target/p9-build/faster-replay --out
 
 `scenarios.py` 固定三组场景：141 步小轨迹分别覆盖 Full、Index+Log；大轨迹固定 32,768 次至少 16 KiB 的追加 Upsert，加上冷键、变长 RMW、墓碑、恢复后读写。大轨迹必须实际输出超过 512 MiB 的上游日志跨度，以及非零 Read、RMW Pending。生成器记录步数、恢复边界、写入负载及 SHA-256，不能用输入大小代替实际日志跨度。
 
-脚本预先固定每个进程 1,200 秒截止、Rust 检查点等待 600 秒、C++ 检查点 120 秒及单个 Pending 60 秒；运行 Rust 发布模式。输出保存完整输入、结果和日志；失败时保留该次合成存储目录，由 CI 上传，成功后清理。上游小轨迹没有触发 Pending 也须如实记录。生命周期通过只覆盖这些固定场景，不能替代尚待处理的 7,508 步随机对照差异。
+脚本预先固定每个进程 1,200 秒截止、Rust 检查点等待 600 秒、C++ 检查点 120 秒及单个 Pending 60 秒；运行 Rust 发布模式。输出保存完整输入、结果和日志；失败时保留该次合成存储目录，由 CI 上传，成功后清理。上游小轨迹没有触发 Pending 也须如实记录。生命周期通过只覆盖这些固定场景，不能替代独立的 7,508 步随机契约对照。
