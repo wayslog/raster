@@ -1,6 +1,10 @@
 //! 四操作与恢复的固定矩阵；正确性、时间和实际传输字节分别记录。
 mod meter;
 #[path = "../../tests/support/model.rs"]
+#[allow(
+    dead_code,
+    reason = "基准输入由确定值模型预计算；非确定盲删观察另有专门轨迹验收"
+)]
 mod model;
 mod operation;
 mod scenario;
@@ -137,7 +141,7 @@ fn execute<K: Kind>(
     }
 }
 fn check(actual: &ResultValue, expected: &ResultValue, step: &Step) -> Result<()> {
-    if actual != expected {
+    if !scenario::matches_result(step, actual, expected) {
         return Err(format!(
             "基准会话 {} 序号 {}：实际 {actual:?}，预期 {expected:?}",
             step.session, step.serial

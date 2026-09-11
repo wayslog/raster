@@ -54,6 +54,27 @@ fn value(variable: bool, ordinal: usize) -> Value {
         Value::Number(SEED.wrapping_add(ordinal as u64))
     }
 }
+/// 此固定矩阵仅生成普通删除：重复删除允许盲删成功，恢复后的普通墓碑可不可达。
+/// 活跃值、首次删除成功、条件错误均仍按确定模型精确比较。
+pub fn matches_result(step: &Step, actual: &ResultValue, expected: &ResultValue) -> bool {
+    actual == expected
+        || matches!(
+            (actual, expected, &step.operation),
+            (
+                ResultValue::Deleted,
+                ResultValue::NotFound,
+                Operation::Delete {
+                    force_tombstone: false
+                }
+            ) | (
+                ResultValue::NotFound,
+                ResultValue::Tombstone,
+                Operation::Read {
+                    abort_if_tombstone: true
+                }
+            )
+        )
+}
 fn expected(model: &mut Model, step: &Step) -> ResultValue {
     match model.submit(step.clone()) {
         Submission::Accepted(value) => value,
