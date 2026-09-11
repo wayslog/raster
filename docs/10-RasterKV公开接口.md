@@ -263,3 +263,11 @@ Maintenance::grow_index 将当前桶数加倍，返回的票据通过维护 poll
 Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记录的计费内存。计费包含拥有型记录容量和固定结构，读者仍持有的已淘汰记录继续计费；它不是进程 RSS 上限。缓存不足或仲裁竞争只跳过可选安装，后续仍可从日志读取。
 
 写入和删除更换索引头后旧缓存立即失效；检查点与扩容先规范化主日志地址，恢复总是创建空缓存。启用缓存不改变四操作结果与恢复语义，具体证据见 [读缓存交付记录](acceptance/P6.2读缓存交付记录.md)。
+
+## P7.1 压缩实施契约
+
+当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup 单工作者，半开范围为当前 begin 至 until。`workers=1` 且 shift/checkpoint 均为 false；后续组合与多工作者在 P7.3 接入。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
+
+成功报告的 copied 包含迁移的最新墓碑，gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, cause }`：until 是请求边界，copied 是已发布迁移数，cause 保留实际原因。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
+
+ScanDedup 的不同键数与键字节预算分别为 `maintenance.max_compaction_keys`（默认 1,000,000）和 `maintenance.max_compaction_key_bytes`（默认 64 MiB）。预算不足时本次动作失败，不能未经声明切换算法。Lookup 不累积候选表。

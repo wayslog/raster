@@ -50,6 +50,9 @@ pub struct CacheConfig {
 }
 #[derive(Clone, Debug)]
 pub struct MaintenanceConfig {
+    /// ScanDedup 最多保存的不同键数和键字节总量；Lookup 不累积候选。
+    pub max_compaction_keys: usize,
+    pub max_compaction_key_bytes: usize,
     pub auto_compaction: bool,
     pub workers: usize,
 }
@@ -76,6 +79,8 @@ impl Default for Config {
             },
             cache: CacheConfig::default(),
             maintenance: MaintenanceConfig {
+                max_compaction_keys: 1_000_000,
+                max_compaction_key_bytes: 64 * 1024 * 1024,
                 auto_compaction: false,
                 workers: 1,
             },
@@ -143,7 +148,9 @@ impl Config {
         if self.cache.enabled && self.cache.capacity_bytes == 0 {
             return Err(invalid("cache.capacity_bytes", "启用缓存时必须非零"));
         }
-        if self.maintenance.workers == 0
+        if self.maintenance.max_compaction_keys == 0
+            || self.maintenance.max_compaction_key_bytes == 0
+            || self.maintenance.workers == 0
             || self.session.max_sessions == 0
             || self.session.max_pending == 0
             || self.session.max_results == 0
@@ -153,12 +160,12 @@ impl Config {
         Ok(())
     }
 
-    /// 用户请求、后台刷页、检查点及每个扫描器最多三条读取路由。
+    /// 用户请求、后台刷页、互斥维护最多两条路由及每个公开扫描器最多三条读取路由。
     pub(crate) fn io_capacity(&self) -> Result<usize, Error> {
         self.session
             .max_sessions
             .checked_mul(self.session.max_pending)
-            .and_then(|n| n.checked_add(2))
+            .and_then(|n| n.checked_add(3))
             .and_then(|n| {
                 self.scan
                     .max_scanners

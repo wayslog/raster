@@ -146,9 +146,9 @@ impl<S: Schema> Maintenance<S> {
     }
     pub fn compact(
         &self,
-        _options: CompactionOptions,
+        options: CompactionOptions,
     ) -> Result<MaintenanceTicket<CompactionReport>, Error> {
-        self.inner.not_ready("maintenance::compact")
+        self.inner.start_compaction(options)
     }
     pub fn shift_begin(&self, _address: LogAddress) -> Result<MaintenanceTicket<GcReport>, Error> {
         self.inner.not_ready("maintenance::gc")

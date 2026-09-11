@@ -73,7 +73,6 @@ impl PageCursor {
     }
 
     /// 只有完整副本分配成功才推进。返回值独立于游标，可跨页复用缓冲后保留。
-    #[cfg(test)]
     pub fn next_encoded(&mut self) -> Result<Option<(LogAddress, Vec<u8>)>, Error> {
         let Some((address, range)) = self.records.get(self.next) else {
             return Ok(None);

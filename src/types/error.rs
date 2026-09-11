@@ -4,6 +4,12 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
+    /// 压缩失败保留已发布的迁移数；until 是请求的截止地址，不表示已完成扫描范围。
+    CompactionFailed {
+        until: super::LogAddress,
+        copied: u64,
+        cause: Box<Error>,
+    },
     NotImplemented {
         module: &'static str,
     },
@@ -33,6 +39,15 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CompactionFailed {
+                until,
+                copied,
+                cause,
+            } => write!(
+                f,
+                "压缩失败：目标地址 {}，已迁移 {copied} 条，原因：{cause}",
+                until.0
+            ),
             Self::NotImplemented { module } => write!(f, "模块尚未实现：{module}"),
             Self::InvalidConfig { field, reason } => write!(f, "配置无效：{field}，{reason}"),
             Self::InvalidState(reason) => write!(f, "状态无效：{reason}"),
@@ -53,6 +68,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(source) => Some(source),
+            Self::CompactionFailed { cause, .. } => Some(&**cause),
             _ => None,
         }
     }

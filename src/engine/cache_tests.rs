@@ -291,3 +291,117 @@ fn 缓存预算不足仅跳过安装而不使正常读取失败() {
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }
+
+#[derive(Debug)]
+struct CompactAdd;
+impl Keyed<Schema> for CompactAdd {
+    fn key(&self) -> &u64 {
+        &399
+    }
+}
+impl crate::api::operation::RmwOperation<Schema> for CompactAdd {
+    type Output = u64;
+    fn initial(&mut self) -> Result<(u64, u64), Error> {
+        panic!("最新热键必须存在")
+    }
+    fn copy_update(
+        &mut self,
+        old: crate::schema::ValueRead<'_, Schema>,
+    ) -> Result<(u64, u64), Error> {
+        let next = *old.view() + 1000;
+        Ok((next, next))
+    }
+    fn update_in_place(
+        &mut self,
+        mut value: ValueUpdate<'_, Schema>,
+    ) -> Result<UpdateDecision<u64>, Error> {
+        Ok(UpdateDecision::Updated(
+            value
+                .view_mut()
+                .fetch_add(1000, std::sync::atomic::Ordering::SeqCst)
+                + 1000,
+        ))
+    }
+}
+#[test]
+fn 压缩与缓存扫描挂起读及后续写删交错仍保留最新值() {
+    use crate::api::{
+        maintenance::{CompactionAlgorithm, CompactionOptions},
+        scan::{Buffering, ScanOptions},
+    };
+    for algorithm in [CompactionAlgorithm::Lookup, CompactionAlgorithm::ScanDedup] {
+        let (_root, store) = cached_store(8192);
+        let mut session = cold_keys(&store);
+        assert_eq!(read_value(&mut session, 400, 0), Some(0));
+        hit(&mut session, 401, 0, 0);
+        let until = store.inner.log.frontiers().unwrap().tail;
+        let mut scan = store
+            .scan(ScanOptions {
+                begin: LogAddress(0),
+                end: until,
+                buffering: Buffering::DoublePage,
+            })
+            .unwrap();
+        assert_eq!(scan.next_record().unwrap().unwrap().key, 0);
+        let Submission::Pending(mut reading) = session
+            .read(Serial(402), Read(1), Default::default())
+            .unwrap()
+        else {
+            panic!("用户读取仍应挂起")
+        };
+        let ticket = store
+            .maintenance()
+            .compact(CompactionOptions {
+                algorithm,
+                until,
+                workers: 1,
+                shift_begin: false,
+                checkpoint: false,
+            })
+            .unwrap();
+        let Submission::Ready(result) = session.upsert(Serial(403), Write(0, 999)).unwrap() else {
+            panic!("尾页仍有空间")
+        };
+        result.unwrap();
+        match session
+            .delete(Serial(404), Delete(2), Default::default())
+            .unwrap()
+        {
+            Submission::Ready(result) => {
+                result.unwrap();
+            }
+            Submission::Pending(mut deleted) => {
+                session.wait(&mut deleted, deadline()).unwrap().unwrap();
+            }
+        }
+        match session
+            .rmw(Serial(405), CompactAdd, Default::default())
+            .unwrap()
+        {
+            Submission::Ready(result) => {
+                result.unwrap();
+            }
+            Submission::Pending(mut updated) => {
+                session.wait(&mut updated, deadline()).unwrap().unwrap();
+            }
+        }
+        let report = session.wait_maintenance(&ticket, deadline()).unwrap();
+        report.as_ref().as_ref().unwrap();
+        assert!(matches!(
+            session.wait(&mut reading, deadline()).unwrap().unwrap(),
+            crate::api::completion::Outcome::Success(1)
+        ));
+        let mut original = 1;
+        while scan.next_record().unwrap().is_some() {
+            original += 1;
+        }
+        assert_eq!(original, 400);
+        scan.close().unwrap();
+        assert_eq!(read_value(&mut session, 406, 0), Some(999));
+        assert_eq!(read_value(&mut session, 407, 2), None);
+        assert_eq!(read_value(&mut session, 408, 399), Some(1399));
+        assert_eq!(store.inner.log.frontiers().unwrap().begin, LogAddress(0));
+        session.close(deadline()).unwrap();
+        store.shutdown(deadline()).unwrap();
+    }
+}

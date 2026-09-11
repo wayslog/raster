@@ -37,6 +37,18 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                 Err(error) => failure = Some(error),
             }
         }
+        if !self.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            match self.progress_compaction() {
+                Ok((advanced, _)) => storage_advanced |= advanced,
+                Err(error) => {
+                    self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        if self.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            self.fail_compaction()?;
+        }
         let mut keys = Vec::new();
         keys.try_reserve_exact(session.pending())
             .map_err(|_| Error::OutOfMemory)?;

@@ -606,3 +606,155 @@ fn 拥有值解码期间发布逻辑截断仍必须拒绝交付失效范围() {
     assert!(matches!(worker.join().unwrap(), Err(Error::RangeTruncated)));
     store.shutdown(deadline()).unwrap();
 }
+
+fn compaction_options(
+    algorithm: crate::api::maintenance::CompactionAlgorithm,
+    until: LogAddress,
+) -> crate::api::maintenance::CompactionOptions {
+    crate::api::maintenance::CompactionOptions {
+        algorithm,
+        until,
+        workers: 1,
+        shift_begin: false,
+        checkpoint: false,
+    }
+}
+#[derive(Debug)]
+struct ReadCompaction(u64);
+impl Keyed<TestSchema> for ReadCompaction {
+    fn key(&self) -> &u64 {
+        &self.0
+    }
+}
+impl ReadOperation<TestSchema> for ReadCompaction {
+    type Output = u64;
+    fn read(&mut self, value: crate::schema::ValueRead<'_, TestSchema>) -> Result<u64, Error> {
+        Ok(*value.view())
+    }
+}
+#[test]
+fn 压缩轮询不等待设备且短读跨段与用户完成分流可仅由会话驱动() {
+    use crate::api::maintenance::CompactionAlgorithm;
+    for algorithm in [CompactionAlgorithm::Lookup, CompactionAlgorithm::ScanDedup] {
+        let (store, control) = setup();
+        let mut session = store.start_session(Default::default()).unwrap();
+        control.reads.store(0, Ordering::SeqCst);
+        control.paused.store(true, Ordering::SeqCst);
+        control.short.store(true, Ordering::SeqCst);
+        let until = store.inner.log.frontiers().unwrap().tail;
+        let ticket = store
+            .maintenance()
+            .compact(compaction_options(algorithm, until))
+            .unwrap();
+        let budget = PollBudget(std::num::NonZeroUsize::new(1).unwrap());
+        for _ in 0..20 {
+            store.maintenance().poll(budget).unwrap();
+            assert!(ticket.try_report().unwrap().is_none());
+        }
+        assert_eq!(control.reads.load(Ordering::SeqCst), 1);
+        let Submission::Pending(mut user) = session
+            .read(Serial(0), ReadCompaction(0), Default::default())
+            .unwrap()
+        else {
+            panic!("用户冷读取应挂起")
+        };
+        assert_eq!(control.reads.load(Ordering::SeqCst), 2);
+        control.paused.store(false, Ordering::SeqCst);
+        let end = deadline();
+        while ticket.try_report().unwrap().is_none() {
+            assert!(!end.expired());
+            session.poll(budget).unwrap();
+        }
+        assert_eq!(
+            ticket
+                .try_report()
+                .unwrap()
+                .unwrap()
+                .as_ref()
+                .as_ref()
+                .unwrap()
+                .copied,
+            400
+        );
+        assert!(matches!(
+            session.wait(&mut user, deadline()).unwrap().unwrap(),
+            crate::api::completion::Outcome::Success(0)
+        ));
+        assert_eq!(store.inner.log.frontiers().unwrap().begin, LogAddress(0));
+        session.close(deadline()).unwrap();
+        store.shutdown(deadline()).unwrap();
+    }
+}
+#[test]
+fn 压缩读取失败不会自动重试且新动作可重新执行同一范围() {
+    use crate::api::maintenance::CompactionAlgorithm;
+    let (store, control) = setup();
+    let mut session = store.start_session(Default::default()).unwrap();
+    let until = store.inner.log.frontiers().unwrap().tail;
+    control.reads.store(0, Ordering::SeqCst);
+    control.fail.store(true, Ordering::SeqCst);
+    let ticket = store
+        .maintenance()
+        .compact(compaction_options(CompactionAlgorithm::Lookup, until))
+        .unwrap();
+    let report = session.wait_maintenance(&ticket, deadline()).unwrap();
+    assert!(
+        matches!(&*report, Err(Error::CompactionFailed { copied: 0, cause, .. }) if matches!(&**cause, Error::Io(_)))
+    );
+    assert_eq!(control.reads.load(Ordering::SeqCst), 1);
+    assert!(!store.inner.failed.load(Ordering::SeqCst));
+    let ticket = store
+        .maintenance()
+        .compact(compaction_options(CompactionAlgorithm::Lookup, until))
+        .unwrap();
+    assert_eq!(
+        session
+            .wait_maintenance(&ticket, deadline())
+            .unwrap()
+            .as_ref()
+            .as_ref()
+            .unwrap()
+            .copied,
+        400
+    );
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+
+#[test]
+fn 公开压缩专家恐慌终结报告一次且关闭释放任务没有实例引用环() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let store = RasterKV::builder(SchemaPair::new(
+        U64Key,
+        crate::schema::builtin::SerializedValue::new(PanicCodec(calls.clone())),
+    ))
+    .device(Box::new(crate::device::null::NullDeviceFactory))
+    .create()
+    .unwrap();
+    let weak = Arc::downgrade(&store.inner);
+    let mut session = store.start_session(Default::default()).unwrap();
+    assert!(matches!(
+        session.upsert(Serial(0), PanicPut).unwrap(),
+        Submission::Ready(Ok(_))
+    ));
+    let ticket = store
+        .maintenance()
+        .compact(compaction_options(
+            crate::api::maintenance::CompactionAlgorithm::Lookup,
+            store.inner.log.frontiers().unwrap().tail,
+        ))
+        .unwrap();
+    let report = session.wait_maintenance(&ticket, deadline()).unwrap();
+    assert!(
+        matches!(&*report, Err(Error::CompactionFailed { copied: 0, cause, .. }) if matches!(&**cause, Error::InvalidState(_)))
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(store.maintenance().poll(PollBudget::default()).is_err());
+    assert!(Arc::ptr_eq(&report, &ticket.try_report().unwrap().unwrap()));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    session.close(deadline()).unwrap();
+    drop(session);
+    store.shutdown(deadline()).unwrap();
+    drop(store);
+    assert!(weak.upgrade().is_none());
+}

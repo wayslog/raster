@@ -172,3 +172,5 @@ DeviceFactory 以共享、可发送的配置创建后端；实际 driver 可固�
 F2、ColdIndex、跨 store 压缩、云设备与 Future 门面仍是 [05](05-RasterKV第一阶段与支持库选型.md) 中的后续事项。第一阶段的读缓存、压缩、扩容及恢复不因模块化而减配。
 
 下一步适合先写接口骨架及编译期约束测试，再分别实现内存快速路径、设备协议和阶段状态机。本轮只形成设计文档，未证明性能或正确性。
+
+P7.1 实施分工：`engine/compaction.rs` 持有动作、候选集合、一次完成端和失败影响统计；`maintenance/scan.rs` 提供不等待设备的单页物理扫描；`engine/conditional_copy.rs` 负责完整键重查和源许可覆盖的同步发布。任务状态不持有 Engine Arc 或 Schema 拥有值；范围和复制判断使用真实日志、索引与 I/O 完成。

@@ -1326,3 +1326,6 @@ mod online;
 
 #[path = "conditional_copy_tests.rs"]
 mod conditional_copy;
+
+#[path = "compaction_tests.rs"]
+mod compaction;

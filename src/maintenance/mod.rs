@@ -1,4 +1,6 @@
 //! 复合维护按步骤释放/重新争取全局动作，不能持锁等待自己发起的检查点。
+pub(crate) mod scan;
+
 use crate::types::*;
 
 pub(crate) enum MaintenanceStep {
