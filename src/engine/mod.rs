@@ -142,6 +142,20 @@ mod pending_read_tests;
 mod checkpoint_tests;
 
 impl<S: Schema> Engine<S> {
+    /// Ready 直接移交拥有型结果；仍以相同终结和 I/O 采样口径记录统计。
+    fn record_ready<T: 'static>(
+        &self,
+        monitor: &mut metrics::Monitor,
+        id: RequestId,
+        result: &crate::api::completion::OperationResult<T>,
+    ) {
+        let io = if monitor.sampled() {
+            self.io.completion_count(id).ok()
+        } else {
+            Some(0)
+        };
+        monitor.finish(metrics::Completed::result(result), io);
+    }
     fn complete_tracked<T: 'static>(
         &self,
         monitor: &mut metrics::Monitor,

@@ -1,6 +1,6 @@
 # 故障与完整历史验收
 
-`fault-matrix.json` 明确列出 38 个测试入口及其验证边界；每个入口包含的内部组合由测试代码决定。它覆盖接收、用户回调、I/O 短传输/取消/关闭、检查点发布与中断、恢复、GC、恢复集释放、多工作者和自动维护，同时执行 32 组完整磁盘历史及恢复，并区分内部值许可争用与用户 Busy 错误。
+`fault-matrix.json` 明确列出 40 个测试入口及其验证边界；每个入口包含的内部组合由测试代码决定。它覆盖接收、用户回调、I/O 短传输/取消/关闭、检查点发布与中断、恢复、GC、恢复集释放、多工作者和自动维护，同时执行 32 组完整磁盘历史及恢复，并区分内部值许可争用与用户 Busy 错误。
 
 ```sh
 python3 tools/acceptance/run_faults.py --output target/p9-faults
@@ -8,7 +8,7 @@ python3 tools/acceptance/run_faults.py --output target/p9-faults
 
 输出目录必须全新。脚本先构建全部特性测试，再通过 `--list` 确认每个名称唯一存在，以 `--exact --nocapture` 运行，并要求实际通过一个测试、零失败和零忽略；过滤为空不会算通过。产物包含每项原始输出、测试清单、矩阵结果和 32 组完整历史。构建与子进程均设置截止时间；错误会返回非零退出码。
 
-“38 个入口”不是 38 个故障点：用户回调矩阵包含 11 个合法错误/恐慌组合，三个检查点矩阵按运行时实际 I/O 事件逐点中断，释放矩阵也逐点运行。输出中的预期恐慌属于被测输入，测试与命令的最终退出结果决定验收。进程中断和同步数据/命名空间的掉电模型分别验证；不能称为真实硬件断电。
+“40 个入口”不是 40 个故障点：用户回调矩阵包含 11 个合法错误/恐慌组合，三个检查点矩阵按运行时实际 I/O 事件逐点中断，释放矩阵也逐点运行。输出中的预期恐慌属于被测输入，测试与命令的最终退出结果决定验收。进程中断和同步数据/命名空间的掉电模型分别验证；不能称为真实硬件断电。
 
 该矩阵不替代独立模型、上游相同业务轨迹、性能或长期资源检查。具体状态见 [一期验收报告](../../docs/acceptance/一期验收报告.md)。独立 CI 在 Linux/macOS 原生执行并保存逐项证据。
 
@@ -45,3 +45,12 @@ python3 tools/acceptance/audit_benchmark.py target/p9-benchmark
 `benchmark.yml` 通过 workflow_dispatch 在 Linux/macOS 原生运行，避免将长矩阵混入每次普通检查；正式验收必须取得指定提交的两份完整制品。基准退出成功仅表示业务与测量结构通过，不表示 P3 既有性能回退已处理。输出和 audit.json 都拒绝覆盖；失败保留合成存储目录。
 
 下载完整运行后，另以 `python3 tools/acceptance/audit_benchmark.py --sha FULL_SHA --run-id RUN_ID target/p9-benchmark-native` 审计两平台制品。它核对运行及任务最终状态、提交、原生 target、两项真实测试、48 条逐组成功记录、全部 CSV 和八份固定输入，并重新计算结果与原生保存的 audit.json 比较。
+
+
+## 同步写入分配对照
+
+`audit_ready_comparison.py` 重算[同步写入优化归档](../../docs/acceptance/P9.2同步写入分配优化.md)的八组中位数，核对全部 192 行真实样本、固定操作数和文件哈希。首次触发复核的样本必须保留，不把局部收益作为 P3 旧基准整体通过。
+
+```sh
+python3 tools/acceptance/audit_ready_comparison.py docs/acceptance/data/p9-ready-experiment
+```

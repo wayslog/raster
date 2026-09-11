@@ -6,7 +6,7 @@ use super::{
 use crate::{
     api::{
         Submission,
-        completion::{Completer, OperationResult, Outcome, Ticket, TicketState},
+        completion::{Completer, OperationResult, Outcome, Ticket},
         operation::{UpdateDecision, UpsertOperation},
     },
     device::IoCompletion,
@@ -24,6 +24,10 @@ struct Prepared<S: Schema, T> {
     output: Option<T>,
     plan: ValuePlan,
 }
+enum UpsertStep<T> {
+    Ready(OperationResult<T>),
+    Retry,
+}
 struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     engine: Arc<Engine<S>>,
     monitor: super::metrics::Monitor,
@@ -32,7 +36,7 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     key: Vec<u8>,
     hash: KeyHash,
     effect: Effect,
-    complete: Completer<O::Output>,
+    complete: Option<Completer<O::Output>>,
     id: RequestId,
     serial: Serial,
     version: CheckpointVersion,
@@ -106,7 +110,11 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             }
         }
     }
-    fn finish(&mut self, mut result: OperationResult<O::Output>) {
+    fn finalize(
+        &mut self,
+        mut result: OperationResult<O::Output>,
+    ) -> Option<OperationResult<O::Output>> {
+        let request = self.request.take()?;
         if catch_unwind(AssertUnwindSafe(|| drop(self.prepared.take()))).is_err() {
             self.engine.failed.store(true, Ordering::SeqCst);
             let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
@@ -115,32 +123,37 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 effect: self.effect,
             });
         }
-        if let Some(request) = self.request.take() {
-            let result = self.engine.finish_request(request, result, self.effect);
-            self.engine
-                .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
+        Some(self.engine.finish_request(request, result, self.effect))
+    }
+    fn finish(&mut self, result: OperationResult<O::Output>) {
+        if let Some(result) = self.finalize(result) {
+            if let Some(complete) = &self.complete {
+                self.engine
+                    .complete_tracked(&mut self.monitor, self.id, complete, result);
+            } else {
+                // 初次同步推进尚无票据；异常展开只能收尾并失败关闭，不能假装已通知。
+                self.engine.failed.store(true, Ordering::SeqCst);
+                self.monitor
+                    .finish(super::metrics::Completed::Failed(Effect::Unknown), None);
+                let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
+            }
         }
     }
-    fn run_locked(&mut self) -> TaskStep {
-        if self.request.is_none() {
-            return TaskStep::Complete;
-        }
+    fn run_locked(&mut self) -> UpsertStep<O::Output> {
         if self.engine.failed.load(Ordering::SeqCst) {
-            self.abandon(OperationError {
+            return UpsertStep::Ready(Err(OperationError {
                 cause: Error::InvalidState("引擎已失败关闭"),
                 effect: self.effect,
-            });
-            return TaskStep::Complete;
+            }));
         }
         match self.permit.ready() {
             Ok(true) => {}
-            Ok(false) => return TaskStep::Retry,
+            Ok(false) => return UpsertStep::Retry,
             Err(cause) => {
-                self.abandon(OperationError {
+                return UpsertStep::Ready(Err(OperationError {
                     cause,
                     effect: self.effect,
-                });
-                return TaskStep::Complete;
+                }));
             }
         }
         let result = match catch_unwind(AssertUnwindSafe(|| self.advance())) {
@@ -151,20 +164,19 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             }
         };
         if matches!(result, Ok(None)) {
-            return TaskStep::Retry;
+            return UpsertStep::Retry;
         }
         if result.is_err() && self.effect == Effect::Unknown {
             self.engine.failed.store(true, Ordering::SeqCst);
         }
-        self.finish(
+        UpsertStep::Ready(
             result
                 .map(|value| value.expect("已排除等待空间"))
                 .map_err(|cause| OperationError {
                     cause,
                     effect: self.effect,
                 }),
-        );
-        TaskStep::Complete
+        )
     }
 }
 impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
@@ -181,6 +193,9 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
         Err(Error::InvalidState("Upsert 不拥有该设备请求"))
     }
     fn step(&mut self, _: PollBudget) -> TaskStep {
+        if self.request.is_none() {
+            return TaskStep::Complete;
+        }
         let engine = self.engine.clone();
         let _gate =
             match engine.operations[self.hash.0 as usize % engine.operations.len()].try_lock() {
@@ -194,7 +209,13 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
                     return TaskStep::Complete;
                 }
             };
-        self.run_locked()
+        match self.run_locked() {
+            UpsertStep::Retry => TaskStep::Retry,
+            UpsertStep::Ready(result) => {
+                self.finish(result);
+                TaskStep::Complete
+            }
+        }
     }
     fn abandon(&mut self, error: OperationError) {
         self.finish(Err(error));
@@ -259,7 +280,6 @@ impl<S: Schema> Engine<S> {
             let _ = self.io.release(id);
             return Err(Rejected { request, reason });
         }
-        let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = UpsertTask {
             monitor: self.metrics.accept(super::metrics::Kind::Upsert),
             engine: self.clone(),
@@ -268,22 +288,25 @@ impl<S: Schema> Engine<S> {
             key,
             hash,
             effect: Effect::NotApplied,
-            complete,
+            complete: None,
             id,
             serial,
             version: session.current.version,
             permit,
         };
-        if matches!(task.run_locked(), TaskStep::Complete) {
-            let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")
-            else {
-                unreachable!("任务已经完成")
-            };
-            Ok(Submission::Ready(result))
-        } else {
-            task.monitor.pending();
-            session.current.tasks.insert(id.slot, Box::new(task));
-            Ok(Submission::Pending(ticket))
+        match task.run_locked() {
+            UpsertStep::Ready(result) => {
+                let result = task.finalize(result).expect("同步请求只终结一次");
+                self.record_ready(&mut task.monitor, id, &result);
+                Ok(Submission::Ready(result))
+            }
+            UpsertStep::Retry => {
+                let (ticket, complete) = Ticket::pair_bounded(id, credit);
+                task.complete = Some(complete);
+                task.monitor.pending();
+                session.current.tasks.insert(id.slot, Box::new(task));
+                Ok(Submission::Pending(ticket))
+            }
         }
     }
 }

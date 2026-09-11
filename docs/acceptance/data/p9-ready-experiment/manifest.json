@@ -1,0 +1,48 @@
+{
+  "版本": 1,
+  "基线提交": "50142b68f3fe724393124c904dfa9e62cd69dbb3",
+  "候选": "基线加 candidate.patch；计时后新增两个 cfg(test) 所有权用例，不改变运行代码",
+  "模式": "Rust 1.98.1，全部特性，release，Null 设备，固定200000次写入",
+  "顺序": [
+    [
+      "baseline",
+      "candidate"
+    ],
+    [
+      "candidate",
+      "baseline"
+    ],
+    [
+      "candidate",
+      "baseline"
+    ],
+    [
+      "baseline",
+      "candidate"
+    ]
+  ],
+  "每端每组样本": 12,
+  "每个CSV程序退出码": 0,
+  "基线二进制SHA256": "9a5ae693224666d4559133f0b5eccd6194658a2067ea65ce8274953c131fb37c",
+  "候选二进制SHA256": "206df974d6f25a6ed8d66bdd727e7c8371d442872aff3a39a628eb3ab8ee9e1b",
+  "文件SHA256": {
+    "0-baseline.csv": "5632b5ef1e0f3b7b78b3a6b646c8ff7680937cb539a9afec00661d415bb82c33",
+    "0-candidate.csv": "dfd3e072e21c0ec0415b60284114d52fcd49a5d60645ce2e1f7d9701e4fb1452",
+    "1-baseline.csv": "c50c77db8779e25abd98b5da558dc34dd103bf1985fa3892ad8627c2be31eb3f",
+    "1-candidate.csv": "6dc012499f953ef3155335f349fef9e48f9ee54ed7449d75356f1263546cef90",
+    "2-baseline.csv": "56266216c8ef6e0228d9a1bd8af6a031acfd19f6b1dd10595d9ba42aaa19c6a2",
+    "2-candidate.csv": "406bc221b48d703fa82e58f3be954d15e2ef94159c5b2205580237abf06c3024",
+    "3-baseline.csv": "887d99206651e5aa314d7b58a100859f7299c757b19338ca7bf2b85d8b3d985c",
+    "3-candidate.csv": "83c555c9bc94fdd3bebeb1025104dd4dacbb35ab6f6f0f06de346a01fdf467ab",
+    "allocation_probe.rs": "d4323ef197ed6dccab3165f0f0e8539b92e2d33bd515b109a384fd36f39a64c0",
+    "baseline-alloc.csv": "df599598dfad7055cd308f043a14c0679c7d594f534854e975a5db02aa83ac5f",
+    "candidate-alloc.csv": "f5febe262329e9d77d8637f50fd01dbc1a31846129bc7e3718df623754ff2f24",
+    "candidate.patch": "535d8f2c17c0fd22b60af9e09e9e9e603a9aef4b996a474e244b7dd6011da2cf",
+    "comparison.json": "ee0cfbf88a152b813b8a53b268435c63f43a274f1c471cb3fce210b52a2fa216",
+    "driver.rs": "314039fec392916be98be4c1229f4cb4bcfdc96e22e489104f77e68ff77beda8",
+    "hot-round-1.json": "de3ea2c2f9c18e232b2d7e79196b36d2f75289da9e789f11e6b4b4a2ed7fbb21",
+    "hot-round-2.json": "a4eceb8497307209cb4f78a8469f7022d01eec03239d9145da94f46ebc0487db",
+    "environment.json": "225d4ad80c7d5d51804df566e867896777f5eb2f98d6fa7f938608586310f9ff"
+  },
+  "整体P3回退验收": "未完成"
+}

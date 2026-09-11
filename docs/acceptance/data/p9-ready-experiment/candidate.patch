@@ -1,0 +1,136 @@
+diff --git a/src/engine/mod.rs b/src/engine/mod.rs
+index 7adaa69..616edd0 100644
+--- a/src/engine/mod.rs
++++ b/src/engine/mod.rs
+@@ -144,0 +145,14 @@ impl<S: Schema> Engine<S> {
++    /// Ready 直接移交拥有型结果；仍以相同终结和 I/O 采样口径记录统计。
++    fn record_ready<T: 'static>(
++        &self,
++        monitor: &mut metrics::Monitor,
++        id: RequestId,
++        result: &crate::api::completion::OperationResult<T>,
++    ) {
++        let io = if monitor.sampled() {
++            self.io.completion_count(id).ok()
++        } else {
++            Some(0)
++        };
++        monitor.finish(metrics::Completed::result(result), io);
++    }
+diff --git a/src/engine/upsert.rs b/src/engine/upsert.rs
+index a58f51d..80b9cbd 100644
+--- a/src/engine/upsert.rs
++++ b/src/engine/upsert.rs
+@@ -9 +9 @@ use crate::{
+-        completion::{Completer, OperationResult, Outcome, Ticket, TicketState},
++        completion::{Completer, OperationResult, Outcome, Ticket},
+@@ -26,0 +27,4 @@ struct Prepared<S: Schema, T> {
++enum UpsertStep<T> {
++    Ready(OperationResult<T>),
++    Retry,
++}
+@@ -35 +39 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
+-    complete: Completer<O::Output>,
++    complete: Option<Completer<O::Output>>,
+@@ -109 +113,5 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-    fn finish(&mut self, mut result: OperationResult<O::Output>) {
++    fn finalize(
++        &mut self,
++        mut result: OperationResult<O::Output>,
++    ) -> Option<OperationResult<O::Output>> {
++        let request = self.request.take()?;
+@@ -118,5 +126 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-        if let Some(request) = self.request.take() {
+-            let result = self.engine.finish_request(request, result, self.effect);
+-            self.engine
+-                .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
+-        }
++        Some(self.engine.finish_request(request, result, self.effect))
+@@ -124,3 +128,12 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-    fn run_locked(&mut self) -> TaskStep {
+-        if self.request.is_none() {
+-            return TaskStep::Complete;
++    fn finish(&mut self, result: OperationResult<O::Output>) {
++        if let Some(result) = self.finalize(result) {
++            if let Some(complete) = &self.complete {
++                self.engine
++                    .complete_tracked(&mut self.monitor, self.id, complete, result);
++            } else {
++                // 初次同步推进尚无票据；异常展开只能收尾并失败关闭，不能假装已通知。
++                self.engine.failed.store(true, Ordering::SeqCst);
++                self.monitor
++                    .finish(super::metrics::Completed::Failed(Effect::Unknown), None);
++                let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
++            }
+@@ -127,0 +141,2 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
++    }
++    fn run_locked(&mut self) -> UpsertStep<O::Output> {
+@@ -129 +144 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-            self.abandon(OperationError {
++            return UpsertStep::Ready(Err(OperationError {
+@@ -132,2 +147 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-            });
+-            return TaskStep::Complete;
++            }));
+@@ -137 +151 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-            Ok(false) => return TaskStep::Retry,
++            Ok(false) => return UpsertStep::Retry,
+@@ -139 +153 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-                self.abandon(OperationError {
++                return UpsertStep::Ready(Err(OperationError {
+@@ -142,2 +156 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-                });
+-                return TaskStep::Complete;
++                }));
+@@ -154 +167 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-            return TaskStep::Retry;
++            return UpsertStep::Retry;
+@@ -159 +172 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-        self.finish(
++        UpsertStep::Ready(
+@@ -166,2 +179 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+-        );
+-        TaskStep::Complete
++        )
+@@ -183,0 +196,3 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
++        if self.request.is_none() {
++            return TaskStep::Complete;
++        }
+@@ -197 +212,7 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
+-        self.run_locked()
++        match self.run_locked() {
++            UpsertStep::Retry => TaskStep::Retry,
++            UpsertStep::Ready(result) => {
++                self.finish(result);
++                TaskStep::Complete
++            }
++        }
+@@ -262 +282,0 @@ impl<S: Schema> Engine<S> {
+-        let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
+@@ -271 +291 @@ impl<S: Schema> Engine<S> {
+-            complete,
++            complete: None,
+@@ -277,10 +297,13 @@ impl<S: Schema> Engine<S> {
+-        if matches!(task.run_locked(), TaskStep::Complete) {
+-            let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")
+-            else {
+-                unreachable!("任务已经完成")
+-            };
+-            Ok(Submission::Ready(result))
+-        } else {
+-            task.monitor.pending();
+-            session.current.tasks.insert(id.slot, Box::new(task));
+-            Ok(Submission::Pending(ticket))
++        match task.run_locked() {
++            UpsertStep::Ready(result) => {
++                let result = task.finalize(result).expect("同步请求只终结一次");
++                self.record_ready(&mut task.monitor, id, &result);
++                Ok(Submission::Ready(result))
++            }
++            UpsertStep::Retry => {
++                let (ticket, complete) = Ticket::pair_bounded(id, credit);
++                task.complete = Some(complete);
++                task.monitor.pending();
++                session.current.tasks.insert(id.slot, Box::new(task));
++                Ok(Submission::Pending(ticket))
++            }
