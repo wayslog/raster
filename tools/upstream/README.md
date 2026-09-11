@@ -30,7 +30,7 @@ Rust 执行端是 `cargo test --locked --test p9_upstream -- --nocapture`；默�
 | RASTER_UPSTREAM_TIMEOUT | 单次检查点及边界关闭的等待秒数，默认 60，上限 600；不改变引擎默认恢复预算 |
 | RASTER_UPSTREAM_SEGMENT_BYTES | Rust 文件段大小，默认 1 MiB；大生命周期使用 32 MiB，页窗口仍是 4×32 KiB |
 
-上游相同业务轨迹、Rust 参考模型、并发历史和协议故障是不相互替代的证据层次。P9 完成前仍需补充原生结果、磁盘/恢复对照及故障交叉矩阵。
+上游相同业务轨迹、Rust 参考模型、并发历史和协议故障是不相互替代的证据层次。原生随机、磁盘/恢复对照及两平台故障矩阵已执行；指定生命周期通过，原始随机仍有两类删除相关差异，完整证据和未完成门槛见一期验收报告。
 
 独立 CI“P9 上游执行环境基线”先原生验证 libaio 可用、Null/文件两种执行端的固定原始结果。它保留已观察的两处状态差异，明确不是跨实现兼容性通过；`probe.json` 的 compatibility_acceptance 为 not_completed。
 
