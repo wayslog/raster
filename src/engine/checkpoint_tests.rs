@@ -1320,3 +1320,6 @@ mod cache;
 
 #[path = "scan_page_tests.rs"]
 mod scan_page;
+
+#[path = "online_tests.rs"]
+mod online;
