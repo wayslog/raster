@@ -91,7 +91,8 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     let resolved = self.engine.resolve_index(self.hash, &self.key)?;
                     if let Some(record) = resolved.cached {
                         if record.source < self.engine.log.frontiers()?.begin {
-                            return Err(Error::RangeTruncated);
+                            // GC 已替换缓存头；重新解析索引，不能把搬迁后的活键报告为截断。
+                            return Ok(None);
                         }
                         let encoded = crate::format::Record::decode(record.encoded())?;
                         if encoded.header.version != record.version {
@@ -123,7 +124,16 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                 )? {
                     LookupStep::Continue | LookupStep::AwaitingIo => Ok(None),
                     LookupStep::Present => Err(Error::InvalidState("值查询只返回了元数据")),
-                    LookupStep::Missing => Ok(Some(Outcome::NotFound)),
+                    LookupStep::Missing => {
+                        // 冷读取等待期间压缩可能已搬迁链头并推进 begin；旧链缺失不等于键缺失。
+                        if self.observed != Some(self.engine.index.prepare(self.hash)?) {
+                            self.lookup = None;
+                            self.observed = None;
+                            Ok(None)
+                        } else {
+                            Ok(Some(Outcome::NotFound))
+                        }
+                    }
                     LookupStep::Tombstone => Ok(Some(if self.options.abort_if_tombstone {
                         Outcome::Aborted(AbortReason::Tombstone)
                     } else {

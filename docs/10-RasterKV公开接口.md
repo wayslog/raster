@@ -270,7 +270,7 @@ Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记�
 
 ## P7.1 压缩实施契约
 
-当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup，半开范围为当前 begin 至 until。workers 范围为 1 至 maintenance.max_compaction_workers；可选后续动作和多工作者已接通，自动调度在 P7.3 继续实施。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
+当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup，半开范围为当前 begin 至 until。workers 范围为 1 至 maintenance.max_compaction_workers；可选后续动作和多工作者已接通，自动调度已接通，P7.3 正在验收。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
 
 成功报告的 copied 包含迁移的最新墓碑；未请求后续动作时 gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, checkpoint, gc, cause }`：until 是请求边界，copied 是已发布迁移数，checkpoint/gc 保留已经完整成功的子步骤（错误中使用 Box），cause 保留子步骤原始错误及部分效果。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
 
@@ -309,7 +309,7 @@ v1 检查点持有独立材料副本，工作段回收不会删除这些材料�
 
 每个步骤分别争取并释放全局动作，同一张 CompactionReport 票据在最后一步结束后终结。动作之间允许其他维护进入，普通 Busy 稍后重试；已接受子步骤失败不自动重放。GC 的 DeferredByRuntime 是该子步骤的终结报告，复合任务不无限等待读者释放。检查点材料继续默认保留，压缩不会隐式调用 release_checkpoint。
 
-维护等待超时保留原票据；无活跃会话时 Maintenance::poll 也可推进后续步骤。有活跃会话时仍须各自刷新检查点屏障。动作间隙仍计为未完成复合任务，shutdown 返回 Busy，不能越过间隙提前关闭。失败关闭先停止所有复制发布再关闭设备；自动维护的排空、等待和停止将在 P7.3 后续接通。
+维护等待超时保留原票据；无活跃会话时 Maintenance::poll 也可推进后续步骤。有活跃会话时仍须各自刷新检查点屏障。动作间隙仍计为未完成复合任务，shutdown 返回 Busy，不能越过间隙提前关闭。失败关闭先停止所有复制发布再关闭设备；自动维护的排空、等待和停止见下文。
 
 普通失败先排空对应子任务并保留原始错误。例如检查点已完成而 GC 删除失败，CompactionFailed.checkpoint 保留可恢复 token，cause 为带实际 begin 和删除计数的 GcFailed。业务 panic 导致失败关闭时也先收取子步骤的部分效果。进度与验证边界见 [P7.3 交付记录](acceptance/P7.3自动维护交付记录.md)。
 
@@ -320,4 +320,19 @@ v1 检查点持有独立材料副本，工作段回收不会删除这些材料�
 
 每个工作者最多保留一个拥有型复制请求，调度器额外保留一个待投递请求。普通错误停止投递并排空已有读取，再报告实际已发布计数；错误和 panic 均不自动重放。失败关闭的报告等待所有工作者停止发布，未确认的 I/O 与段租约继续保留到设备结束。shutdown 超时保留状态，后续可再次调用。
 
-`maintenance.max_compaction_workers` 默认 64，同时计入完成路由预算；每次压缩的 workers 超过此值会在接受前拒绝。`maintenance.workers` 是后续自动压缩的配置线程数，目前不启用自动调度。线程空闲时仅保存存储的 Weak 引用；一次任务的正常成功、普通失败以及失败关闭各有不同的排空路径，最终资源处理见 [P7.3 记录](acceptance/P7.3自动维护交付记录.md)。
+`maintenance.max_compaction_workers` 默认 64，同时计入完成路由预算；每次压缩的 workers 超过此值会在接受前拒绝。`maintenance.workers` 是自动压缩的工作线程数。线程空闲时仅保存存储的 Weak 引用；一次任务的正常成功、普通失败以及失败关闭各有不同的排空路径，最终资源处理见 [P7.3 记录](acceptance/P7.3自动维护交付记录.md)。
+
+
+## 自动压缩的配置、状态与停止
+
+设置 `maintenance.auto_compaction = true` 启用调度，`auto_compaction_policy` 包含 check_interval（默认 250ms）、trigger_fraction（0.8）、compact_fraction（0.2）、max_compacted_bytes（512 MiB）和 log_size_budget（默认 0，启用时必须显式设为非零）。比例必须有限且位于 (0, 1]，间隔必须有效且非零，单次上限至少一页。自动维护需要基础文件后端与目录同步能力；纯内存设备拒绝启用。
+
+以实际 `tail - begin` 达到预算乘触发比例为条件，选取跨度乘目标比例，并受单次字节上限、safe_head 和 safe_read_only 限制，最后向下取完整页。没有完整冷页时等待下个间隔。日志预算是调度与状态提示，不是硬性拒写限额；上游到达上限时协助正在进行的压缩，也没有保证物理磁盘占用不超过预算。空间中的检查点副本另行保留。
+
+调度器调用 Lookup 压缩，使用配置的 workers，并在成功复制后 shift_begin；不会自动生成或释放检查点。DeferredByRuntime 之后只按间隔重试相同逻辑边界的物理回收，重试时使用当前 begin，不以再次复制替代删除。普通 Busy 尚未接受任务，稍后可重新规划；已接受压缩或回收的终结错误停止调度，保留实际报告，不自动重试。停止后需要创建或恢复新实例才会重新启用。
+
+`Maintenance::auto_compaction_status()` 返回 AutoCompactionStatus。phase 包含 Disabled、Idle、Scheduled、Compacting、Reclaiming、Stopping、Stopped、Failed；active 是已接受任务的真实标识，completed_compactions 统计已终结压缩（含失败）。last_compaction、last_reclamation 是最近对应任务的共享结果，failure 保存调度器自身错误；普通任务错误直接保留在对应报告中。log_bytes 是实际日志跨度，budget_reached 表示启用配置的预算已达到，不代表有效键数。状态只保存各一份最近报告，调用者持有的旧快照不受替换影响。
+
+`stop_auto_compaction()` 幂等禁止新接受，已经接受的任务仍排空。`Maintenance::wait_auto_compaction(deadline)` 等待当前空闲或线程结束，`Session::wait_auto_compaction(deadline)` 还会在本线程推进自己的请求及屏障。Idle 是瞬时状态；需要确认彻底停止时先 stop 再 wait。超时不取消任务，不丢弃完成报告。Stopped/Failed 只有在收取调度线程后才可观察；失败关闭时未确认的设备资源仍保留到 shutdown。
+
+shutdown 先请求停止并等待自动任务，再检查活跃会话、扫描或手动动作；这些仍可能返回 Busy。即使随后 Busy，自动停止请求也已生效，原会话可继续完成和关闭。若自动任务等待手动检查点，调用者仍须用该手动任务的等待或 Maintenance::poll 驱动材料阶段，并让参与会话刷新屏障；自动等待本身不替代独立手动任务的驱动。失败关闭不生成成功检查点，也不重放业务回调。

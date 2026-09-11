@@ -190,6 +190,28 @@ impl<S: Schema> Session<S> {
             }
         }
     }
+    /// 在本线程推进会话，等待自动维护空闲或停止；超时不取消已接受任务。
+    pub fn wait_auto_compaction(
+        &mut self,
+        deadline: Deadline,
+    ) -> Result<super::maintenance::AutoCompactionStatus, Error> {
+        loop {
+            let status = self.engine.auto_compaction_status()?;
+            if status.is_quiescent() {
+                return Ok(status);
+            }
+            if deadline.expired() {
+                return Err(Error::DeadlineExceeded);
+            }
+            // 调度线程负责汇总维护失败；这里仍须推进本会话的完成与失败关闭。
+            if let Err(error) = self.poll(PollBudget::default())
+                && !self.engine.failed.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(error);
+            }
+            self.engine.auto_compaction.wait_change(deadline)?;
+        }
+    }
     pub fn wait_maintenance<R>(
         &mut self,
         ticket: &MaintenanceTicket<R>,

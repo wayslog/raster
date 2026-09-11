@@ -149,8 +149,7 @@ impl<S: Schema> Engine<S> {
             state.flush = None;
         }
         // 会话放弃的历史路由仍可能有完成；返回的拥有型缓冲在此释放。
-        while self.io.poll(&*self.storage.device, PollBudget::default())? != 0 {}
-        Ok(())
+        self.io.discard_after_device_shutdown(&*self.storage.device)
     }
 }
 

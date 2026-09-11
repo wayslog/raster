@@ -60,7 +60,29 @@ pub struct MaintenanceConfig {
     pub max_compaction_workers: usize,
     pub max_compaction_key_bytes: usize,
     pub auto_compaction: bool,
+    pub auto_compaction_policy: AutoCompactionPolicy,
     pub workers: usize,
+}
+/// 自动压缩按日志跨度触发；预算不是拒写上限，也不代表有效数据量。
+#[derive(Clone, Debug)]
+pub struct AutoCompactionPolicy {
+    pub check_interval: std::time::Duration,
+    pub trigger_fraction: f64,
+    pub compact_fraction: f64,
+    pub max_compacted_bytes: u64,
+    /// 默认零；启用自动维护时必须显式设置。
+    pub log_size_budget: u64,
+}
+impl Default for AutoCompactionPolicy {
+    fn default() -> Self {
+        Self {
+            check_interval: std::time::Duration::from_millis(250),
+            trigger_fraction: 0.8,
+            compact_fraction: 0.2,
+            max_compacted_bytes: 512 * 1024 * 1024,
+            log_size_budget: 0,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
@@ -91,6 +113,7 @@ impl Default for Config {
                 max_compaction_workers: 64,
                 max_compaction_key_bytes: 64 * 1024 * 1024,
                 auto_compaction: false,
+                auto_compaction_policy: AutoCompactionPolicy::default(),
                 workers: 1,
             },
             scan: ScanConfig {
@@ -156,6 +179,25 @@ impl Config {
         }
         if self.cache.enabled && self.cache.capacity_bytes == 0 {
             return Err(invalid("cache.capacity_bytes", "启用缓存时必须非零"));
+        }
+        let auto = &self.maintenance.auto_compaction_policy;
+        if auto.check_interval.is_zero()
+            || std::time::Instant::now()
+                .checked_add(auto.check_interval)
+                .is_none()
+            || !auto.trigger_fraction.is_finite()
+            || auto.trigger_fraction <= 0.0
+            || auto.trigger_fraction > 1.0
+            || !auto.compact_fraction.is_finite()
+            || auto.compact_fraction <= 0.0
+            || auto.compact_fraction > 1.0
+            || auto.max_compacted_bytes < self.log.page_bytes as u64
+            || (self.maintenance.auto_compaction && auto.log_size_budget == 0)
+        {
+            return Err(invalid(
+                "maintenance.auto_compaction_policy",
+                "间隔须有效且非零，比例须在 (0, 1]，单次上限至少一页，启用时预算须非零",
+            ));
         }
         if self.maintenance.workers > self.maintenance.max_compaction_workers {
             return Err(invalid("maintenance.workers", "不能超过压缩线程预算"));

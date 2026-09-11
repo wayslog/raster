@@ -358,7 +358,7 @@ impl<S: Schema> Engine<S> {
         let advanced = match result {
             Ok(advanced) => advanced,
             Err(error) => {
-                if draining {
+                if draining || matches!(error, Error::InvalidState(_)) {
                     self.failed.store(true, Ordering::SeqCst);
                 }
                 job.fail(error);

@@ -85,6 +85,42 @@ pub struct CompactionReport {
     pub gc: Option<GcReport>,
     pub checkpoint: Option<CheckpointReport>,
 }
+/// Stopped/Failed 只在调度线程已收取后报告；失败资源仍由 shutdown 归还。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoCompactionPhase {
+    Disabled,
+    Idle,
+    Scheduled,
+    Compacting,
+    Reclaiming,
+    Stopping,
+    Stopped,
+    Failed,
+}
+/// 有界状态仅保存最近一次压缩及后续物理回收报告；持有旧快照不会被覆盖。
+#[derive(Clone, Debug)]
+pub struct AutoCompactionStatus {
+    pub phase: AutoCompactionPhase,
+    pub active: Option<MaintenanceId>,
+    pub completed_compactions: u64,
+    pub last_compaction: Option<SharedReport<CompactionReport>>,
+    pub last_reclamation: Option<SharedReport<GcReport>>,
+    pub failure: Option<Arc<Error>>,
+    pub log_bytes: u64,
+    pub budget_reached: bool,
+}
+impl AutoCompactionStatus {
+    /// 瞬时空闲不保证未来不再调度；先请求停止再等待才能确认线程退出。
+    pub fn is_quiescent(&self) -> bool {
+        matches!(
+            self.phase,
+            AutoCompactionPhase::Disabled
+                | AutoCompactionPhase::Idle
+                | AutoCompactionPhase::Stopped
+                | AutoCompactionPhase::Failed
+        )
+    }
+}
 #[derive(Clone, Debug)]
 pub struct IndexGrowthReport {
     pub old_buckets: usize,
@@ -185,6 +221,26 @@ pub struct Maintenance<S: Schema> {
     pub(crate) inner: Arc<Engine<S>>,
 }
 impl<S: Schema> Maintenance<S> {
+    pub fn auto_compaction_status(&self) -> Result<AutoCompactionStatus, Error> {
+        self.inner.auto_compaction_status()
+    }
+    /// 幂等请求停止；已经接受的任务继续排空，普通错误不自动重试。
+    pub fn stop_auto_compaction(&self) -> Result<(), Error> {
+        self.inner.auto_compaction.request_stop()
+    }
+    /// 等待当前自动维护空闲或调度线程结束；有活跃会话时须由各会话继续推进。
+    pub fn wait_auto_compaction(&self, deadline: Deadline) -> Result<AutoCompactionStatus, Error> {
+        loop {
+            let status = self.auto_compaction_status()?;
+            if status.is_quiescent() {
+                return Ok(status);
+            }
+            if deadline.expired() {
+                return Err(Error::DeadlineExceeded);
+            }
+            self.inner.auto_compaction.wait_change(deadline)?;
+        }
+    }
     /// 显式放弃一个检查点 token；若仍被有效 Log 引用则延后且释放动作占用。
     pub fn release_checkpoint(
         &self,

@@ -111,7 +111,7 @@ impl<S: Schema> RasterKV<S> {
     pub fn scan(&self, options: ScanOptions) -> Result<RecordScanner<S>, Error> {
         RecordScanner::open(self.inner.clone(), options)
     }
-    /// 活跃会话或扫描使关闭立即返回 Busy；已放弃扫描的在途读取按截止时间排空。
+    /// 先停止并排空自动维护；活跃会话、扫描或手动任务仍返回 Busy，可推进后重试。
     pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, Error> {
         let mut done = self
             .inner
@@ -122,6 +122,9 @@ impl<S: Schema> RasterKV<S> {
                 std::sync::TryLockError::Poisoned(_) => Error::InvalidState("关闭锁中毒"),
             })?;
         if !*done {
+            // 先禁止自动接受并排空已接受任务；即使稍后因活跃会话返回 Busy，停止请求仍有效。
+            self.inner.auto_compaction.request_stop()?;
+            self.maintenance().wait_auto_compaction(deadline)?;
             // 注册扫描与关闭共享关闭锁；活跃扫描立即拒绝，已放弃扫描按截止时间排空。
             let scan_failure = match self.inner.drain_scans(deadline) {
                 Ok(()) => None,
@@ -197,7 +200,7 @@ impl<S: Schema> Builder<S> {
                 reason: "必须提供设备工厂",
             });
         }
-        if self.config.maintenance.auto_compaction || self.config.storage.pre_allocate_log {
+        if self.config.storage.pre_allocate_log {
             return Err(Error::NotImplemented {
                 module: "engine::高级配置",
             });
@@ -226,11 +229,12 @@ impl<S: Schema> Builder<S> {
             self.config.storage.segment_bytes,
         )?;
         let cache = crate::cache::ReadCache::new(self.config.cache.clone());
-        Ok(RasterKV {
+        let store = RasterKV {
             inner: Arc::new(Engine {
                 id,
                 io,
                 scans: Default::default(),
+                auto_compaction: Default::default(),
                 compaction: std::sync::Mutex::new(Default::default()),
                 gc: std::sync::Mutex::new(Default::default()),
                 checkpoint_release: std::sync::Mutex::new(Default::default()),
@@ -251,7 +255,9 @@ impl<S: Schema> Builder<S> {
                 failed: std::sync::atomic::AtomicBool::new(false),
                 shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             }),
-        })
+        };
+        store.inner.start_auto_compaction()?;
+        Ok(store)
     }
 
     pub fn recover(self, set: RecoverySet) -> Result<(RasterKV<S>, RecoveryReport), Error> {

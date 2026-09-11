@@ -94,6 +94,30 @@ impl CompletionHub {
         state.mailboxes.remove(&id.slot);
         Ok(())
     }
+    /// 仅在设备已 shutdown、所有发布线程退出后调用；终态只丢弃拥有型完成，不再投递任务。
+    pub(crate) fn discard_after_device_shutdown(&self, device: &dyn Device) -> Result<(), Error> {
+        // 设备 poll 的 panic 可能毒化序列化锁；关闭已终结设备，终态回收不恢复运行权限。
+        let _polling = self
+            .polling
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut completions = Vec::new();
+        loop {
+            device.poll(PollBudget::default(), &mut completions)?;
+            if completions.is_empty() {
+                break;
+            }
+            completions.clear();
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+        for mailbox in state.mailboxes.values_mut() {
+            mailbox.completion = None;
+        }
+        Ok(())
+    }
     pub fn poll(&self, device: &dyn Device, budget: PollBudget) -> Result<usize, Error> {
         let _polling = match self.polling.try_lock() {
             Ok(guard) => guard,

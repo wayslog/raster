@@ -1,4 +1,5 @@
 //! 四操作编排中心；读取支持磁盘 Pending，写入与持久化路径继续分阶段接入。
+pub(crate) mod auto_compaction;
 mod cache;
 pub(crate) mod checkpoint;
 pub(crate) mod checkpoint_release;
@@ -29,6 +30,7 @@ pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
     pub io: std::sync::Arc<io_hub::CompletionHub>,
     pub scans: scan::ScanRegistry,
+    pub auto_compaction: auto_compaction::AutoCompactionRuntime,
     pub compaction: std::sync::Mutex<compaction::CompactionRuntime>,
     pub gc: std::sync::Mutex<gc::GcRuntime>,
     pub checkpoint_release: std::sync::Mutex<checkpoint_release::ReleaseRuntime>,

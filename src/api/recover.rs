@@ -222,7 +222,7 @@ pub(crate) fn recover<S: Schema>(
     set.store.validate()?;
     set.index.validate()?;
     set.log.validate()?;
-    if config.maintenance.auto_compaction || config.storage.pre_allocate_log {
+    if config.storage.pre_allocate_log {
         return Err(Error::unimplemented("engine::高级配置"));
     }
     let deadline = Deadline(
@@ -388,6 +388,7 @@ fn build<S: Schema>(
     let engine = Engine {
         id: set.store,
         scans: Default::default(),
+        auto_compaction: Default::default(),
         compaction: std::sync::Mutex::new(Default::default()),
         gc: std::sync::Mutex::new(Default::default()),
         checkpoint_release: std::sync::Mutex::new(Default::default()),
@@ -411,10 +412,9 @@ fn build<S: Schema>(
         failed: false.into(),
         shutdown_requested: false.into(),
     };
-    Ok((
-        RasterKV {
-            inner: Arc::new(engine),
-        },
-        report,
-    ))
+    let store = RasterKV {
+        inner: Arc::new(engine),
+    };
+    store.inner.start_auto_compaction()?;
+    Ok((store, report))
 }

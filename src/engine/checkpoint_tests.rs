@@ -1347,3 +1347,6 @@ mod compaction_chain;
 
 #[path = "compaction_worker_tests.rs"]
 mod compaction_worker;
+
+#[path = "auto_compaction_tests.rs"]
+mod auto_compaction;
