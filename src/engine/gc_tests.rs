@@ -744,3 +744,69 @@ fn 截断前挂起的修改请求重查缺失键且只初始化一次() {
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }
+
+#[test]
+fn 页内截断后同标签旧键写入必须追加而不原地更新失效记录() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    #[derive(Debug)]
+    struct Replace {
+        calls: Arc<AtomicUsize>,
+    }
+    impl Keyed<Schema> for Replace {
+        fn key(&self) -> &u64 {
+            &8969
+        }
+    }
+    impl UpsertOperation<Schema> for Replace {
+        type Output = ();
+        fn replacement(&mut self) -> Result<(u64, ()), Error> {
+            Ok((999, ()))
+        }
+        fn update_in_place(
+            &mut self,
+            mut value: ValueUpdate<'_, Schema>,
+        ) -> Result<UpdateDecision<()>, Error> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            value.view_mut().store(999, Ordering::SeqCst);
+            Ok(UpdateDecision::Updated(()))
+        }
+    }
+    let mut config = Config::default();
+    config.index.buckets = 1;
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(device::null::NullDeviceFactory))
+        .create()
+        .unwrap();
+    let mut session = store.start_session(Default::default()).unwrap();
+    put(&mut session, 0, 8969);
+    let begin = store.inner.log.frontiers().unwrap().tail;
+    put(&mut session, 1, 9239);
+    assert_eq!(
+        store.inner.index.prepare(U64Key.hash(&8969)).unwrap(),
+        store.inner.index.prepare(U64Key.hash(&9239)).unwrap()
+    );
+    gc(&store, &mut session, begin);
+    assert_eq!(read_value(&mut session, 2, 8969), None);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let Submission::Ready(result) = session
+        .upsert(
+            Serial(3),
+            Replace {
+                calls: calls.clone(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("内存尾部有空间")
+    };
+    result.unwrap();
+    assert_eq!(read_value(&mut session, 4, 8969), Some(999));
+    assert_eq!(read_value(&mut session, 5, 9239), Some(9239));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+}

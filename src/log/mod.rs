@@ -291,7 +291,8 @@ impl<V: ValueLayout> HybridLog<V> {
     ) -> Result<Option<RecordLease<V>>, Error> {
         while let Some(address) = head {
             let frontiers = self.frontiers()?;
-            if address < frontiers.read_only.max(frontiers.head) {
+            // 页内逻辑截断可以领先于只读边界，不能沿存活链头更新已失效的旧键。
+            if address < frontiers.begin.max(frontiers.read_only).max(frontiers.head) {
                 return Ok(None);
             }
             let lease = match self.lease(address) {
