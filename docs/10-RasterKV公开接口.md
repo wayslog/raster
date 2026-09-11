@@ -126,7 +126,7 @@ ScanOptions 的 begin/end/buffering 必填。Unbuffered 按需当前页，Single
 
 配置完整字段、默认值及四个 TOML 入口见 [15](15-配置与诊断.md)。它们统一使用 Error；config-toml 只控制解析支持，错误不回显 TOML 原文或私人路径。
 
-`diagnostics() -> Result<Diagnostics, Error>` 观察真实边界、会话身份、同步及挂起请求、分配量、扩容和自动维护。`statistics() -> Statistics` 返回拥有计数；`write_statistics(&mut impl Write) -> Result<(), Error>` 使用调用方输出。enable/disable_stats_collection 不清空历史；已采样请求仍记录到终结。观察不是全局事务快照，跨度/桶占用不是有效键数。
+`diagnostics() -> Result<Diagnostics, Error>` 观察真实边界、会话身份、同步及挂起请求、分配量、扩容和自动维护。`statistics() -> Statistics` 返回拥有计数；`write_statistics(&mut impl Write) -> Result<(), Error>` 使用调用方输出。enable_stats_collection/disable_stats_collection 不清空历史；已采样请求仍记录到终结。观察不是全局事务快照，跨度/桶占用不是有效键数。
 
 ## 7. 扩展与实际使用
 

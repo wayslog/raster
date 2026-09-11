@@ -89,5 +89,66 @@
     "strict_rustdoc": "通过",
     "cargo_metadata_locked": "通过",
     "gc_archive_hashes": "通过"
+  },
+  "rustdoc_inherent_methods": {
+    "RasterKV": [
+      "builder",
+      "continue_session",
+      "diagnostics",
+      "disable_stats_collection",
+      "enable_stats_collection",
+      "id",
+      "maintenance",
+      "scan",
+      "shutdown",
+      "start_session",
+      "statistics",
+      "write_statistics"
+    ],
+    "Builder": [
+      "config",
+      "create",
+      "device",
+      "recover"
+    ],
+    "Session": [
+      "close",
+      "complete_pending",
+      "delete",
+      "id",
+      "last_accepted",
+      "poll",
+      "read",
+      "refresh",
+      "rmw",
+      "try_take",
+      "upsert",
+      "wait",
+      "wait_auto_compaction",
+      "wait_maintenance"
+    ],
+    "Ticket": [
+      "id",
+      "try_take"
+    ],
+    "Maintenance": [
+      "auto_compaction_status",
+      "checkpoint",
+      "compact",
+      "grow_index",
+      "poll",
+      "release_checkpoint",
+      "shift_begin",
+      "stop_auto_compaction",
+      "wait_auto_compaction"
+    ],
+    "MaintenanceTicket": [
+      "id",
+      "try_report"
+    ],
+    "RecordScanner": [
+      "close",
+      "next_record"
+    ]
   }
 }
