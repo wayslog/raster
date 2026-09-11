@@ -270,7 +270,7 @@ Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记�
 
 ## P7.1 压缩实施契约
 
-当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup，半开范围为当前 begin 至 until。workers 范围为 1 至 maintenance.max_compaction_workers；可选后续动作和多工作者已接通，自动调度已接通，P7.3 正在验收。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
+当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup，半开范围为当前 begin 至 until。workers 范围为 1 至 maintenance.max_compaction_workers；可选后续动作和多工作者已接通，自动调度已接通并通过 P7.3 原生验收。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
 
 成功报告的 copied 包含迁移的最新墓碑；未请求后续动作时 gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, checkpoint, gc, cause }`：until 是请求边界，copied 是已发布迁移数，checkpoint/gc 保留已经完整成功的子步骤（错误中使用 Box），cause 保留子步骤原始错误及部分效果。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
 
