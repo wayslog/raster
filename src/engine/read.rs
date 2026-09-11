@@ -147,9 +147,18 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     } else {
                         Outcome::NotFound
                     })),
-                    LookupStep::Resident(value) => value
-                        .read(|view| request.read(ValueRead { view }))?
-                        .map(|value| Some(Outcome::Success(value))),
+                    LookupStep::Resident(value) => {
+                        match value.try_read(|view| request.read(ValueRead { view }))? {
+                            crate::log::ValueAccess::Ready(value) => {
+                                value.map(|value| Some(Outcome::Success(value)))
+                            }
+                            crate::log::ValueAccess::Contended => {
+                                self.lookup = None;
+                                self.observed = None;
+                                Ok(None)
+                            }
+                        }
+                    }
                     LookupStep::Decoded(value) => {
                         self.engine.populate_cache(
                             self.hash,

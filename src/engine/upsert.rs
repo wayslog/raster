@@ -11,6 +11,7 @@ use crate::{
     },
     device::IoCompletion,
     index::{IndexHead, PublishResult},
+    log::ValueAccess,
     schema::{OwnedValueOf, Schema, ValueLayout, ValueUpdate, value::ValuePlan},
     types::*,
 };
@@ -54,11 +55,17 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 match lease.update_at_version(self.version, |view| {
                     request.update_in_place(ValueUpdate { view })
                 })? {
-                    Some(UpdateDecision::Updated(output)) => {
+                    ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
                         self.effect = Effect::Applied;
                         return Ok(Some(Outcome::Success(output)));
                     }
-                    Some(UpdateDecision::Append) | None => self.effect = Effect::NotApplied,
+                    ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
+                        self.effect = Effect::NotApplied
+                    }
+                    ValueAccess::Contended => {
+                        self.effect = Effect::NotApplied;
+                        return Ok(None);
+                    }
                 }
             }
             let (value, output) = request.replacement()?;

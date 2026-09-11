@@ -20,7 +20,7 @@ def main():
     forgotten = "log::page::tests::无效长度对齐溢出与遗忘范围均安全拒绝"
     cases = [
         ("页范围及预分配", ["--lib", "log::page::", "--", "--skip", forgotten], 6, ""),
-        ("页内值布局", ["--lib", "log::value::tests::"], 7, ""),
+        ("页内值布局", ["--lib", "log::value::tests::"], 8, ""),
         ("记录生命周期", ["--lib", "log::tests::"], 12, ""),
         ("缓存字节区", ["--lib", "cache::arena::tests::"], 1, ""),
         ("缓存读者及淘汰", ["--lib", "cache::tests::"], 5, ""),

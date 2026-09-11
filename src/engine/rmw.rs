@@ -11,7 +11,10 @@ use crate::{
     },
     device::IoCompletion,
     index::{IndexHead, PublishResult},
-    log::lookup::{LogLookup, LookupStep},
+    log::{
+        ValueAccess,
+        lookup::{LogLookup, LookupStep},
+    },
     schema::{Schema, ValueLayout, ValueRead, ValueUpdate},
     types::*,
 };
@@ -69,17 +72,24 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                     match lease.update_at_version(self.version, |view| {
                         request.update_in_place(ValueUpdate { view })
                     })? {
-                        Some(UpdateDecision::Updated(output)) => {
+                        ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
                             self.effect = Effect::Applied;
                             return Ok(Some(Outcome::Success(output)));
                         }
-                        Some(UpdateDecision::Append) | None => {
+                        ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
                             self.effect = Effect::NotApplied;
                             self.skip_in_place = true;
                         }
+                        ValueAccess::Contended => {
+                            self.effect = Effect::NotApplied;
+                            return Ok(None);
+                        }
                     }
                 }
-                lease.read(|view| request.copy_update(ValueRead { view }))??
+                match lease.try_read(|view| request.copy_update(ValueRead { view }))? {
+                    ValueAccess::Ready(value) => value?,
+                    ValueAccess::Contended => return Ok(None),
+                }
             }
             LookupStep::Decoded(value) => {
                 value.read(|view| request.copy_update(ValueRead { view }))??

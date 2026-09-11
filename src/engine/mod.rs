@@ -131,6 +131,9 @@ impl<S: Schema> Engine<S> {
 }
 
 #[cfg(test)]
+mod value_contention_tests;
+
+#[cfg(test)]
 mod frozen_tests;
 #[cfg(test)]
 mod pending_read_tests;

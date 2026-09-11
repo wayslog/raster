@@ -1,5 +1,6 @@
 //! 页内值所有权：仅初始化成功才返回对象，所有视图在仲裁许可作用域内使用。
 use super::{
+    ValueAccess,
     gate::MutationGate,
     page::{PagePool, PageRange},
 };
@@ -280,10 +281,25 @@ impl<V: ValueLayout> PageValue<V> {
         }
     }
     pub fn read<R>(&self, f: impl for<'a> FnOnce(V::Read<'a>) -> R) -> Result<R, Error> {
+        match self.try_read(f)? {
+            ValueAccess::Ready(value) => Ok(value),
+            ValueAccess::Contended => Err(Error::Busy),
+        }
+    }
+    pub fn try_read<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Read<'a>) -> R,
+    ) -> Result<ValueAccess<R>, Error> {
         self.ready()?;
-        let _gate = self.gate.try_replace()?;
+        let _gate = match self.gate.try_replace() {
+            Ok(gate) => gate,
+            Err(Error::Busy) => return Ok(ValueAccess::Contended),
+            Err(error) => return Err(error),
+        };
         self.ready()?;
-        Ok(f(self.layout.read(permit!(self, ReadPermit))?))
+        Ok(ValueAccess::Ready(f(self
+            .layout
+            .read(permit!(self, ReadPermit))?)))
     }
     #[cfg(test)]
     pub fn update<R>(
@@ -294,32 +310,50 @@ impl<V: ValueLayout> PageValue<V> {
             .ok_or(Error::InvalidState("记录已停止更新"))
     }
     /// None 表示在用户回调执行前已冻结；检查与 seal 使用同一个仲裁门。
+    #[cfg(test)]
     pub fn update_if_mutable<R>(
         &self,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
     ) -> Result<Option<R>, Error> {
+        match self.try_update_if_mutable(f)? {
+            ValueAccess::Ready(value) => Ok(value),
+            ValueAccess::Contended => Err(Error::Busy),
+        }
+    }
+    fn try_update_if_mutable<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
+    ) -> Result<ValueAccess<Option<R>>, Error> {
         self.ready()?;
         if self.sealed.load(Ordering::SeqCst) {
-            return Ok(None);
+            return Ok(ValueAccess::Ready(None));
         }
         let _shared;
         let _exclusive;
         if self.layout.concurrent_updates() {
-            _shared = Some(self.gate.try_update()?);
+            _shared = Some(match self.gate.try_update() {
+                Ok(gate) => gate,
+                Err(Error::Busy) => return Ok(ValueAccess::Contended),
+                Err(error) => return Err(error),
+            });
             _exclusive = None;
         } else {
-            _exclusive = Some(self.gate.try_replace()?);
+            _exclusive = Some(match self.gate.try_replace() {
+                Ok(gate) => gate,
+                Err(Error::Busy) => return Ok(ValueAccess::Contended),
+                Err(error) => return Err(error),
+            });
             _shared = None;
         }
         self.ready()?;
         if self.sealed.load(Ordering::SeqCst) {
-            return Ok(None);
+            return Ok(ValueAccess::Ready(None));
         }
         let result = catch_unwind(AssertUnwindSafe(|| {
             f(self.layout.update(permit!(self, UpdatePermit))?)
         }));
         match result {
-            Ok(value) => value.map(Some),
+            Ok(value) => value.map(|value| ValueAccess::Ready(Some(value))),
             Err(panic) => {
                 self.failed.store(true, Ordering::SeqCst);
                 resume_unwind(panic)
@@ -331,11 +365,11 @@ impl<V: ValueLayout> PageValue<V> {
         &self,
         version: CheckpointVersion,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
-    ) -> Result<Option<R>, Error> {
+    ) -> Result<ValueAccess<Option<R>>, Error> {
         if self.version != version {
-            return Ok(None);
+            return Ok(ValueAccess::Ready(None));
         }
-        self.update_if_mutable(f)
+        self.try_update_if_mutable(f)
     }
     pub fn seal(&self) -> Result<(), Error> {
         let _gate = self.gate.try_replace()?;
@@ -454,6 +488,55 @@ impl<V: ValueLayout> Drop for PageValue<V> {
 mod tests {
     use super::*;
     use crate::schema::builtin::{AtomicU64Value, ByteValueCodec, SerializedValue};
+    #[test]
+    fn 布局和操作返回繁忙错误不能伪装成许可争用() {
+        struct BusyCodec;
+        impl ValueCodec for BusyCodec {
+            type Value = Vec<u8>;
+            fn format_id(&self) -> FormatId {
+                FormatId([99; 16])
+            }
+            fn encode(&self, value: &Vec<u8>) -> Result<Vec<u8>, Error> {
+                Ok(value.clone())
+            }
+            fn decode(&self, _: &[u8]) -> Result<Vec<u8>, Error> {
+                Err(Error::Busy)
+            }
+        }
+        let pool = PagePool::new(4096, 2).unwrap();
+        let value =
+            PageValue::initialize(&pool, Arc::new(SerializedValue::new(BusyCodec)), vec![1, 2])
+                .unwrap();
+        let called = std::cell::Cell::new(0);
+        {
+            let _gate = value.gate.try_replace().unwrap();
+            assert!(matches!(
+                value.try_read(|_| called.set(1)),
+                Ok(ValueAccess::Contended)
+            ));
+        }
+        assert!(matches!(
+            value.try_read(|_| called.set(1)),
+            Err(Error::Busy)
+        ));
+        assert_eq!(called.get(), 0);
+        let atomic = PageValue::initialize(&pool, Arc::new(AtomicU64Value), 1).unwrap();
+        assert!(matches!(
+            atomic.try_read(|_| {
+                called.set(called.get() + 1);
+                Err::<(), Error>(Error::Busy)
+            }),
+            Ok(ValueAccess::Ready(Err(Error::Busy)))
+        ));
+        assert!(matches!(
+            atomic.update_at_version(CheckpointVersion(0), |_| {
+                called.set(called.get() + 1);
+                Err::<(), Error>(Error::Busy)
+            }),
+            Err(Error::Busy)
+        ));
+        assert_eq!(called.get(), 2);
+    }
     #[test]
     fn 变长临时值按编码规划且拒绝超预算输入() {
         let layout = Arc::new(SerializedValue::new(ByteValueCodec));

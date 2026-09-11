@@ -2,6 +2,12 @@
 use crate::{config::LogConfig, schema::value::ValueLayout, types::*};
 use std::{collections::BTreeMap, marker::PhantomData, rc::Rc, sync::Arc};
 
+/// Contended 只表示尚未取得值访问许可；布局的 read/update 或操作错误不能转为此状态。
+pub(crate) enum ValueAccess<T> {
+    Ready(T),
+    Contended,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Frontiers {
     pub begin: LogAddress,
@@ -77,10 +83,17 @@ impl<V: ValueLayout> RecordLease<V> {
         &self,
         version: CheckpointVersion,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
-    ) -> Result<Option<R>, Error> {
+    ) -> Result<ValueAccess<Option<R>>, Error> {
         self.value.update_at_version(version, f)
     }
 
+    pub fn try_read<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Read<'a>) -> R,
+    ) -> Result<ValueAccess<R>, Error> {
+        self.value.try_read(f)
+    }
+    #[cfg(test)]
     pub fn read<R>(&self, f: impl for<'a> FnOnce(V::Read<'a>) -> R) -> Result<R, Error> {
         self.value.read(f)
     }
