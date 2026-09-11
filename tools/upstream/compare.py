@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 MASK = (1 << 64) - 1
 SEEDS = [0, 1, 42, 0xABCDEF, MASK]
@@ -50,10 +51,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cpp", type=Path, required=True, help="已经构建的上游执行器")
     parser.add_argument("--output", type=Path, required=True, help="本次全新结果目录")
+    parser.add_argument("--disk", action="store_true", help="两端均使用原生文件后端")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("RASTER_UPSTREAM_"):
+            env.pop(key)
     env["RUST_BACKTRACE"] = "0"
     env["CARGO_TERM_COLOR"] = "never"
     built = run(["cargo", "test", "--locked", "--all-features", "--test", "p9_upstream", "--no-run", "--message-format=json"], output / "rust-build.txt", env, 600)
@@ -71,13 +76,18 @@ def main():
         rust_result, cpp_result = output / (name + ".rust"), output / (name + ".cpp")
         env["RASTER_UPSTREAM_TRACE"] = str(source)
         env["RASTER_UPSTREAM_RESULT"] = str(rust_result)
-        run([executables[0], "--exact", "同一拥有型轨迹输出真实引擎结果供上游对照", "--nocapture"], output / (name + ".rust.log"), env)
-        run([str(args.cpp.resolve()), str(source), str(cpp_result)], output / (name + ".cpp.log"))
+        with tempfile.TemporaryDirectory(prefix="raster-random-") as root:
+            command = [str(args.cpp.resolve()), str(source), str(cpp_result)]
+            if args.disk:
+                env["RASTER_UPSTREAM_ROOT"] = str(Path(root) / "rust")
+                command += ["--disk", str(Path(root) / "cpp")]
+            run([executables[0], "--exact", "同一拥有型轨迹输出真实引擎结果供上游对照", "--nocapture"], output / (name + ".rust.log"), env)
+            run(command, output / (name + ".cpp.log"))
         rust_lines, cpp_lines = rust_result.read_text().splitlines(), cpp_result.read_text().splitlines()
         differences = [{"line": i + 1, "rust": a, "cpp": b} for i, (a, b) in enumerate(zip(rust_lines, cpp_lines)) if a != b]
         if len(rust_lines) != len(cpp_lines):
             differences.append({"error": "结果行数不同", "rust_lines": len(rust_lines), "cpp_lines": len(cpp_lines)})
-        summary = {"case": name, "trace_sha256": hashlib.sha256(trace.encode()).hexdigest(), "steps": len(trace.splitlines()) - 1, "differences": differences}
+        summary = {"case": name, "backend": "file" if args.disk else "null", "trace_sha256": hashlib.sha256(trace.encode()).hexdigest(), "steps": len(trace.splitlines()) - 1, "differences": differences}
         summaries.append(summary)
         (output / "comparison.json").write_text(json.dumps(summaries, ensure_ascii=False, indent=2))
         print(f"{name}：{summary['steps']} 步，{len(differences)} 处结果差异", flush=True)

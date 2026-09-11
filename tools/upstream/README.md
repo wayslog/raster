@@ -11,6 +11,8 @@ python3 tools/upstream/compare.py --cpp target/p9-build/faster-replay --output t
 
 结果目录必须是本次全新目录，已有材料不自动清理。程序保存输入、Rust/C++ 输出、构建和运行日志及逐行差异。当前已有删除相关差异，compare.py 会返回失败；这表示兼容性尚未验收。不能仅因为执行器自身正常退出就声称两端行为一致。
 
+`compare.py --disk` 让 Rust 与 C++ 都使用各自原生文件后端。手动工作流“P9 原始随机对照（差异即失败）”分别执行 Null 和文件两组，每组使用相同的固定边界及五个种子，共 7,508 步。它不自动随每次 push 启动；已知差异仍使任务失败，所有输入、两端结果和差异完整归档。
+
 直接执行 `faster-replay 输入.trace 输出.results` 使用 NullDisk；添加 `--disk 全新目录` 使用 Linux QueueIoHandler/libaio 文件后端。上游 ThreadPoolIoHandler 仅存在于 Windows，Linux 对照不能使用该类型；它与 RasterKV 的 Linux/macOS 工作线程后端不是同一个实现。
 
 上游页固定为 32 MiB，文件对照配置为 256 MiB、可变比例 0.4，满足至少两个可变页和四个不可变页。小轨迹在文件后端运行不代表触发了磁盘 Pending，必须检查实际输出和超内存工作量。所有外部执行由比较脚本设置进程截止时间，等待原有 Pending，不重新提交已接受请求。
@@ -38,6 +40,8 @@ python3 -B tools/upstream/lifecycle.py --cpp target/p9-build/faster-replay --out
 ```
 
 同一文件分别交给两个真实执行端，在指定边界执行 Full 或 Index+Log，关闭实例、恢复并续接三个原会话。C++ 检查每个持久化回调的身份、次数、状态与序号，所有会话回到 REST 后才发起下一动作。每个操作仍比较原始结果，任何差异均失败。
+
+检查点场景的上游索引为 2,048 个桶；原始短轨迹保留 128 桶。上游把索引拆成 256 块，每块又必须满足 512 字节扇区对齐，因此 128 桶不满足其检查点前提。首次原生运行在该断言失败；修正测试配置，不修改上游算法或断言。
 
 `scenarios.py` 固定三组场景：141 步小轨迹分别覆盖 Full、Index+Log；大轨迹固定 32,768 次至少 16 KiB 的追加 Upsert，加上冷键、变长 RMW、墓碑、恢复后读写。大轨迹必须实际输出超过 512 MiB 的上游日志跨度，以及非零 Read、RMW Pending。生成器记录步数、恢复边界、写入负载及 SHA-256，不能用输入大小代替实际日志跨度。
 

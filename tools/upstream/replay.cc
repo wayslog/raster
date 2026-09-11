@@ -100,7 +100,10 @@ int main(int argc,char** argv) {
       throw std::runtime_error("恢复边界必须位于磁盘轨迹内部");
     if(!options.root.empty()) {
       if(!std::filesystem::create_directory(options.root)) throw std::runtime_error("磁盘对照目录已经存在");
-      Replay<DiskStore> runner([&options]{return std::make_unique<DiskStore>(128,256_MiB,options.root,0.4);});
+      // 检查点把索引拆成 256 块，每块必须按 Linux 的 512 字节扇区对齐。
+      // 2048 个 64 字节桶满足该公开实现前提；纯轨迹保留原观察配置。
+      const uint64_t buckets=options.split ? 2048 : 128;
+      Replay<DiskStore> runner([&options,buckets]{return std::make_unique<DiskStore>(buckets,256_MiB,options.root,0.4);});
       runner.run(trace,argv[2],options);
     } else {
       Replay<NullStore> runner([]{return std::make_unique<NullStore>(128,1_GiB,"",0.9);});
