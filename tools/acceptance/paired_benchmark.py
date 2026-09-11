@@ -3,6 +3,7 @@ import argparse
 import csv
 import hashlib
 import json
+import itertools
 import os
 from pathlib import Path
 import statistics
@@ -22,16 +23,20 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument("--interleaved-control", action="store_true", help="同轮交错运行新版本和两份相同旧二进制，以六种顺序平衡位置")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     binaries = {name: getattr(args, name).resolve() for name in ["baseline", "candidate"]}
+    if args.interleaved_control:
+        binaries["control"] = binaries["baseline"]
+    orders = list(itertools.permutations(binaries)) if args.interleaved_control else ORDERS
     metadata = {name: {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for name, path in binaries.items()}
     (args.output / "binaries.json").write_text(json.dumps(metadata, indent=2))
     summaries = []
     for case in args.cases or DEFAULT_CASES:
         pairs = []
         expected_hash = None
-        for number, order in enumerate(ORDERS, 1):
+        for number, order in enumerate(orders, 1):
             pair = {"pair": number, "order": list(order)}
             for side in order:
                 output = args.output / f"{case}-pair{number}-{side}"
@@ -63,9 +68,14 @@ def main():
         summaries.append({"case": case, "input_sha256": expected_hash, "medians": medians,
                           "throughput_ratio": throughput, "p99_ratio": latency,
                           "review_required": throughput < .75 or latency > 1.30})
+        if args.interleaved_control:
+            control_throughput = medians["control"]["每秒操作"] / medians["baseline"]["每秒操作"]
+            control_latency = medians["control"]["P99纳秒"] / medians["baseline"]["P99纳秒"]
+            summaries[-1].update(control_throughput_ratio=control_throughput, control_p99_ratio=control_latency,
+                                 control_review_required=control_throughput < .75 or control_latency > 1.30)
         (args.output / "comparison.json").write_text(json.dumps(summaries, ensure_ascii=False, indent=2))
     print(json.dumps(summaries, ensure_ascii=False, indent=2))
-    if any(row["review_required"] for row in summaries):
+    if any(row["review_required"] or row.get("control_review_required", False) for row in summaries):
         raise SystemExit(1)
 
 
