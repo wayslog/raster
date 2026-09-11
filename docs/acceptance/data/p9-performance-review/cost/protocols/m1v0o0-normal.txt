@@ -1,0 +1,8 @@
+
+running 1 test
+test engine::io_hub::tests::其他会话轮询后结果留在原邮箱且错身份不能收取 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.02s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)

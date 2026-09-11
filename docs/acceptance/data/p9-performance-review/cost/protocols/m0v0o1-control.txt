@@ -1,0 +1,22 @@
+
+running 1 test
+test engine::pending_read_tests::提交和轮询自动观察版本且旧请求保持原切分 ... FAILED
+
+failures:
+
+failures:
+    engine::pending_read_tests::提交和轮询自动观察版本且旧请求保持原切分
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.01s
+
+   Compiling raster v0.1.0 (工作区/raster/target/p9-cost-profile)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.81s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+thread '<unnamed>' (101163796) panicked at src/engine/pending_read_tests.rs:1963:14:
+called `Result::unwrap()` on an `Err` value: Busy
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'engine::pending_read_tests::提交和轮询自动观察版本且旧请求保持原切分' (101163793) panicked at src/engine/../../tests/support/actor.rs:40:14:
+会话指令超时或线程失败: Disconnected
+error: test failed, to rerun pass `--lib`

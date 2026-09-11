@@ -1,0 +1,8 @@
+diff --git a/src/engine/upsert.rs b/src/engine/upsert.rs
+index 80b9cbd..ef558d5 100644
+--- a/src/engine/upsert.rs
++++ b/src/engine/upsert.rs
+@@ -242,3 +241,0 @@ impl<S: Schema> Engine<S> {
+-        if let Err(reason) = self.observe_session(session) {
+-            return Err(Rejected { request, reason });
+-        }

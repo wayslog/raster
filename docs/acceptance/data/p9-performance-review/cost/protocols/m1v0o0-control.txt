@@ -1,0 +1,37 @@
+
+running 1 test
+test engine::io_hub::tests::其他会话轮询后结果留在原邮箱且错身份不能收取 ... FAILED
+
+failures:
+
+failures:
+    engine::io_hub::tests::其他会话轮询后结果留在原邮箱且错身份不能收取
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.00s
+
+   Compiling libc v0.2.189
+   Compiling io-lifetimes v2.0.4
+   Compiling rustix v1.1.4
+   Compiling io-lifetimes v3.0.1
+   Compiling io-extras v0.19.0
+   Compiling bitflags v2.13.2
+   Compiling cap-primitives v4.0.3
+   Compiling cap-std v4.0.3
+   Compiling winnow v1.0.4
+   Compiling ipnet v2.12.2
+   Compiling maybe-owned v0.3.4
+   Compiling ambient-authority v0.0.2
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling toml v1.1.6+spec-1.1.0
+   Compiling errno v0.3.14
+   Compiling fs-set-times v0.20.3
+   Compiling raster v0.1.0 (工作区/raster/target/p9-cost-profile)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.70s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+thread 'engine::io_hub::tests::其他会话轮询后结果留在原邮箱且错身份不能收取' (101161364) panicked at src/engine/io_hub.rs:148:9:
+assertion failed: matches!(hub.reserve(SessionId([3; 16])), Err(Error::Busy))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`

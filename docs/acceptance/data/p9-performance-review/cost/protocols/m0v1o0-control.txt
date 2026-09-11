@@ -1,0 +1,32 @@
+
+running 1 test
+test engine::version_permit::tests::旧版本全部退出后新版本才可执行且不同键互不阻塞 ... FAILED
+
+failures:
+
+failures:
+    engine::version_permit::tests::旧版本全部退出后新版本才可执行且不同键互不阻塞
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.00s
+
+   Compiling raster v0.1.0 (工作区/raster/target/p9-cost-profile)
+warning: fields `active` and `key` are never read
+  --> src/engine/version_permit.rs:12:5
+   |
+11 | pub(crate) struct VersionPermit {
+   |                   ------------- fields in this struct
+12 |     active: Arc<Mutex<BTreeMap<(u64, u64), usize>>>,
+   |     ^^^^^^
+13 |     key: (u64, u64),
+   |     ^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `raster` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.53s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+thread 'engine::version_permit::tests::旧版本全部退出后新版本才可执行且不同键互不阻塞' (101162881) panicked at src/engine/version_permit.rs:47:9:
+assertion failed: !new.ready().unwrap()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`

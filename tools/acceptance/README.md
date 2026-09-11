@@ -90,3 +90,12 @@ python3 tools/acceptance/audit_mutable_boundary.py docs/acceptance/data/p9-mutab
 ```
 
 复用同一矩阵格式审核全部 228 行，重新计算中位数；与旧 P3 的总体回退复核分开。
+
+
+## 原 P3 性能复核材料
+
+```sh
+python3 tools/acceptance/audit_performance_review.py docs/acceptance/data/p9-performance-review
+```
+
+复算 192 行八组同机对照、56 个受限循环、配置与分配输出，以及三个移除协议后失败的真实测试。审核器保持原 25%/30% 复核线，明确打印仍触发的组数；数据一致与配套报告中的验收解释分别呈现。

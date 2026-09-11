@@ -1,0 +1,60 @@
+diff --git a/src/engine/upsert.rs b/src/engine/upsert.rs
+index 80b9cbd..ef558d5 100644
+--- a/src/engine/upsert.rs
++++ b/src/engine/upsert.rs
+@@ -242,3 +241,0 @@ impl<S: Schema> Engine<S> {
+-        if let Err(reason) = self.observe_session(session) {
+-            return Err(Rejected { request, reason });
+-        }
+diff --git a/src/engine/version_permit.rs b/src/engine/version_permit.rs
+index 909df27..2dbfdfb 100644
+--- a/src/engine/version_permit.rs
++++ b/src/engine/version_permit.rs
+@@ -21,24 +21,2 @@ impl VersionPermits {
+-        let mut active = self
+-            .active
+-            .lock()
+-            .map_err(|_| Error::InvalidState("请求版本登记锁中毒"))?;
+-        // 阶段观察落后的调用不能插到已登记的新版本之前；拒绝发生在接受序号前。
+-        if active
+-            .range((hash.0, version.0)..=(hash.0, u64::MAX))
+-            .any(|(&(h, v), _)| h == hash.0 && v > version.0)
+-        {
+-            return Err(Error::Busy);
+-        }
+-        let key = (hash.0, version.0);
+-        let count = active
+-            .get(&key)
+-            .copied()
+-            .unwrap_or(0)
+-            .checked_add(1)
+-            .ok_or(Error::CapacityExceeded)?;
+-        active.insert(key, count);
+-        Ok(VersionPermit {
+-            active: self.active.clone(),
+-            key,
+-        })
+-    }
++Ok(VersionPermit { active:self.active.clone(), key:(hash.0,version.0) })
++}
+@@ -48,6 +26,2 @@ impl VersionPermit {
+-        let active = self
+-            .active
+-            .lock()
+-            .map_err(|_| Error::InvalidState("请求版本登记锁中毒"))?;
+-        Ok(active.range((self.key.0, 0)..self.key).next().is_none())
+-    }
++Ok(true)
++}
+@@ -57,9 +31,2 @@ impl Drop for VersionPermit {
+-        if let Ok(mut active) = self.active.lock()
+-            && let Some(count) = active.get_mut(&self.key)
+-        {
+-            *count -= 1;
+-            if *count == 0 {
+-                active.remove(&self.key);
+-            }
+-        }
+-    }
++
++}
