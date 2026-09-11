@@ -1,0 +1,35 @@
+{
+  "实现提交": "be5ac0e93a0462be46d3b424918687ab50fe5a21",
+  "原生运行": "34607030290",
+  "文件SHA256": {
+    "linux-environment.txt": "9856bdf2320ff5586201028c340f000f73c3b75dbbf63fae0e326d2c40d16726",
+    "linux.csv": "dfb84f9b16b7354c0c09f320462daca4017585e9f25643e357b567b01907345c",
+    "macos-environment.txt": "a598608298ce390055080208a4296fb73c650e32cd6f9412c975f295759c68fa",
+    "macos.csv": "9a400a57a21d7975c13d8dff186cc294a13674e4c733c4f9a3afe71d7ad1268d"
+  },
+  "平台": {
+    "ubuntu-24.04": {
+      "target": "x86_64-unknown-linux-gnu",
+      "完整场景": 48,
+      "业务操作": 786432,
+      "恢复校验键": 98304
+    },
+    "macos-14": {
+      "target": "aarch64-apple-darwin",
+      "完整场景": 48,
+      "业务操作": 786432,
+      "恢复校验键": 98304
+    }
+  },
+  "原P3回退验收": "未完成",
+  "固定输入SHA256": {
+    "u64-uniform-t1": "d01eefab75c847b05f553b02adba75f0d9f881c6360f7f93afc72a9f3285f4ff",
+    "u64-uniform-t4": "518b43cab44af01be0144b73d2e1842bef7584064b33d5b79edafe77473bd243",
+    "u64-hot-t1": "b32e1af9e98999ce82c26b3d99748e2a7e19dd7bffff12c959c538bd1c253aa4",
+    "u64-hot-t4": "f7d0162b83bae580441c8088d568893b6b414ae5eb476d549d7fe48ff366aa72",
+    "bytes-uniform-t1": "5352c7e36e0a91f6a3d2176259cceb433580969d0764982b81167a4111c71cc9",
+    "bytes-uniform-t4": "9e70d7b2e5f5393afa21dbb0dcda16240bc79673416eab1de161497a83760819",
+    "bytes-hot-t1": "ab0f3428395ebbd29c7f40c479b885b37e3387b473f928dc7636d198f94ce7ec",
+    "bytes-hot-t4": "c74b5a3afe9eb5877d75fa0329a0370097ee2336229bba3da67742311bf8cb3f"
+  }
+}
