@@ -1,0 +1,2 @@
+    Checking raster v0.1.0 (工作树)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.80s

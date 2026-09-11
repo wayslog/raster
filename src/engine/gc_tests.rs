@@ -223,10 +223,10 @@ fn native_gc_with_device(factory: Box<dyn DeviceFactory>) -> (Directory, RasterK
     (root, store)
 }
 
-struct DelayedCompletionFactory(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+struct DelayedCompletionFactory(std::sync::Arc<std::sync::atomic::AtomicBool>);
 struct DelayedCompletions {
     inner: Box<dyn Device>,
-    remaining: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    held: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl DeviceFactory for DelayedCompletionFactory {
     fn open(&self, options: DeviceOpenOptions) -> Result<Box<dyn Device>, Error> {
@@ -236,7 +236,7 @@ impl DeviceFactory for DelayedCompletionFactory {
                 queue_capacity: 16,
             }
             .open(options)?,
-            remaining: self.0.clone(),
+            held: self.0.clone(),
         }))
     }
 }
@@ -250,11 +250,7 @@ impl Device for DelayedCompletions {
     fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
         use std::sync::atomic::Ordering;
         // 原生设备仍实际执行 I/O；暂不取完成，模拟异步结果尚未可见。
-        if self
-            .remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-            .is_ok()
-        {
+        if self.held.load(Ordering::SeqCst) {
             return Ok(());
         }
         self.inner.poll(budget, output)
@@ -270,11 +266,11 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
     use crate::api::{completion::TicketState, maintenance::PhysicalReclamation};
     use std::sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     };
-    let delayed_polls = Arc::new(AtomicUsize::new(0));
+    let hold_completions = Arc::new(AtomicBool::new(false));
     let (_root, store) =
-        native_gc_with_device(Box::new(DelayedCompletionFactory(delayed_polls.clone())));
+        native_gc_with_device(Box::new(DelayedCompletionFactory(hold_completions.clone())));
     let mut session = store.start_session(Default::default()).unwrap();
     for key in 0..400 {
         put(&mut session, key, key);
@@ -296,12 +292,17 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
     // 固定存在真实后台写入，GC 必须排空该任务；不能只延迟与 GC 无关的完成。
     let tail = store.inner.log.pad_tail().unwrap();
     store.inner.log.advance_read_only(tail).unwrap();
-    delayed_polls.store(100_001, Ordering::SeqCst);
+    hold_completions.store(true, Ordering::SeqCst);
     store.inner.progress_storage().unwrap();
     assert!(store.inner.storage_progress.lock().unwrap().has_flush());
     let begin = LogAddress(3 * 4096);
     let ticket = store.maintenance().shift_begin(begin).unwrap();
     let budget = PollBudget(std::num::NonZeroUsize::new(1).unwrap());
+    // 先观察真实的 I/O 等待，再显式释放门控；不以大量空轮询制造调度负载。
+    store.maintenance().poll(budget).unwrap();
+    assert!(ticket.try_report().unwrap().is_none());
+    assert!(store.inner.storage_progress.lock().unwrap().has_flush());
+    hold_completions.store(false, Ordering::SeqCst);
     let end = deadline();
     let report = loop {
         if let Some(report) = ticket.try_report().unwrap() {
@@ -311,7 +312,6 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
         store.maintenance().poll(budget).unwrap();
         std::thread::yield_now();
     };
-    assert_eq!(delayed_polls.load(Ordering::SeqCst), 0);
     let report = report.as_ref().as_ref().unwrap();
     assert_eq!(report.begin, begin);
     assert!(report.index_cleaned);

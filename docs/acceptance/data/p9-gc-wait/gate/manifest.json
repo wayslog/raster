@@ -1,0 +1,15 @@
+{
+  "base": "f3142f29d965f3b5e9ca3d2a30794bf477580b01",
+  "scope": "真实刷盘完成门控，仅修改测试",
+  "deadline_seconds": 10,
+  "files": {
+    "clippy.txt": "91b9c48f5872942c6328aedc2ca618ba9c12bf65defd8f0702cd8828ddf61f77",
+    "fmt.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "full-tests.txt": "32f9988405c72f7115faf8c5bf6a8f5658d7bf6e3e3b94f8f7dd60420931c6d1",
+    "local-results.json": "7822b2dae6c2eef393b05bf66684d1d2ec0e65999e4a6f1aa8e4c5828a6e5d6f",
+    "repeat.txt": "c4fe0cabf4d9c9964e085769c159c92c62fa78b5890aada4e38c0980e84abf00",
+    "second-ci-excerpt.txt": "22515afc2566862f57ff2972c6a0bf7dfa52a97887eec79a60eabd7b59202a70",
+    "second-ci.json": "5b92885ab132e80344cf341e136b1a240100a04fe51cec1f9392e95086b2aed1",
+    "test.txt": "62a0a136932c5819d21078b4b1ee116d0d0ef51966ba152074e6b8142289f746"
+  }
+}

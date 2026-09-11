@@ -1,0 +1,575 @@
+   Compiling raster v0.1.0 (工作树)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.74s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 345 tests
+test api::completion::tests::放弃票据不阻止请求终结 ... ok
+test api::completion::tests::结果只能终结和收取一次 ... ok
+test api::completion::tests::完成端销毁后票据仍拥有结果 ... ok
+test api::maintenance::tests::内部子任务移交原始错误且已取走状态禁止再次终结 ... ok
+test checkpoint::material::tests::各阶段失败不会自动重试或伪造成功且写同步失败会关闭 ... ok
+test checkpoint::material::tests::短写从实际位置继续且只在同步关闭后返回固定校验值 ... ok
+test checkpoint::material::tests::错路由与错存储完成归还原缓冲且重复完成不推进 ... ok
+test checkpoint::material::tests::零写终结为错误且繁忙拒绝保持尚未接受的状态 ... ok
+test checkpoint::material::tests::空文件仍同步且不支持同步的设备在接受前拒绝 ... ok
+test cache::arena::tests::租约跨线程且空洞合并复用不会覆盖尚存读者 ... ok
+test cache::tests::缓存条件安装完整键命中且快照先还原日志地址 ... ok
+test cache::tests::预分配缓存的淘汰租约继续计费且最后读者退出才可复用 ... ok
+test cache::tests::淘汰中的借用继续计费且旧缓存地址不能误伤新项 ... ok
+test cache::tests::迟到安装与不同索引身份拒绝且同标签键不串值 ... ok
+test cache::tests::最近窗口比例控制命中刷新而旧读者和索引头保持有效 ... ok
+test checkpoint::publication_tests::冷日志继续追加和刷盘不覆盖已安装的旧页帧 ... ok
+test checkpoint::material::tests::原生材料分块同步关闭后可重读且重复新建不覆盖 ... ok
+test checkpoint::publication_tests::原生发布写清单和提交后重命名且最后同步完成才成功 ... ok
+test checkpoint::publication_tests::原生日志材料复制保留混合版本和页填充并取得同步凭据 ... ok
+test checkpoint::publication_tests::日志材料拒绝尚未冻结或尚未写完的源页 ... ok
+test checkpoint::publication_tests::恢复清单先验证提交再读取且只在关闭后返回完整描述 ... ok
+test checkpoint::publication_tests::恢复清单解析阶段仍拒绝其他存储且损坏提交不会触发清单分配 ... ok
+test checkpoint::publication_tests::恢复文件读失败仍关闭且忙拒绝不终结 ... ok
+test checkpoint::publication_tests::恢复读取错误路由不消费请求且关闭失败保留资源状态 ... ok
+test checkpoint::publication_tests::恢复文件分块与短读精确返回且空文件必须通过结束探测 ... ok
+test checkpoint::publication_tests::目录预留同步父目录且已预留的令牌不能复用 ... ok
+test checkpoint::publication_tests::日志材料拒绝帧损坏及外壳校验正确但内部记录损坏 ... ok
+test checkpoint::publication_tests::恢复拒绝错身份损坏清单和未发布提交 ... ok
+test checkpoint::publication_tests::日志材料错误路由和存储不会消费在途读取 ... ok
+test checkpoint::publication_tests::恢复读取拒绝截断尾随和超限声明且不创建缺失文件 ... ok
+test checkpoint::replay::tests::同页过滤新版本并修复旧键经过碰撞新键的链 ... ok
+test checkpoint::replay::tests::截断前驱归空且无效记录不能成为后续链头 ... ok
+test checkpoint::replay::tests::跨页修复并保留旧版本墓碑而过滤新墓碑 ... ok
+test checkpoint::replay::tests::错页悬空前驱标签错误和预算失败均不推进页状态 ... ok
+test config::tests::完整语法支持选定子表与带点键但不忽略组内未知项 ... ok
+test checkpoint::publication_tests::目录及发布的错误身份和重复完成不推动当前状态 ... ok
+test config::tests::空文档采用默认值且全部字段拥有映射结果 ... ok
+test config::tests::语法类型范围和组合错误明确拒绝且不回显输入 ... ok
+test coordination::action::tests::仅索引动作不递增日志版本且恢复要求没有活跃会话 ... ok
+test coordination::action::tests::动作中放弃参与会话保留首个失败并禁止新成功动作 ... ok
+test coordination::action::tests::完整动作逐阶段确认且旧请求未排空不能发布 ... ok
+test coordination::action::tests::接受序号与版本校验原子进行且拒绝不消费序号 ... ok
+test coordination::action::tests::版本耗尽拒绝推进并保持原状态 ... ok
+test coordination::action::tests::注册与阶段开始竞争不会漏记参与者 ... ok
+test coordination::tests::恢复进度注册遵守容量且拒绝重复身份与版本耗尽 ... ok
+test coordination::tests::序号可跳号但不能回退且重新注册保留进度 ... ok
+test coordination::tests::重复注册容量和关闭拒绝不改变状态 ... ok
+test coordination::tests::注册与关闭竞争只有一致的终态 ... ok
+test config::tests::文件入口选择子表并有界拒绝非文本与超限文件 ... ok
+test device::local_files::tests::描述符副本仍存活时关闭及设备清理显式解除原锁 ... ok
+test engine::auto_compaction::tests::自动目标只覆盖阈值以上的完整安全冷页且受单次预算限制 ... ok
+test engine::auto_compaction::tests::自动配置拒绝零预算无效比例间隔及不足一页的上限 ... ok
+test device::local_files::tests::实际偏移读写同步重开与越界路径拒绝 ... ok
+test checkpoint::publication_tests::真实索引与日志记录导出材料后可同步发布并精确读取 ... ok
+test engine::checkpoint_tests::auto_compaction::禁用时无需线程且启用的空闲线程不会阻碍存储销毁 ... ok
+test checkpoint::publication_tests::目录创建或同步失败不产生预留凭据 ... ok
+test checkpoint::publication_tests::繁忙拒绝可重试且重命名未被接受时不标记可见 ... ok
+test checkpoint::publication_tests::其他存储令牌名称或清单身份不能冒用同步材料凭据 ... ok
+test checkpoint::publication_tests::缺失或错误材料凭据在写清单前拒绝 ... ok
+test engine::checkpoint_tests::auto_compaction::自动压缩普通错误保留原始结果并停止而不重放 ... ok
+test engine::checkpoint_tests::cache::写回调暂停时缓存安装与淘汰让出且不破坏其发布快照 ... ok
+test engine::checkpoint_tests::auto_compaction::自动接受前恐慌同步终结手动全局动作而不让关闭永久忙碌 ... ok
+test engine::checkpoint_tests::cache::冷页缓存同步命中且写入删除后不会返回旧值 ... ok
+test checkpoint::publication_tests::日志材料读写失败不返回凭据且忙拒绝可继续 ... ok
+test engine::checkpoint_tests::auto_compaction::自动维护协议错误或设备恐慌失败关闭后仍能结束调度和设备 ... ok
+test engine::checkpoint_tests::cache::缓存预算不足仅跳过安装而不使正常读取失败 ... ok
+test engine::checkpoint_tests::cache::迟到磁盘读取不将更新或删除之前的值重新装入缓存 ... ok
+test engine::checkpoint_tests::auto_compaction::关闭自动排空已接受压缩且线程不持有存储环 ... ok
+test engine::checkpoint_tests::auto_compaction::自动回收被挂起读者延后后只接续物理回收直到租约释放 ... ok
+test engine::checkpoint_tests::auto_compaction::自动维护真实读取在途时停止幂等且截止时间保留任务 ... ok
+test engine::checkpoint_tests::checkpoint_release::crash::释放崩溃子进程入口 ... ok
+test engine::checkpoint_tests::catalog::独占目录锁阻挡检查点且发布共享锁覆盖提交重命名 ... ok
+test engine::checkpoint_tests::catalog::恢复读取持有共享目录锁且实例发布前释放 ... ok
+test engine::checkpoint_tests::auto_compaction::自动调度等待手动屏障时可停止且不取消手动任务 ... ok
+test checkpoint::publication_tests::发布各阶段错误不报告成功且重命名后失败保留可能可见状态 ... ok
+test engine::checkpoint_tests::cache::缓存淘汰扩容检查点与恢复始终保持主日志地址 ... ok
+test engine::checkpoint_tests::catalog::等待目录锁期间基准索引失效则日志检查点拒绝发布 ... ok
+test engine::checkpoint_tests::checkpoint_release::目录锁竞争终结本次释放且显式重试前不自动失效 ... ok
+test engine::checkpoint_tests::compaction::内存容量耗尽报告已迁移数且源数据保留而新任务不暗中移begin ... ok
+test engine::checkpoint_tests::checkpoint_release::未知目录损坏清单和缺失材料描述不能授权删除其他检查点 ... ok
+test engine::checkpoint_tests::compaction::扫描去重预算不足零迁移终结且空范围与后续动作可执行 ... ok
+test engine::checkpoint_tests::compaction::冷结束边界位于记录中间时先失败且没有迁移或移动begin ... ok
+test engine::checkpoint_tests::compaction_chain::不支持检查点的设备在复合压缩接受前拒绝且没有迁移 ... ok
+test engine::checkpoint_tests::checkpoint_release::释放旧完整检查点仅删除其材料且保留新集合及活跃数据 ... ok
+test engine::checkpoint_tests::compaction_chain::回收期间业务恐慌的失败关闭仍报告已完成检查点和已推进begin ... ok
+test engine::checkpoint_tests::compaction_chain::复合任务动作间隙允许其他维护但关闭不能越过未完成票据 ... ok
+test engine::checkpoint_tests::checkpoint_release::目录和元数据预算超限整体拒绝且未提交目录默认保留 ... ok
+test engine::checkpoint_tests::compaction_worker::io_failure::多个工作者在途读取遇到单次失败时先归还全部缓冲再终结动作 ... ok
+test engine::checkpoint_tests::compaction_worker::两算法在独立线程同时复制且正常报告前工作线程全部退出 ... ok
+test engine::checkpoint_tests::compaction_worker::io_failure::工作者失败关闭保留未归还读取租约直到设备结束 ... ok
+test engine::checkpoint_tests::compaction_worker::工作者错误和恐慌保留实际复制计数且不自动重放 ... ok
+test engine::checkpoint_tests::compaction_worker::超过线程预算接受前拒绝且无会话驱动可以完成多工作者 ... ok
+test engine::checkpoint_tests::conditional_copy::ordinary::源许可覆盖目标初始化且碰撞发布冲突清理目标后重试保留两键 ... ok
+test engine::checkpoint_tests::conditional_copy::ordinary::目标初始化失败保持源和索引且不能再次执行编码 ... ok
+test engine::checkpoint_tests::conditional_copy::ordinary::目标初始化恐慌失败关闭且没有发布目标 ... ok
+test engine::checkpoint_tests::conditional_copy::候选捕获后原地更新保持源地址但复制当前值且只终结一次 ... ok
+test engine::checkpoint_tests::checkpoint_release::磁盘中的两个日志引用使旧索引延后且释放引用后可再回收 ... ok
+test engine::checkpoint_tests::conditional_copy::冷源读取挂起期间追加可完成而过时源不能重新发布 ... ok
+test engine::checkpoint_tests::conditional_copy::同桶同标签不同完整键可复制链内源且保留另一键 ... ok
+test engine::checkpoint_tests::conditional_copy::外来实例拒绝复制而所属实例仍可完成 ... ok
+test engine::checkpoint_tests::conditional_copy::追加和删除使旧源失效且最新墓碑可迁移但不复活旧值 ... ok
+test engine::checkpoint_tests::conditional_copy::冷源完整复制和在途排空不保留路由或阻止后续动作 ... ok
+test engine::checkpoint_tests::gc::failure::回收未刷盘前缀不产生旧页写入且新检查点跳过页内旧记录 ... ok
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+test engine::checkpoint_tests::gc::内存截断清除旧键释放整页并可继续循环写入 ... ok
+test engine::checkpoint_tests::gc::冷边界切入记录时报告零效果并释放动作且合法回收排斥其他维护 ... ok
+test engine::checkpoint_tests::cache::压缩与缓存扫描挂起读及后续写删交错仍保留最新值 ... ok
+test engine::checkpoint_tests::gc::同标签链头保留时迟到冷读取不能缓存已截断的链内旧键 ... ok
+test engine::checkpoint_tests::gc::截断前挂起的修改请求重查缺失键且只初始化一次 ... ok
+test engine::checkpoint_tests::gc::截断边界错误无副作用且扩容后清理覆盖全部新桶 ... ok
+test engine::checkpoint_tests::gc::页内截断后同标签旧键写入必须追加而不原地更新失效记录 ... ok
+test engine::checkpoint_tests::growth::公开扩容等待旧表_epoch_释放且容量报告与再次扩容真实 ... ok
+test engine::checkpoint_tests::gc::failure::原生关闭删除及目录同步已执行后失败仍可从原步骤安全重试 ... ok
+test engine::checkpoint_tests::growth::扩容不会使暂停回调中已准备的写入因迁移而失败 ... ok
+test engine::checkpoint_tests::growth::放弃扩容参与会话使票据稳定失败且禁止新的动作 ... ok
+test engine::checkpoint_tests::growth::磁盘读改写读取与删除挂起跨越扩容且回调只执行一次 ... ok
+test engine::checkpoint_tests::growth::空索引扩容丢弃票据仍能完成且动作期间拒绝关闭 ... ok
+test engine::checkpoint_tests::growth::多会话磁盘写入与协作扩容并发且完成只计数一次 ... ok
+test engine::checkpoint_tests::checkpoint_release::failure::失效删除及同步前后失败均保留真实影响且只由显式动作重试 ... ok
+test engine::checkpoint_tests::p8::原子修改后恐慌记录未知影响一次且失败关闭不再接收统计 ... ok
+test engine::checkpoint_tests::p8::同步回调执行中可以跨线程观察真实会话和请求数量 ... ok
+test engine::checkpoint_tests::p8::四操作统计区分缺失中止失败与删除生效后的恐慌且拒绝不计入 ... ok
+test engine::checkpoint_tests::compaction_chain::两算法后续检查点先于截断且各选项保留数据墓碑和会话进度 ... ok
+test engine::checkpoint_tests::p8::配置文件驱动原生创建预分配缓存统计并关闭实例 ... ok
+test engine::checkpoint_tests::online::paused_scan::扫描拥有值解码暂停期间检查点仍完成且新写不会混入恢复切分 ... ok
+test engine::checkpoint_tests::p8::采样关闭不隐藏在途请求且已有请求统计完整终结并可输出 ... ok
+test engine::checkpoint_tests::p8::扩容进行中诊断保留两张表的真实分布且观察不会改变统计 ... ok
+test engine::checkpoint_tests::power::掉电模型分别保留文件同步与目录同步且丢弃未同步内容 ... ok
+test engine::checkpoint_tests::p8::预分配创建和恢复都保留页容量但不提前推进逻辑尾部 ... ok
+test engine::checkpoint_tests::safety::crash::检查点崩溃子进程入口 ... ok
+test engine::checkpoint_tests::compaction_chain::failure::后续检查点或回收实际生效后失败不重放复制且保留完整错误与已完成报告 ... ok
+test engine::checkpoint_tests::safety::两代恢复集保留不同键值与墓碑且后续原地更新不改写材料 ... ok
+test engine::checkpoint_tests::checkpoint_release::crash::每个失效和删除步骤中断后保留集合可恢复且释放可跨重启接续 ... ok
+test engine::checkpoint_tests::safety::已发布检查点保留全部已知引用且恢复重建所选集合目录 ... ok
+test engine::checkpoint_tests::scan_page::公开三种模式完整遍历并在结束后释放扫描名额 ... ok
+test engine::checkpoint_tests::scan_page::公开预读与挂起用户读取共享路由且关闭不吞掉用户完成 ... ok
+test engine::checkpoint_tests::scan_page::公开磁盘扫描保留无效记录标志并省略其值 ... ok
+test engine::checkpoint_tests::不支持持久化的设备在接受检查点前拒绝且不占用动作 ... ok
+test engine::checkpoint_tests::scan_page::原生磁盘页扫描输出独立且共享轮询不执行另一会话回调 ... ok
+test engine::checkpoint_tests::compaction::两种压缩算法跨冷页保留当前值墓碑及会话进度且独立恢复 ... ok
+test engine::checkpoint_tests::多线程推进检查点只报告一次完成且动作期间拒绝关闭 ... ok
+test engine::checkpoint_tests::公开索引日志及完整检查点依次同步发布且会话切分真实 ... ok
+test engine::checkpoint_tests::恢复子进程入口 ... ok
+test engine::checkpoint_tests::gc::压缩后非页对齐截断删除旧段且两代检查点均可恢复 ... ok
+test engine::checkpoint_tests::恢复安装同步失败会排空设备且超时后可以重新恢复 ... ok
+test engine::checkpoint_tests::恢复计划逐材料验证且同一完整检查点不重复计数 ... ok
+test engine::checkpoint_tests::恢复计划拒绝错配语义页布局和越界索引链头 ... ok
+test engine::checkpoint_tests::auto_compaction::多轮自动压缩与检查点恢复保持墓碑及会话进度 ... ok
+test engine::checkpoint_tests::提交可见但最终目录同步失败时公开票据保持失败 ... ok
+test engine::checkpoint_tests::检查点等待超时保留动作且会话放弃使已接受票据失败 ... ok
+test engine::checkpoint_tests::完整恢复保留墓碑与进度并可继续写入再次检查点和恢复 ... ok
+test engine::checkpoint_tests::compaction_worker::多工作者与写删交错后重复检查点截断恢复保持墓碑和会话进度 ... ok
+test engine::checkpoint_tests::日志材料校验通过但键编码不规范时恢复计划不接受材料 ... ok
+test engine::frozen_tests::冻结后替换与复制追加保留原值且引擎继续服务 ... ok
+test engine::io_hub::tests::其他会话轮询后结果留在原邮箱且错身份不能收取 ... ok
+test engine::io_hub::tests::注销后迟到完成只回收缓冲且不会误投新请求 ... ok
+test engine::io_hub::tests::重复未收完成与未知路由报错但不覆盖或丢失其他邮箱 ... ok
+test engine::metrics::tests::溢出饱和并保留失败影响和条件复制独立计数 ... ok
+test engine::metrics::tests::采样在接受时固定且终结幂等遗漏测量不能伪装零次完成 ... ok
+test engine::pending::result_budget_tests::历史容量不能绕过降低后的结果限额 ... ok
+test engine::pending::result_budget_tests::放弃票据后完成端仍占用名额 ... ok
+test engine::pending::result_budget_tests::结果名额等待票据和完成端都归还 ... ok
+test engine::pending_read_tests::丢弃旧票据不释放许可而阶段放弃使新请求失败终结 ... ok
+test engine::pending_read_tests::丢弃票据仍执行读取而丢弃会话明确终结未执行请求 ... ok
+test engine::pending_read_tests::会话轮询隔离回调且结果预算在收取后释放 ... ok
+test engine::checkpoint_tests::恢复预算不足或材料缺失不发布实例且原提交保持不变 ... ok
+test engine::pending_read_tests::关闭超时后停止接受但仍可排空并在关闭后收取结果 ... ok
+test engine::pending_read_tests::冷键查询期间发生替换时先重查新值再计算 ... ok
+test engine::pending_read_tests::切分后接受的新序号不进入旧检查点关闭切分 ... ok
+test engine::pending_read_tests::删除等待期间重查替换记录且强制墓碑可以等待空间 ... ok
+test engine::pending_read_tests::刷盘失败仍排空设备但不发布成功边界也不自动重试 ... ok
+test engine::pending_read_tests::单位预算公平推进多请求且排空后未收结果仍施加背压 ... ok
+test engine::pending_read_tests::单次排空报告剩余且截止时间排空不消费票据结果 ... ok
+test engine::pending_read_tests::原生文件存储关闭排空已启动页并保留可校验帧 ... ok
+test engine::checkpoint_tests::空存储完整检查点和丢弃票据后推进均可结束 ... ok
+test engine::pending_read_tests::四操作等待同键旧版本终结且读取在许可后重新取得链头 ... ok
+test engine::pending_read_tests::存储关闭完成已启动页的目录打开与写入各阶段 ... ok
+test engine::pending_read_tests::原生文件挂起请求在维护等待中完成并保留旧版本切分 ... ok
+test engine::pending_read_tests::存储排空超时不会提前关闭设备且恢复后可以继续 ... ok
+test engine::pending_read_tests::并发关闭只允许一个推进者且另一调用立即返回繁忙 ... ok
+test engine::checkpoint_tests::独立进程恢复后读取写入及检查点通过 ... ok
+test engine::pending_read_tests::引擎已失败时关闭只归还在途缓冲而不推进刷盘边界 ... ok
+test engine::pending_read_tests::并发阶段前进与会话确认交错不误报迟到失败 ... ok
+test engine::pending_read_tests::提交和轮询自动观察版本且旧请求保持原切分 ... ok
+test engine::pending_read_tests::放弃会话后的迟到读取由存储关闭排空且不会调用用户 ... ok
+test engine::pending_read_tests::正常关闭保留动作前和动作中的会话切分且不伪造放弃失败 ... ok
+test engine::pending_read_tests::新版本替换与读改写不原地修改旧记录但同版本仍可更新 ... ok
+test engine::pending_read_tests::磁盘删除完成回调恐慌只终结一次且保留已生效墓碑 ... ok
+test engine::pending_read_tests::真实挂起读取跨版本切分后保留旧身份与序号并独立完成 ... ok
+test engine::pending_read_tests::维护版本前进后新注册会话继承原子返回的版本 ... ok
+test engine::pending_read_tests::等待超时保留请求且错会话不能推进票据 ... ok
+test engine::pending_read_tests::维护驱动在需要实际材料的阶段停止且完成端放弃给出失败报告 ... ok
+test engine::pending_read_tests::设备延迟期间等待超时后仍可恢复完成 ... ok
+test engine::pending_read_tests::读改写新建跨越容量窗口且两个冷键增量不会丢失 ... ok
+test engine::pending_read_tests::错存储维护票据即使已有报告也不能驱动本会话 ... ok
+test engine::checkpoint_tests::完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号 ... ok
+test engine::checkpoint_tests::索引日志分离恢复后可以再次提交仅日志检查点 ... ok
+test engine::scan::tests::公开压缩专家恐慌终结报告一次且关闭释放任务没有实例引用环 ... ok
+test engine::pending_read_tests::维护等待推进自己的旧请求而空闲参与者必须确认或退出 ... ok
+test engine::pending_read_tests::公开写入轮询驱动自动刷盘且两页预算可读回多窗口数据 ... ok
+test engine::scan::tests::可变记录扫描不冻结值且旧输出不随原地更新变化 ... ok
+test engine::pending_read_tests::容量不足的写入挂起且恢复后不重复调用替换回调 ... ok
+test engine::scan::tests::开放扫描前拒绝冷热半记录边界以及倒置和越界 ... ok
+test engine::scan::tests::扫描专家解码恐慌只执行一次并使引擎失败关闭 ... ok
+test engine::scan::tests::扫描返回后允许全部原驻留页淘汰并从磁盘继续固定范围 ... ok
+test engine::scan::tests::扫描配置拒绝零预算超时和路由容量溢出 ... ok
+test engine::scan::tests::拥有值解码期间发布逻辑截断仍必须拒绝交付失效范围 ... ok
+test engine::scan::tests::会话轮询推进闲置扫描的分段预读并及时释放租约 ... ok
+test engine::scan::tests::放弃通知不因收尾线程持锁而丢失 ... ok
+test engine::scan::tests::压缩读取失败不会自动重试且新动作可重新执行同一范围 ... ok
+test engine::scan::tests::普通冷读取失败收尾释放段保护且不保留失败请求 ... ok
+test engine::scan::tests::普通冷读取跨段短读期间保护全部段且完成后释放 ... ok
+test engine::scan::tests::短读跨段继续而读取失败使扫描一次失败关闭 ... ok
+test engine::scan::tests::逻辑边界前移时已缓存页也必须报范围截断 ... ok
+test engine::storage_progress::tests::检查点已冻结尾页即使仍在可变窗口内也继续后台刷盘 ... ok
+test engine::value_contention_tests::冻结源读取争用使读改写等待且释放后只计算一次 ... ok
+test engine::value_contention_tests::原地写入许可争用不错误失败关闭 ... ok
+test engine::value_contention_tests::原地读改写许可争用不错误失败关闭 ... ok
+test engine::value_contention_tests::挂起写入的拥有型结果收取才释放预算且可跨关闭存活 ... ok
+test engine::value_contention_tests::放弃挂起写入票据不取消生效且结果只析构一次 ... ok
+test engine::value_contention_tests::用户读取和复制回调的繁忙错误终结一次且不重放 ... ok
+test engine::value_contention_tests::驻留读取争用不返回业务繁忙错误 ... ok
+test engine::version_permit::tests::旧版本全部退出后新版本才可执行且不同键互不阻塞 ... ok
+test epoch::tests::新读者不阻碍旧对象且旧槽不能复用 ... ok
+test epoch::tests::最慢读者和嵌套许可退出前不回收 ... ok
+test epoch::tests::穷举两个参与者与回收者的线性化交错 ... ok
+test epoch::tests::管理器身份隔离且真实线程退出后才交付动作 ... ok
+test epoch::tests::遗忘许可只阻碍回收且代次不回绕 ... ok
+test format::index::tests::固定索引样例精确解码和编码且保留零地址与标签边界 ... ok
+test format::index::tests::截断尾随和逐位损坏拒绝且计数溢出不分配 ... ok
+test format::index::tests::重算校验后仍拒绝未知版本保留位重复桶标签和非法地址 ... ok
+test format::manifest::tests::分离检查点匹配及错配拒绝 ... ok
+test format::manifest::tests::固定清单与提交样例逐字节往返 ... ok
+test format::manifest::tests::清单和提交拒绝所有截断及逐字节损坏 ... ok
+test format::manifest::tests::重复材料会话范围缺口与索引进度均拒绝 ... ok
+test format::manifest::tests::重算校验后未知版本计数保留位和身份仍拒绝 ... ok
+test format::page::frozen_tests::最后记录标志后只允许零填充 ... ok
+test format::page::frozen_tests::页帧独立固定样例往返并拒绝未知版本与标志 ... ok
+test format::page::tests::页帧间隙可遍历且整条记录被清零也会拒绝 ... ok
+test format::record::tests::固定记录样例解码并逐字节复原 ... ok
+test format::record::tests::墓碑空键无效记录与页末标记可往返 ... ok
+test format::record::tests::截断追加和每一位损坏均拒绝 ... ok
+test format::record::tests::拒绝不修改输出且页填充不能伪装为记录 ... ok
+test format::record::tests::重算校验也不能绕过版本长度与保留位校验 ... ok
+test index::gc::tests::清理与同键发布并发不会删除边界之后的新头 ... ok
+test index::gc::tests::清理回收溢出槽并保留新链头且旧空槽许可不能跨清理复用 ... ok
+test index::gc::tests::缓存头和修订耗尽在清理任何条目前拒绝 ... ok
+test index::growth::gc_tests::不同标签普通发布不撤销另一空槽许可但回收会撤销 ... ok
+test index::growth::gc_tests::扩容复制桶修订历史并拒绝迁移期间清理 ... ok
+test index::growth::tests::并发条件发布穿越逐桶迁移不会丢失最后链头 ... ok
+test index::growth::tests::旧表在访问_epoch_释放动作交付后才能回收 ... ok
+test index::growth::tests::逐桶迁移分流链头且旧快照重新定位后才能发布 ... ok
+test index::tests::冲突返回新快照且地址回到原值不能绕过修订号 ... ok
+test index::tests::同一快照并发发布只能有一个成功者 ... ok
+test index::tests::同桶同标签的不同哈希共用待查键链 ... ok
+test index::tests::已初始化日志记录发布与失败发布清理 ... ok
+test index::tests::恢复索引重建溢出桶与新身份且旧快照不能发布 ... ok
+test index::tests::持久映像不含进程身份修订号且溢出桶顺序规范化 ... ok
+test index::tests::持久映像拒绝混合身份代次缓存头和重复条目 ... ok
+test index::tests::无效恢复映像不改变已有索引且空映像可恢复 ... ok
+test index::tests::桶溢出与标签独立寻址 ... ok
+test index::tests::真实键编码碰撞沿日志链查找不会串键 ... ok
+test index::tests::空键变长键和损坏编码有明确结果 ... ok
+test index::tests::身份代次和非法地址拒绝且缓存不能进入映像 ... ok
+test log::flush::tests::三段短写全部完成后才推进刷盘边界 ... ok
+test log::flush::tests::两页内存跨越多次窗口且所有刷盘页可重读 ... ok
+test log::flush::tests::原生工作线程刷盘后重读三段并解码页帧 ... ok
+test log::flush::tests::同页不同记录版本在刷盘中保留且超范围版本拒绝 ... ok
+test log::flush::tests::失败与错误日志不得推进或消费其他任务 ... ok
+test log::flush::tests::所有传输结束后段失效仍拒绝边界推进 ... ok
+test log::flush::tests::旧租约阻止安全回收而新分配只能复用新代次 ... ok
+test log::flush::tests::淘汰后的页通过跨段短读恢复且损坏帧被拒绝 ... ok
+test log::flush::tests::混合链按预算跨内存与磁盘查找且墓碑遮蔽旧值 ... ok
+test log::flush::tests::磁盘混合版本页仍能沿新版本异键链头读取旧记录 ... ok
+test log::gate::tests::共享更新互容但与替换互斥 ... ok
+test log::gate::tests::恐慌展开释放许可且遗忘不会开放仲裁 ... ok
+test engine::scan::tests::在途与放弃读取保护跨段映射但完成页不长期阻止删除 ... ok
+test log::gate::tests::更新计数上限不能变成独占标记 ... ok
+test log::gate::tests::真实线程的共享更新与替换不能重叠 ... ok
+test log::page::preallocation_tests::预分配不占逻辑地址且所有租约退出才清零复用同一物理页 ... ok
+test log::page::tests::冷启动页号不占内存预算且尾部不会回到零 ... ok
+test log::page::tests::所有范围退出后才释放且复用代次递增 ... ok
+test log::page::mutable_poison_tests::可变查找拒绝已有的页池边界及记录表中毒 ... ok
+test log::page::tests::无效长度对齐溢出与遗忘范围均安全拒绝 ... ok
+test log::page::tests::范围对齐不重叠且页预算不会静默扩展 ... ok
+test log::page::tests::独占范围可跨线程移动且池销毁不影响存活范围 ... ok
+test log::page::tests::跨页后小记录也不能回填旧页且释放尾页不倒退 ... ok
+test log::scan::publication_tests::已初始化未判定发布的槽保持扫描背压且冲突可清理 ... ok
+test log::scan::tests::扫描副本独立于后续原地修改且不冻结记录 ... ok
+test log::scan::tests::扫描跳过放弃槽且拒绝半记录边界和未发布槽 ... ok
+test log::tests::冷恢复日志边界一致且拒绝无效尾部 ... ok
+test log::tests::冻结页编码覆盖对齐间隙和已放弃预留 ... ok
+test log::tests::临时解码不占日志页且资源只销毁一次 ... ok
+test log::tests::发布后可租用且旧租约阻止销毁 ... ok
+test log::tests::可变查找区分冷历史与缺失记录 ... ok
+test log::tests::可变查找尊重页内截断和冻结且旧租约无法更新 ... ok
+test log::tests::未发布预留阻止冻结且放弃后可以推进 ... ok
+test log::tests::原始记录槽放弃不销毁未初始化值且成功初始化仅销毁一次 ... ok
+test log::tests::检查点填充尾页不创建记录且后续分配不回填 ... ok
+test log::tests::正在更新时冻结不推进安全边界且重试可完成 ... ok
+test log::tests::活跃预留拒绝尾页填充且不改变分配边界 ... ok
+test log::tests::租约比日志存活更久但预留不能跨日志发布 ... ok
+test log::tests::部分初始化失败自行清理且成功值仅销毁一次 ... ok
+test log::tests::预留不可见且放弃不留下地址记录 ... ok
+test log::value::tests::原子值与墓碑稳定记录可被格式层解码 ... ok
+test log::value::tests::变长临时值按编码规划且拒绝超预算输入 ... ok
+test log::value::tests::原子布局跨线程更新与逻辑落盘 ... ok
+test log::value::tests::变长值缩短后按当前长度编码且保持占槽 ... ok
+test log::value::tests::布局和操作返回繁忙错误不能伪装成许可争用 ... ok
+test log::value::tests::损坏解码不返回可见值且范围可释放 ... ok
+test log::value::tests::普通值初始化增长拒绝与稳定编码 ... ok
+test log::value::tests::用户恐慌之后拒绝继续修改 ... ok
+test scan::page::tests::固定页扫描返回独立槽位且重复结束稳定 ... ok
+test scan::page::tests::地址顺序保留同键旧版本墓碑无效记录和变长槽 ... ok
+test scan::page::tests::页内范围拒绝切断槽且空范围与填充不生成记录 ... ok
+test scan::page::tests::范围之外损坏及错误页号截断均不能绕过校验 ... ok
+test scan::page::typed_tests::页内类型解码失败不消费记录且返回后可释放页 ... ok
+test scan::record::tests::墓碑无效槽保留键和标志且不调用值解码器 ... ok
+test scan::record::tests::非法键值损坏槽与地址溢出均拒绝而非跳过 ... ok
+test scan::record::tests::扫描解码拥有空键变长值和整数边界 ... ok
+test schema::builtin::tests::键长度边界无需分配巨大缓冲即可验证 ... ok
+test schema::builtin::owned_value_tests::拥有型值解码与槽位解码一致且不依赖输入生命周期 ... ok
+test schema::key::tests::自定义拥有键可借用且非规范别名和哈希恐慌拒绝 ... ok
+test schema::key::tests::恢复键规范往返得到完整稳定哈希 ... ok
+test storage::native_tests::新实例不能覆盖已有段而恢复模式可以显式打开 ... ok
+test storage::native_tests::旧段实际写入不会污染新代次且迟到结果被拒绝 ... ok
+test storage::open::tests::打开迟到且代次失效先关闭未绑定句柄 ... ok
+test storage::open::tests::新建并绑定且已有映射无需重复打开 ... ok
+test storage::native_tests::提交材料同步后重命名并重开读取 ... ok
+test storage::tests::新段绑定拒绝迟到完成和旧代次重新打开 ... ok
+test storage::tests::检查点材料名和设备能力检查 ... ok
+test storage::tests::跨段切分边界和溢出拒绝 ... ok
+test storage::transfer::tests::已接受写入失败后停止续传并只交付一次错误 ... ok
+test storage::transfer::tests::跨三段短写从实际偏移续传且完整字节一致 ... ok
+test storage::transfer::tests::零写和失效代次终结但错误路由不消费原完成 ... ok
+test types::id::tests::随机源读取不完整或报错时不返回身份 ... ok
+test storage::transfer::tests::跨段短读返回完整拥有型字节且超出文件报错 ... ok
+test engine::scan::tests::放弃在途扫描仍占名额且归还完成后可重新注册 ... ok
+test engine::scan::tests::压缩轮询不等待设备且短读跨段与用户完成分流可仅由会话驱动 ... ok
+test engine::checkpoint_tests::online::缓存开关下挂起写入扩容扫描检查点及恢复交错结果一致 ... ok
+test engine::scan::tests::三种预读分别接受一二三页读取且超时恢复不遗漏 ... ok
+test engine::scan::tests::显式关闭超时可继续关闭且不会重新开始读取 ... ok
+test engine::checkpoint_tests::safety::crash::仅索引检查点中断矩阵不产生会话持久化承诺 ... ok
+test engine::checkpoint_tests::safety::crash::每个检查点完成步骤中断进程后只接受完整提交且旧代可恢复 ... ok
+test engine::checkpoint_tests::safety::crash::仅日志检查点中断矩阵始终绑定既有索引恢复 ... ok
+
+test result: ok. 345 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.55s
+
+     Running tests/foundation.rs (target/debug/deps/foundation-7afa602e22aec042)
+
+running 4 tests
+test 错误的缓冲参数不会触发分配 ... ok
+test 容量要求同时覆盖活跃表示和磁盘表示 ... ok
+test 默认配置合法且拒绝非有限比例与溢出 ... ok
+test 缓冲移动后仍对齐并保留数据 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/p0_reference.rs (target/debug/deps/p0_reference-4adf8d5214d4f91b)
+
+running 9 tests
+test 终结一次且修改后错误不得重试 ... ok
+test 损坏轨迹拒绝 ... ok
+test 故障按事件与出现次数单次触发 ... ok
+test 变长追加与类型错误不修改旧值 ... ok
+test 跳号拒绝与多会话互不消费序号 ... ok
+test 固定轨迹与独立预期逐步一致 ... ok
+test 通知恐慌不改变已终结结果 ... ok
+test 可能生效区间的恐慌不会重复执行修改 ... ok
+test 生成器固定种子及格式往返可重放 ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/p1_keys.rs (target/debug/deps/p1_keys-00b49b6a327785ec)
+
+running 9 tests
+test 编码长度错误不会修改输出且整数损坏输入被拒绝 ... ok
+test 算法种子与编码版本分别拒绝变化 ... ok
+test 相同标签的不同键仍须比较编码 ... ok
+test 地址校验分页与推进边界 ... ok
+test 独立进程键指纹 ... ok
+test 整数边界固定小端编码 ... ok
+test 字节键固定向量与拥有型往返 ... ok
+test 身份拒绝空值且并发生成不重复 ... ok
+test 重启后编码哈希与语义描述一致 ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/p1_values.rs (target/debug/deps/p1_values-8160a8b05605317c)
+
+running 4 tests
+test 普通及原子整数固定小端逻辑编码 ... ok
+test 活跃和编码尺寸均受限且分配布局不溢出 ... ok
+test 解码失败释放临时拥有值且不产生槽许可 ... ok
+test 普通字节值覆盖空值非文本及变长槽 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/p3_failures.rs (target/debug/deps/p3_failures-7b15b607e295c72b)
+
+running 5 tests
+test 序号拒绝不调用键方法且归还原请求 ... ok
+test 键恐慌拒绝不消费序号并关闭引擎 ... ok
+test 生效后请求析构恐慌返回已生效且不展开到调用者 ... ok
+test 非发送上下文及输出通过真实读取留在调用线程 ... ok
+test 各阶段错误和恐慌的影响及回调次数矩阵 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/p3_history.rs (target/debug/deps/p3_history-af17c408d46eec76)
+
+running 2 tests
+test 检查器接受合法重叠但拒绝错误结果及实时顺序违例 ... ok
+test 三会话四操作混合历史可线性化 ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/p3_lifecycle.rs (target/debug/deps/p3_lifecycle-a6f7059103975a4b)
+
+running 7 tests
+test 设备关闭失败不能报告成功且重试不会重新开放注册 ... ok
+test 丢弃空会话注销且同身份可重新登记 ... ok
+test 共享实例可在另一线程注册并关闭会话 ... ok
+test 活跃会话上限和无效身份拒绝后仍可工作 ... ok
+test 会话准备拒绝归还线程名额且不影响原有会话 ... ok
+test 创建共享会话与关闭完整生命周期 ... ok
+test 线程会话名额按实例隔离且关闭不必销毁对象即可重新注册 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/p3_memory.rs (target/debug/deps/p3_memory-34883e448fcdf86a)
+
+running 6 tests
+test 可能修改的错误失败关闭且不重复执行 ... ok
+test 同标签不同键通过公开接口分别读取 ... ok
+test 空存储插入原地更新与追加替换可读 ... ok
+test 四操作非法序号在用户键之前拒绝且之后仍可接受跳号 ... ok
+test 四操作墓碑条件创建及复制更新闭环 ... ok
+test 多会话同键累加不会丢更新 ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/p3_model.rs (target/debug/deps/p3_model-c28ca65c09e7269d)
+
+running 4 tests
+test 变长值增长收缩类型错误与序号拒绝对照 ... ok
+test 固定轨迹通过真实引擎逐操作对照 ... ok
+test 确定种子混合值多会话四操作对照 ... ok
+test 原生文件两页内存变长值四操作混合轨迹 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/p4_device.rs (target/debug/deps/p4_device-4c545055e6694819)
+
+running 11 tests
+test 空设备拒绝原样归还且不承诺恢复 ... ok
+test 可控短写短读和失败保持缓冲与数据边界 ... ok
+test 关闭排空但仍可收取完成且超时保留推进 ... ok
+test 读写短读和错误均归还原缓冲且终结一次 ... ok
+test 反向执行取消待执行请求与迟到取消都只终结一次 ... ok
+test 拒绝不消耗下一次故障且多个请求反序归还 ... ok
+test 删除的开放对象仍计入预算直到最后句柄关闭 ... ok
+test 文件代次关闭容量和持久化能力拒绝 ... ok
+test 重命名覆盖与删除不改变已有句柄的文件身份 ... ok
+test 队列满拒绝原样归还且不消费请求编号 ... ok
+test 取消与执行竞争保留两个独立的一次终结 ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/p4_files.rs (target/debug/deps/p4_files-42bb66f7cd947a90)
+
+running 3 tests
+test 完成未收取仍占队列容量且失败归还原缓冲 ... ok
+test 取消与关闭竞争仍逐项归还缓冲并只完成一次 ... ok
+test 原生工作线程偏移写入同步重开与关闭后收取完成 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/p5_recovery.rs (target/debug/deps/p5_recovery-aa2887074b1362a0)
+
+running 3 tests
+test 恢复会话线程名额覆盖关闭重续且序号不退回检查点 ... ok
+test 变长字节键值恢复后读改写扩展且重新恢复保持结果 ... ok
+test 启用读缓存的变长字节值命中后可读改写并再次恢复 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests/p6_scan.rs (target/debug/deps/p6_scan-b071abd98a50437c)
+
+running 1 test
+test 三模式返回变长物理历史且重启恢复后保持旧版本和墓碑 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/p7_compaction.rs (target/debug/deps/p7_compaction-4e2654d399640fe2)
+
+running 1 test
+test 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切分 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running tests/p7_metadata.rs (target/debug/deps/p7_metadata-fbd685ac72914ad0)
+
+running 5 tests
+test 已接受锁持有至关闭且设备关闭释放未收取的锁完成 ... ok
+test 枚举只描述符号链接且不能经链接逃出根目录 ... ok
+test 原生及内存目录枚举保留名称且超预算整体失败 ... ok
+test 独立句柄共享独占互斥且竞争不耗尽句柄表 ... ok
+test 跨进程锁竞争且异常退出释放句柄 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/p9_allocator.rs (target/debug/deps/p9_allocator-0f1a1440fafbaebd)
+
+running 1 test
+test 分配计数覆盖清零增长缩小及最终释放且保留原数据 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/p9_benchmark_support.rs (target/debug/deps/p9_benchmark_support-be7444c4fa64a9fc)
+
+running 2 tests
+test 计量只累计实际完成字节且拒绝错误和旧输出不重复计数 ... ok
+test 固定轨迹的混合比例删除缺失及放大分母有独立预期 ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/p9_history.rs (target/debug/deps/p9_history-4bbb0f739003f586)
+
+running 1 test
+test 原生磁盘双挂起与维护交错的完整历史可线性化且恢复一致 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.22s
+
+     Running tests/p9_upstream.rs (target/debug/deps/p9_upstream-0ac4a8f5f3fa5cca)
+
+running 1 test
+test 同一拥有型轨迹输出真实引擎结果供上游对照 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/skeleton_boundary.rs (target/debug/deps/skeleton_boundary-e1492f23deebc7b1)
+
+running 2 tests
+test 共享引擎与本线程上下文类型可以同时成立 ... ok
+test 创建传递设备失败且无效恢复身份不打开设备 ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests raster
+
+running 3 tests
+test src/config/mod.rs - config::Config::from_toml_str_at (line 280) ... ok
+test src/types/error.rs - types::error::OperationError (line 153) ... ok
+test src/lib.rs - (line 10) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 6 tests
+test src/api/completion.rs - api::completion::Ticket (line 34) - compile fail ... ok
+test src/schema/value.rs - schema::value::ValueLayout (line 107) - compile fail ... ok
+test src/schema/value.rs - schema::value::ValueRead (line 153) - compile fail ... ok
+test src/api/completion.rs - api::completion::Ticket (line 39) - compile fail ... ok
+test src/api/session.rs - api::session::Session (line 26) - compile fail ... ok
+test src/api/session.rs - api::session::Session (line 31) - compile fail ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+all doctests ran in 2.20s; merged doctests compilation took 1.08s

@@ -1,0 +1,179 @@
+重复 1/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.07s
+
+重复 2/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.04s
+
+重复 3/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.05s
+
+重复 4/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 5/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 6/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 7/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 8/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 9/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 10/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 11/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 12/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 13/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 14/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 15/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 16/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.04s
+
+重复 17/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 18/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.04s
+
+重复 19/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
+
+重复 20/20
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 1 test
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 344 filtered out; finished in 0.03s
