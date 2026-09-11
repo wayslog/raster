@@ -88,6 +88,9 @@ struct Entry {
 }
 struct Bucket {
     blocks: Vec<[Option<Entry>; SLOTS]>,
+    // 即使 GC 释放了全部条目，也保留该桶单调修订，防止空槽再次出现时的 ABA。
+    revision: u64,
+    empty_revision: u64,
 }
 struct Table {
     owner: u64,
@@ -110,7 +113,11 @@ impl Table {
             .try_reserve_exact(config.buckets)
             .map_err(|_| Error::OutOfMemory)?;
         for _ in 0..config.buckets {
-            buckets.push(Mutex::new(Bucket { blocks: Vec::new() }));
+            buckets.push(Mutex::new(Bucket {
+                blocks: Vec::new(),
+                revision: 0,
+                empty_revision: 0,
+            }));
         }
         Ok(Self {
             owner,
@@ -131,7 +138,7 @@ impl Table {
             bucket,
             tag,
             head: entry.map_or(IndexHead::Empty, |e| e.head),
-            revision: entry.map_or(0, |e| e.revision),
+            revision: entry.map_or(entries.empty_revision, |e| e.revision),
             table_generation: self.generation,
             hash: Some(hash),
         }
@@ -174,7 +181,7 @@ impl Table {
         if current != expected {
             return Ok(PublishResult::Conflict(current));
         }
-        let revision = current
+        let revision = bucket
             .revision
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
@@ -202,6 +209,7 @@ impl Table {
             block[0] = Some(next);
             bucket.blocks.push(block);
         }
+        bucket.revision = revision;
         Ok(PublishResult::Published)
     }
     /// 逐桶模糊映像；不声称跨桶事务快照，缓存头须由上层规范化后再调用。
@@ -279,6 +287,7 @@ impl Table {
     }
 }
 
+mod gc;
 pub(crate) mod growth;
 pub(crate) use growth::MemIndex;
 

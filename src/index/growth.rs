@@ -92,6 +92,21 @@ impl MemIndex {
         }
         table.compare_publish(expected, head)
     }
+    /// 逻辑 begin 发布后逐桶清除旧链头；调用者先排除扩容并规范化缓存头。
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "P7.2 逐桶 GC 驱动接入前由索引竞争和扩容测试验证")
+    )]
+    pub fn clean_bucket(&self, bucket: usize, begin: LogAddress) -> Result<usize, Error> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+        if state.growing.is_some() {
+            return Err(Error::Busy);
+        }
+        state.active.clean_bucket(bucket, begin)
+    }
     pub fn snapshot(&self) -> Result<IndexImage, Error> {
         let state = self
             .state
@@ -197,6 +212,10 @@ impl MemIndex {
                 .map_err(|_| Error::InvalidState("新索引桶锁中毒"))?;
             lower.blocks = low;
             upper.blocks = high;
+            lower.revision = source.revision;
+            upper.revision = source.revision;
+            lower.empty_revision = source.empty_revision;
+            upper.empty_revision = source.empty_revision;
             growth.next += 1;
         }
         let result = GrowthProgress {
@@ -359,5 +378,73 @@ mod tests {
                 IndexHead::Log(LogAddress(worker * 100 + 99))
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod gc_tests {
+    use super::*;
+    #[test]
+    fn 扩容复制桶修订历史并拒绝迁移期间清理() {
+        let index = MemIndex::new(IndexConfig { buckets: 1 }).unwrap();
+        let hash = KeyHash(7 << 48);
+        let empty = index.prepare(hash).unwrap();
+        index
+            .compare_publish(empty, IndexHead::Log(LogAddress(7)))
+            .unwrap();
+        assert_eq!(index.clean_bucket(0, LogAddress(8)).unwrap(), 1);
+        let before = index.prepare(hash).unwrap();
+        index.begin_growth().unwrap();
+        assert!(matches!(
+            index.clean_bucket(0, LogAddress(8)),
+            Err(Error::Busy)
+        ));
+        index.grow_step(PollBudget::default()).unwrap();
+        let after = index.prepare(hash).unwrap();
+        assert!(after.revision > empty.revision);
+        assert!(matches!(
+            index
+                .compare_publish(before, IndexHead::Log(LogAddress(7)))
+                .unwrap(),
+            PublishResult::Conflict(_)
+        ));
+        index
+            .compare_publish(after, IndexHead::Log(LogAddress(7)))
+            .unwrap();
+        let created = index.prepare(hash).unwrap();
+        assert!(created.revision > after.revision);
+        assert_eq!(index.clean_bucket(0, LogAddress(8)).unwrap(), 1);
+        assert!(matches!(
+            index
+                .compare_publish(after, IndexHead::Log(LogAddress(7)))
+                .unwrap(),
+            PublishResult::Conflict(_)
+        ));
+        assert!(index.clean_bucket(2, LogAddress(8)).is_err());
+    }
+    #[test]
+    fn 不同标签普通发布不撤销另一空槽许可但回收会撤销() {
+        let index = MemIndex::new(IndexConfig { buckets: 1 }).unwrap();
+        let one = KeyHash(1 << 48);
+        let two = KeyHash(2 << 48);
+        let first = index.prepare(one).unwrap();
+        let second = index.prepare(two).unwrap();
+        index
+            .compare_publish(first, IndexHead::Log(LogAddress(1)))
+            .unwrap();
+        assert!(matches!(
+            index
+                .compare_publish(second, IndexHead::Log(LogAddress(2)))
+                .unwrap(),
+            PublishResult::Published
+        ));
+        let empty = index.prepare(KeyHash(3 << 48)).unwrap();
+        index.clean_bucket(0, LogAddress(3)).unwrap();
+        assert!(matches!(
+            index
+                .compare_publish(empty, IndexHead::Log(LogAddress(3)))
+                .unwrap(),
+            PublishResult::Conflict(_)
+        ));
     }
 }
