@@ -201,7 +201,7 @@ impl LogLookup {
             };
             let frontiers = log.frontiers()?;
             if address < frontiers.begin {
-                return Err(Error::RangeTruncated);
+                return Ok(LookupStep::Missing);
             }
             if address >= frontiers.tail {
                 return Err(Error::InvalidFormat("查询地址超过日志尾部"));

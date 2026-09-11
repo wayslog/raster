@@ -4,6 +4,13 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
+    /// 回收失败保留已经生效的逻辑边界和确认完成的物理删除数。
+    GcFailed {
+        begin: super::LogAddress,
+        index_cleaned: bool,
+        deleted_segments: u64,
+        cause: Box<Error>,
+    },
     /// 压缩失败保留已发布的迁移数；until 是请求的截止地址，不表示已完成扫描范围。
     CompactionFailed {
         until: super::LogAddress,
@@ -39,6 +46,16 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GcFailed {
+                begin,
+                index_cleaned,
+                deleted_segments,
+                cause,
+            } => write!(
+                f,
+                "回收失败：begin {}，索引清理 {index_cleaned}，已确认删除 {deleted_segments} 段，原因：{cause}",
+                begin.0
+            ),
             Self::CompactionFailed {
                 until,
                 copied,
@@ -68,7 +85,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(source) => Some(source),
-            Self::CompactionFailed { cause, .. } => Some(&**cause),
+            Self::CompactionFailed { cause, .. } | Self::GcFailed { cause, .. } => Some(&**cause),
             _ => None,
         }
     }

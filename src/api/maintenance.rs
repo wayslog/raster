@@ -51,6 +51,11 @@ pub struct CompactionOptions {
 #[derive(Clone, Debug)]
 pub enum PhysicalReclamation {
     Completed,
+    /// 旧页租约或在途读取仍需要旧范围；本次动作已终结，可稍后按相同 begin 重试。
+    DeferredByRuntime {
+        begin: LogAddress,
+        end: LogAddress,
+    },
     DeferredByRecoverySet {
         blockers: Vec<RecoverySet>,
         begin: LogAddress,
@@ -61,6 +66,8 @@ pub enum PhysicalReclamation {
 pub struct GcReport {
     pub begin: LogAddress,
     pub index_cleaned: bool,
+    /// 本次经目录同步确认完成的段删除数，包含接续前次失败的删除。
+    pub deleted_segments: u64,
     pub physical: PhysicalReclamation,
 }
 #[derive(Clone, Debug)]
@@ -150,8 +157,8 @@ impl<S: Schema> Maintenance<S> {
     ) -> Result<MaintenanceTicket<CompactionReport>, Error> {
         self.inner.start_compaction(options)
     }
-    pub fn shift_begin(&self, _address: LogAddress) -> Result<MaintenanceTicket<GcReport>, Error> {
-        self.inner.not_ready("maintenance::gc")
+    pub fn shift_begin(&self, address: LogAddress) -> Result<MaintenanceTicket<GcReport>, Error> {
+        self.inner.start_gc(address)
     }
     pub fn grow_index(&self) -> Result<MaintenanceTicket<IndexGrowthReport>, Error> {
         self.inner.start_growth()

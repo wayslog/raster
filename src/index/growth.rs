@@ -92,11 +92,17 @@ impl MemIndex {
         }
         table.compare_publish(expected, head)
     }
+    pub fn bucket_count(&self) -> Result<usize, Error> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+        if state.growing.is_some() {
+            return Err(Error::Busy);
+        }
+        Ok(state.active.buckets.len())
+    }
     /// 逻辑 begin 发布后逐桶清除旧链头；调用者先排除扩容并规范化缓存头。
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "P7.2 逐桶 GC 驱动接入前由索引竞争和扩容测试验证")
-    )]
     pub fn clean_bucket(&self, bucket: usize, begin: LogAddress) -> Result<usize, Error> {
         let state = self
             .state

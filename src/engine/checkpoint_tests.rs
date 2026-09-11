@@ -1329,3 +1329,6 @@ mod conditional_copy;
 
 #[path = "compaction_tests.rs"]
 mod compaction;
+
+#[path = "gc_tests.rs"]
+mod gc;

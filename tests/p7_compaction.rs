@@ -133,7 +133,9 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
         serial += 1;
     }
     let mut prefix = checkpoint(&store, &mut session);
+    let mut copied_begin = prefix.end;
     for algorithm in [CompactionAlgorithm::ScanDedup, CompactionAlgorithm::Lookup] {
+        copied_begin = prefix.end;
         let ticket = store
             .maintenance()
             .compact(CompactionOptions {
@@ -163,6 +165,13 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
         scan.close().unwrap();
         prefix = current;
     }
+    let gc = store.maintenance().shift_begin(copied_begin).unwrap();
+    let gc = session.wait_maintenance(&gc, deadline()).unwrap();
+    let gc = gc.as_ref().as_ref().unwrap();
+    assert_eq!(gc.begin, copied_begin);
+    assert!(gc.index_cleaned);
+    assert!(matches!(gc.physical, PhysicalReclamation::Completed));
+    prefix = checkpoint(&store, &mut session);
     let session_id = session.id();
     assert_eq!(
         prefix

@@ -5,6 +5,11 @@ use crate::{log::flush::PageFlush, schema::Schema, types::*};
 pub(crate) struct StorageProgress {
     flush: Option<(RequestId, PageFlush)>,
 }
+impl StorageProgress {
+    pub(crate) fn has_flush(&self) -> bool {
+        self.flush.is_some()
+    }
+}
 impl<S: Schema> Engine<S> {
     pub(crate) fn progress_storage(&self) -> Result<bool, Error> {
         if !self.storage.device.capabilities().supports_files {
@@ -60,6 +65,10 @@ impl<S: Schema> Engine<S> {
                 Ok(_) | Err(Error::Busy) => {}
                 Err(error) => return Err(error),
             }
+        }
+        // GC 负责越过作废前缀；只排空已有写入，避免重新编码已经逻辑丢弃的数据。
+        if self.coordinator.snapshot()?.action == Some(crate::coordination::Action::Gc) {
+            return Ok(false);
         }
         // 至少保留当前页可变，最多保留 memory_pages - 1 页，留出循环推进空间。
         let mutable = ((self.config.log.memory_pages as f64 * self.config.log.mutable_fraction)

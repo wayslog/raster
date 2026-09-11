@@ -271,3 +271,12 @@ Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记�
 成功报告的 copied 包含迁移的最新墓碑，gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, cause }`：until 是请求边界，copied 是已发布迁移数，cause 保留实际原因。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
 
 ScanDedup 的不同键数与键字节预算分别为 `maintenance.max_compaction_keys`（默认 1,000,000）和 `maintenance.max_compaction_key_bytes`（默认 64 MiB）。预算不足时本次动作失败，不能未经声明切换算法。Lookup 不累积候选表。
+
+
+## P7.2 已接通的工作段回收
+
+`shift_begin(address)` 已返回真实维护票据。热边界非法直接拒绝；冷边界验证失败通过票据报告 `GcFailed`。逻辑 begin 发布后普通查询对旧键返回缺失，跨界物理扫描返回 RangeTruncated。GC 不搬迁被截断范围中的最新值，需要保留它们时先完成压缩。
+
+`GcReport { begin, index_cleaned, deleted_segments, physical }` 分离逻辑截断、索引清理与物理结果。旧页或在途读取阻碍回收时返回 `DeferredByRuntime { begin, end }` 并结束动作；可在读者推进后用相同地址重试。普通失败为 `GcFailed { begin, index_cleaned, deleted_segments, cause }`，保留部分效果；显式重试接续关闭/删除/同步步骤，额外轮询不自动重试。
+
+v1 检查点持有独立材料副本，工作段回收不会删除这些材料。GC 后旧自动索引配对失效，需要新 Index/Full 后再发起 Log 检查点。保留集合显式释放及 `DeferredByRecoverySet` 的实际依赖处理仍在 P7.2 范围内待完成，见 [回收交付记录](acceptance/P7.2回收交付记录.md)。

@@ -27,6 +27,16 @@ pub(crate) struct CheckpointRuntime {
     pub(crate) retained: RetentionCatalog,
 }
 impl CheckpointRuntime {
+    pub(crate) fn invalidate_before(&mut self, begin: LogAddress) {
+        if self
+            .latest_index
+            .as_ref()
+            .is_some_and(|index| index.begin < begin)
+        {
+            self.latest_index = None;
+        }
+    }
+
     pub(crate) fn recovered(index: &Manifest, log: &Manifest) -> Result<Self, Error> {
         let mut retained = RetentionCatalog::default();
         retained.record_committed(index)?;

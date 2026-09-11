@@ -182,6 +182,39 @@ impl<V: ValueLayout> HybridLog<V> {
             .ok_or(Error::CapacityExceeded)?;
         Ok(ReservationActivity(&self.state))
     }
+    /// 调用者已验证记录边界且取得全部业务写入仲裁；逻辑截断不声明物理删除。
+    pub fn publish_begin(&self, begin: LogAddress) -> Result<(), Error> {
+        begin.validate()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        if begin < state.frontiers.begin || begin > self.pool.tail()? {
+            return Err(Error::InvalidFormat("逻辑 begin 不能倒退或越过尾部"));
+        }
+        if state.reservations != 0 {
+            return Err(Error::Busy);
+        }
+        state.frontiers.begin = begin;
+        Ok(())
+    }
+    /// 调用者已停止新刷盘并排空既有写入；完整旧页已经逻辑作废，无需为了回收再写出。
+    /// 跳过的刷盘范围位于 begin 之前，不构成被丢弃数据的持久化凭据。
+    pub fn discard_prefix(&self) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+        let floor =
+            LogAddress(state.frontiers.begin.0 / self.page_bytes as u64 * self.page_bytes as u64);
+        if state.flush.is_some() {
+            return Err(Error::Busy);
+        }
+        state.frontiers.read_only = state.frontiers.read_only.max(floor);
+        state.frontiers.safe_read_only = state.frontiers.safe_read_only.max(floor);
+        state.frontiers.flushed_until = state.frontiers.flushed_until.max(floor);
+        Ok(())
+    }
     pub fn frontiers(&self) -> Result<Frontiers, Error> {
         let state = self
             .state
@@ -465,6 +498,9 @@ impl<V: ValueLayout> HybridLog<V> {
                 .state
                 .lock()
                 .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            if end <= state.frontiers.begin {
+                return Err(Error::RangeTruncated);
+            }
             if end > state.frontiers.safe_read_only {
                 return Err(Error::Busy);
             }
@@ -474,7 +510,7 @@ impl<V: ValueLayout> HybridLog<V> {
                 .lock()
                 .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
             let mut values = Vec::new();
-            for (address, value) in records.range(begin..end) {
+            for (address, value) in records.range(begin.max(state.frontiers.begin)..end) {
                 values.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
                 values.push((*address, value.clone()));
             }

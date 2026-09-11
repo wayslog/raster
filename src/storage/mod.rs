@@ -342,3 +342,5 @@ mod native_tests;
 
 pub(crate) mod open;
 pub(crate) mod transfer;
+
+pub(crate) mod reclaim;

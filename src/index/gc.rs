@@ -1,10 +1,6 @@
 //! 逐桶清理失效链头；空槽与存活条目共用单调桶修订，回收溢出块不重置历史。
 use super::*;
 impl Table {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "P7.2 逐桶 GC 驱动接入前由底层测试验证")
-    )]
     pub(super) fn clean_bucket(&self, number: usize, begin: LogAddress) -> Result<usize, Error> {
         begin.validate()?;
         let mut bucket = self
