@@ -1,0 +1,9 @@
+{
+  "当前提交": "f0f97250f709e79563060c2b58d06e171be7702b",
+  "结论": "业务通过；性能触发原复核线，未完成",
+  "文件SHA256": {
+    "current.csv": "0e917189d7a0a53cd384aedb4501b035cfdd622ee5c0c90b877b6ddc434093f0",
+    "comparison.json": "c201661b8c6080e828e40e32ac3b84b07c91af586bd2c29c9223e997be9d8a9a",
+    "old.csv": "af43a023da2cccef5eb9841fe4fab5fb4f75c07b98984ed46537e50d9a440089"
+  }
+}
