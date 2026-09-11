@@ -16,6 +16,7 @@ pub(crate) struct CatalogLock {
     phase: Phase,
     pending: Option<IoId>,
     file: Option<FileId>,
+    contended: bool,
 }
 impl CatalogLock {
     pub fn new(
@@ -33,6 +34,7 @@ impl CatalogLock {
             phase: Phase::Acquire,
             pending: None,
             file: None,
+            contended: false,
         })
     }
     pub fn held(&self) -> bool {
@@ -40,6 +42,24 @@ impl CatalogLock {
     }
     pub fn closed(&self) -> bool {
         matches!(self.phase, Phase::Closed)
+    }
+    pub fn exclusive_handle(&self, storage: &SegmentedStorage) -> Result<FileId, Error> {
+        self.check_owner(storage)?;
+        if !self.held() || self.mode != FileLockMode::Exclusive {
+            return Err(Error::InvalidState("目录枚举需要持续持有独占锁"));
+        }
+        Ok(self.file.expect("已取得独占锁"))
+    }
+    pub fn take_contention(&mut self) -> bool {
+        std::mem::take(&mut self.contended)
+    }
+    /// 仅在未接受加锁或已收到 Busy 完成时取消，不能丢弃在途加锁。
+    pub fn cancel_unacquired(&mut self) -> Result<(), Error> {
+        if !matches!(self.phase, Phase::Acquire) || self.pending.is_some() {
+            return Err(Error::InvalidState("目录锁仍在途或已取得"));
+        }
+        self.phase = Phase::Closed;
+        Ok(())
     }
     pub fn release(&mut self) -> Result<(), Error> {
         match self.phase {
@@ -105,7 +125,9 @@ impl CatalogLock {
                 self.file = Some(file);
                 self.phase = Phase::Held;
             }
-            (Phase::Acquire, Err(Error::Busy)) => {}
+            (Phase::Acquire, Err(Error::Busy)) => {
+                self.contended = true;
+            }
             (Phase::Close, Ok(IoOutcome::Done) | Err(Error::RangeTruncated)) => {
                 self.file = None;
                 self.phase = Phase::Closed;

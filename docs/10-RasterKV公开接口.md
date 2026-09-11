@@ -206,6 +206,9 @@ impl<S: Schema> Maintenance<S> {
     pub fn shift_begin(
         &self, address: LogAddress,
     ) -> Result<MaintenanceTicket<GcReport>, MaintenanceStartError>;
+    pub fn release_checkpoint(
+        &self, token: CheckpointToken,
+    ) -> Result<MaintenanceTicket<CheckpointReleaseReport>, Error>;
     pub fn grow_index(
         &self,
     ) -> Result<MaintenanceTicket<IndexGrowthReport>, MaintenanceStartError>;
@@ -223,12 +226,13 @@ impl<S: Schema> Maintenance<S> {
 | CheckpointReport | kind、已完成 token、检查点版本、日志边界；日志/完整检查点包含各会话 DurableProgress |
 | RecoveryReport | 实际使用的 RecoverySet、恢复版本、恢复边界、可继续会话及持久化进度 |
 | CompactionReport | 已完成扫描/搬运范围、迁移统计、可选 GC/检查点结果；失败保留已经发生的效果 |
-| GcReport | 逻辑 begin 与索引清理状态；物理删除分别报告 Completed 或 DeferredByRecoverySet，后者含阻碍的恢复集和地址范围 |
+| GcReport | begin、index_cleaned、deleted_segments；工作段物理回收为 Completed 或 DeferredByRuntime |
+| CheckpointReleaseReport | token、retirement、confirmed_absent_materials；检查点材料回收为 Completed 或带实际引用集合的 DeferredByRecoverySet |
 | IndexGrowthReport | 原/新桶数、完成后的表代次；启动返回不等于扩容完成 |
 
 完整检查点可产生可用的 RecoverySet；仅索引检查点不能单独宣称会话 durable。`RecoverySet` 显式包含索引 token 和日志 token，验证 store ID、格式/schema/hash 标识、版本和覆盖关系；不同 token 只有匹配时才能组合。
 
-GC 的全局动作在逻辑截断、必要 I/O 安全协调和索引清理完成后终结；有效恢复集要求保留的段由后续回收任务删除，不长期占用全局动作。报告 DeferredByRecoverySet 不能描述成物理空间已经释放，用户可从诊断继续观察回收进度。
+GC 与检查点显式释放是分别报告的独立动作。延后或普通删除错误终结本次动作，后续显式调用才能重试；没有自动删除队列。DeferredByRecoverySet 表示目标 token 仍受已提交 Log 引用保护，没有释放其材料，也不会永久占用动作。
 
 为保留回调风格，可提供 **可选**的 Pending 完成观察器 `FnOnce(&OperationResult<T>) + 'static`：仅借用最终拥有型结果，在原会话 poll 中执行，不接收 Session，不允许重入同会话。先记录终结状态再通知，观察器 panic 不重新执行操作。主要接口使用 Ticket；该观察器不是 I/O 线程回调。
 
@@ -279,4 +283,21 @@ ScanDedup 的不同键数与键字节预算分别为 `maintenance.max_compaction
 
 `GcReport { begin, index_cleaned, deleted_segments, physical }` 分离逻辑截断、索引清理与物理结果。旧页或在途读取阻碍回收时返回 `DeferredByRuntime { begin, end }` 并结束动作；可在读者推进后用相同地址重试。普通失败为 `GcFailed { begin, index_cleaned, deleted_segments, cause }`，保留部分效果；显式重试接续关闭/删除/同步步骤，额外轮询不自动重试。
 
-v1 检查点持有独立材料副本，工作段回收不会删除这些材料。GC 后旧自动索引配对失效，需要新 Index/Full 后再发起 Log 检查点。保留集合显式释放及 `DeferredByRecoverySet` 的实际依赖处理仍在 P7.2 范围内待完成，见 [回收交付记录](acceptance/P7.2回收交付记录.md)。
+v1 检查点持有独立材料副本，工作段回收不会删除这些材料。GC 后旧自动索引配对失效，需要新 Index/Full 后再发起 Log 检查点。显式释放由以下独立 API 处理，验证证据见 [回收交付记录](acceptance/P7.2回收交付记录.md)。
+
+
+## 检查点显式释放
+
+`Maintenance::release_checkpoint(token)` 接受后返回 `MaintenanceTicket<CheckpointReleaseReport>`。调用表示放弃该 token 的恢复能力；它可以来自本次进程未曾登记的旧检查点。仍被已提交 Log 引用的 Index/Full 返回 `DeferredByRecoverySet { blockers, begin, end }`，其中 blockers 来自磁盘实际元数据；本次没有删除，动作已经结束。先释放引用方，再显式重试基准 token。v1 的材料为各 token 独占副本，不与工作段 GC 混用。
+
+| 失效状态 | 含义 |
+| --- | --- |
+| NotAttempted | 本次未发出失效操作；不保证未知或以前已失效的 token 可恢复 |
+| PossiblyRetired | 已接受失效操作或发现先前失效标识，但本次尚未确认目录同步；不能假设仍可恢复 |
+| Retired | 已确认失效目录同步；后续材料删除仍可能失败 |
+
+报告和 `Error::CheckpointReleaseFailed { token, retirement, confirmed_absent_materials, cause }` 均保留已知效果。`confirmed_absent_materials` 是本次经目录同步确认不存在的材料数，包含此前已经删除、此次显式重试重新确认的材料；不能用作新增删除数或释放字节数。Completed 表示清单材料均处理完成，owner、manifest、commit.released 及 token 目录继续保留以防 token 复用并支持跨重启重试。
+
+实例内动作冲突在接受前返回 Busy；目录锁与其他实例发布/恢复发生竞争时，通过已接受票据报告 cause=Busy，释放本次动作，需显式重试。未知目录、链接、损坏或缺失的清单、断裂引用以及超预算均保守失败，没有按运行期目录缺项授权删除。正常失败收尾后可继续业务、检查点或再次释放；身份错误、panic 或未确认资源进入失败关闭。
+
+`maintenance.max_checkpoint_tokens` 默认 4096；`max_checkpoint_catalog_bytes` 默认 64 MiB，必须非零。后者限制整次目录名称、commit 和 manifest 字节总量；达到预算时整体拒绝，不使用不完整目录。已释放 token 的必要元数据也计入预算；应按实际保留历史调整限制，目前不自动清理这些元数据。

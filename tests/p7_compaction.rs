@@ -1,4 +1,4 @@
-//! 仅使用公开接口验证空键、二进制变长值、墓碑与重复压缩后恢复。
+//! 仅使用公开接口验证空键、变长值、墓碑、重复压缩及释放旧检查点后恢复。
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{
     RasterKV, Session, Submission,
@@ -133,6 +133,7 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
         serial += 1;
     }
     let mut prefix = checkpoint(&store, &mut session);
+    let mut retired_tokens = vec![prefix.token];
     let mut copied_begin = prefix.end;
     for algorithm in [CompactionAlgorithm::ScanDedup, CompactionAlgorithm::Lookup] {
         copied_begin = prefix.end;
@@ -149,6 +150,7 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
         let report = session.wait_maintenance(&ticket, deadline()).unwrap();
         assert_eq!(report.as_ref().as_ref().unwrap().copied, 30);
         let current = checkpoint(&store, &mut session);
+        retired_tokens.push(current.token);
         assert_eq!(current.begin, prefix.begin);
         let mut scan = store
             .scan(ScanOptions {
@@ -172,6 +174,14 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
     assert!(gc.index_cleaned);
     assert!(matches!(gc.physical, PhysicalReclamation::Completed));
     prefix = checkpoint(&store, &mut session);
+    for token in retired_tokens {
+        let release = store.maintenance().release_checkpoint(token).unwrap();
+        let result = session.wait_maintenance(&release, deadline()).unwrap();
+        let report = result.as_ref().as_ref().unwrap();
+        assert_eq!(report.retirement, CheckpointRetirement::Retired);
+        assert!(report.confirmed_absent_materials > 0);
+        assert!(matches!(report.physical, PhysicalReclamation::Completed));
+    }
     let session_id = session.id();
     assert_eq!(
         prefix

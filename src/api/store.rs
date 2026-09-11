@@ -153,6 +153,7 @@ impl<S: Schema> RasterKV<S> {
             self.inner.release_stopped_checkpoint()?;
             self.inner.release_stopped_compaction()?;
             self.inner.release_stopped_gc()?;
+            self.inner.release_stopped_checkpoint_release()?;
             *done = true;
             if let Some(error) = failure {
                 return Err(error);
@@ -216,6 +217,7 @@ impl<S: Schema> Builder<S> {
                 scans: Default::default(),
                 compaction: std::sync::Mutex::new(Default::default()),
                 gc: std::sync::Mutex::new(Default::default()),
+                checkpoint_release: std::sync::Mutex::new(Default::default()),
                 growth: std::sync::Mutex::new(Default::default()),
                 checkpoints: std::sync::Mutex::new(Default::default()),
                 storage_progress: std::sync::Mutex::new(Default::default()),

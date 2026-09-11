@@ -2,8 +2,23 @@
 
 use std::fmt;
 
+/// 检查点失效与材料删除分开确认；未知结果不能当作仍可恢复。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckpointRetirement {
+    /// 本次没有发出失效操作；不证明未知或此前失效的 token 可恢复。
+    NotAttempted,
+    PossiblyRetired,
+    Retired,
+}
+
 #[derive(Debug)]
 pub enum Error {
+    CheckpointReleaseFailed {
+        token: super::CheckpointToken,
+        retirement: CheckpointRetirement,
+        confirmed_absent_materials: u64,
+        cause: Box<Error>,
+    },
     /// 回收失败保留已经生效的逻辑边界和确认完成的物理删除数。
     GcFailed {
         begin: super::LogAddress,
@@ -46,6 +61,16 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::CheckpointReleaseFailed {
+                token,
+                retirement,
+                confirmed_absent_materials,
+                cause,
+            } => write!(
+                f,
+                "检查点释放失败：token {:x?}，失效状态 {retirement:?}，已确认不存在 {confirmed_absent_materials} 个材料，原因：{cause}",
+                token.0
+            ),
             Self::GcFailed {
                 begin,
                 index_cleaned,
@@ -85,7 +110,9 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(source) => Some(source),
-            Self::CompactionFailed { cause, .. } | Self::GcFailed { cause, .. } => Some(&**cause),
+            Self::CompactionFailed { cause, .. }
+            | Self::GcFailed { cause, .. }
+            | Self::CheckpointReleaseFailed { cause, .. } => Some(&**cause),
             _ => None,
         }
     }

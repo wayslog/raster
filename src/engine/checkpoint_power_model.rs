@@ -11,6 +11,7 @@ pub(super) enum Change {
     SyncFile(FileId),
     SyncDirectory(PathBuf),
     Rename(PathBuf, PathBuf),
+    Remove(PathBuf),
     Other,
 }
 impl Change {
@@ -24,6 +25,7 @@ impl Change {
                 source,
                 destination,
             } => Self::Rename(source.clone(), destination.clone()),
+            IoOperation::RemoveFile(path) => Self::Remove(path.clone()),
             _ => Self::Other,
         }
     }
@@ -87,6 +89,9 @@ impl DurableModel {
             Change::Rename(source, destination) => {
                 let id = self.paths.remove(&source).expect("重命名源已登记");
                 self.paths.insert(destination, id);
+            }
+            Change::Remove(path) => {
+                self.paths.remove(&path).expect("删除源已登记");
             }
             Change::Other => {}
         }
@@ -159,6 +164,16 @@ fn 掉电模型分别保留文件同步与目录同步且丢弃未同步内容()
         std::fs::read(base.join("重命名已同步/新名")).unwrap(),
         "已同步".as_bytes()
     );
+    std::fs::remove_file(live.join("新名")).unwrap();
+    model.apply(&live, Change::Remove("新名".into()), &done);
+    model.materialize(&base.join("删除未同步"));
+    assert_eq!(
+        std::fs::read(base.join("删除未同步/新名")).unwrap(),
+        "已同步".as_bytes()
+    );
+    model.apply(&live, Change::SyncDirectory(PathBuf::new()), &done);
+    model.materialize(&base.join("删除已同步"));
+    assert!(!base.join("删除已同步/新名").exists());
     std::fs::write(live.join("未同步文件"), "内容".as_bytes()).unwrap();
     model.apply(&live, Change::Open("未同步文件".into()), &opened);
     model.apply(&live, Change::SyncDirectory(PathBuf::new()), &done);

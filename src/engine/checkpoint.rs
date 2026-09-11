@@ -29,6 +29,18 @@ pub(crate) struct CheckpointRuntime {
     pub(crate) retained: RetentionCatalog,
 }
 impl CheckpointRuntime {
+    pub(crate) fn release_token(&mut self, token: CheckpointToken, confirmed: bool) {
+        if self
+            .latest_index
+            .as_ref()
+            .is_some_and(|index| index.token == token)
+        {
+            self.latest_index = None;
+        }
+        if confirmed {
+            self.retained.retire(token);
+        }
+    }
     pub(crate) fn invalidate_before(&mut self, begin: LogAddress) {
         if self
             .latest_index
@@ -259,6 +271,17 @@ impl Job {
                         return Ok(false);
                     }
                 }
+                // 命名空间创建同样受共享锁保护，释放端的独占枚举才不会漏掉已有目录。
+                if self.catalog_lock.is_none() {
+                    self.catalog_lock = Some(CatalogLock::new(
+                        &engine.storage,
+                        route,
+                        crate::device::FileLockMode::Shared,
+                    )?);
+                }
+                if !self.catalog_lock.as_ref().expect("目录锁已创建").held() {
+                    return self.progress_lock(engine);
+                }
                 if self.directory.is_none() {
                     self.work = Some(Work::Directory(DirectoryPrepare::new(
                         &engine.storage,
@@ -295,16 +318,6 @@ impl Job {
                         },
                     )?));
                 } else {
-                    if self.catalog_lock.is_none() {
-                        self.catalog_lock = Some(CatalogLock::new(
-                            &engine.storage,
-                            route,
-                            crate::device::FileLockMode::Shared,
-                        )?);
-                    }
-                    if !self.catalog_lock.as_ref().expect("目录锁已创建").held() {
-                        return self.progress_lock(engine);
-                    }
                     if self.manifest.kind == Kind::Log && !self.base_validated {
                         self.work = Some(Work::BaseIndex(ManifestRead::new(
                             &engine.storage,

@@ -23,6 +23,9 @@ pub(crate) struct RetentionCatalog {
     records: BTreeMap<CheckpointToken, RetentionRecord>,
 }
 impl RetentionCatalog {
+    pub fn retire(&mut self, token: CheckpointToken) {
+        self.records.remove(&token);
+    }
     /// 调用者必须已同步发布或从已验证恢复集合中读取清单；本函数不证明磁盘提交。
     pub fn record_committed(&mut self, manifest: &Manifest) -> Result<(), Error> {
         manifest.validate()?;

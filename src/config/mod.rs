@@ -50,6 +50,10 @@ pub struct CacheConfig {
 }
 #[derive(Clone, Debug)]
 pub struct MaintenanceConfig {
+    /// 检查点释放按磁盘目录核对依赖；包含已失效目录，超限整体拒绝。
+    pub max_checkpoint_tokens: usize,
+    /// 单次目录名称和 commit/manifest 读取的累计字节预算。
+    pub max_checkpoint_catalog_bytes: usize,
     /// ScanDedup 最多保存的不同键数和键字节总量；Lookup 不累积候选。
     pub max_compaction_keys: usize,
     pub max_compaction_key_bytes: usize,
@@ -79,6 +83,8 @@ impl Default for Config {
             },
             cache: CacheConfig::default(),
             maintenance: MaintenanceConfig {
+                max_checkpoint_tokens: 4096,
+                max_checkpoint_catalog_bytes: 64 * 1024 * 1024,
                 max_compaction_keys: 1_000_000,
                 max_compaction_key_bytes: 64 * 1024 * 1024,
                 auto_compaction: false,
@@ -148,7 +154,9 @@ impl Config {
         if self.cache.enabled && self.cache.capacity_bytes == 0 {
             return Err(invalid("cache.capacity_bytes", "启用缓存时必须非零"));
         }
-        if self.maintenance.max_compaction_keys == 0
+        if self.maintenance.max_checkpoint_tokens == 0
+            || self.maintenance.max_checkpoint_catalog_bytes == 0
+            || self.maintenance.max_compaction_keys == 0
             || self.maintenance.max_compaction_key_bytes == 0
             || self.maintenance.workers == 0
             || self.session.max_sessions == 0

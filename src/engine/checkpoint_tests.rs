@@ -1335,3 +1335,9 @@ mod gc;
 
 #[path = "catalog_tests.rs"]
 mod catalog;
+
+#[path = "checkpoint_release_tests.rs"]
+mod checkpoint_release;
+
+#[path = "checkpoint_power_model.rs"]
+mod power;

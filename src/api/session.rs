@@ -213,6 +213,7 @@ impl<S: Schema> Session<S> {
                 self.engine.fail_growth()?;
                 self.engine.fail_compaction()?;
                 self.engine.fail_gc()?;
+                self.engine.fail_checkpoint_release()?;
                 if let Some(report) = ticket.try_report()? {
                     return Ok(report);
                 }

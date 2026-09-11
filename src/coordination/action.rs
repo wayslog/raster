@@ -39,6 +39,7 @@ fn next_phase(action: Action, phase: Phase) -> Option<Phase> {
         (GrowIndex, GrowPrepare) => Some(GrowCopy),
         (GrowIndex, GrowCopy) => Some(Publish),
         (Compact, Compacting) => Some(Publish),
+        (ReleaseCheckpoint, ReclaimCheckpoint) => Some(Publish),
         _ => None,
     }
 }
@@ -101,6 +102,7 @@ impl Coordinator {
             Action::Gc => Phase::GcIo,
             Action::GrowIndex => Phase::GrowPrepare,
             Action::Compact => Phase::Compacting,
+            Action::ReleaseCheckpoint => Phase::ReclaimCheckpoint,
         };
         Ok(id)
     }

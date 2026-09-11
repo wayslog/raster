@@ -55,7 +55,17 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                 }
             }
         }
+        if !self.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            match self.progress_checkpoint_release() {
+                Ok((advanced, _)) => storage_advanced |= advanced,
+                Err(error) => {
+                    self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    failure.get_or_insert(error);
+                }
+            }
+        }
         if self.failed.load(std::sync::atomic::Ordering::SeqCst) {
+            self.fail_checkpoint_release()?;
             self.fail_compaction()?;
             self.fail_gc()?;
         }

@@ -1,8 +1,6 @@
 //! 原生子进程中断与独立的丢弃未同步状态模型，分别验证恢复结果。
 use super::*;
-#[path = "checkpoint_power_model.rs"]
-mod power;
-use power::{Change, DurableModel};
+use crate::engine::checkpoint_tests::power::{Change, DurableModel};
 use std::{collections::BTreeMap, sync::Mutex};
 
 #[derive(Default)]

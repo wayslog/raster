@@ -71,6 +71,14 @@ pub struct GcReport {
     pub physical: PhysicalReclamation,
 }
 #[derive(Clone, Debug)]
+pub struct CheckpointReleaseReport {
+    pub token: CheckpointToken,
+    pub retirement: CheckpointRetirement,
+    /// 本次经目录同步确认不存在的材料数（含重试前已缺失项），不是新增删除数。
+    pub confirmed_absent_materials: u64,
+    pub physical: PhysicalReclamation,
+}
+#[derive(Clone, Debug)]
 pub struct CompactionReport {
     pub until: LogAddress,
     pub copied: u64,
@@ -145,6 +153,13 @@ pub struct Maintenance<S: Schema> {
     pub(crate) inner: Arc<Engine<S>>,
 }
 impl<S: Schema> Maintenance<S> {
+    /// 显式放弃一个检查点 token；若仍被有效 Log 引用则延后且释放动作占用。
+    pub fn release_checkpoint(
+        &self,
+        token: CheckpointToken,
+    ) -> Result<MaintenanceTicket<CheckpointReleaseReport>, Error> {
+        self.inner.start_checkpoint_release(token)
+    }
     pub fn checkpoint(
         &self,
         kind: CheckpointKind,

@@ -11,6 +11,7 @@ pub(crate) struct ManifestRead {
     token: CheckpointToken,
     route: CompletionRoute,
     chunk: usize,
+    limit: usize,
     commit: Option<Commit>,
     read: MaterialRead,
     done: bool,
@@ -24,6 +25,17 @@ impl ManifestRead {
         route: CompletionRoute,
         chunk: usize,
     ) -> Result<Self, Error> {
+        Self::bounded(storage, store, token, route, chunk, false, usize::MAX)
+    }
+    pub fn bounded(
+        storage: &SegmentedStorage,
+        store: StoreId,
+        token: CheckpointToken,
+        route: CompletionRoute,
+        chunk: usize,
+        retired: bool,
+        limit: usize,
+    ) -> Result<Self, Error> {
         store.validate()?;
         token.validate()?;
         Ok(Self {
@@ -31,12 +43,13 @@ impl ManifestRead {
             token,
             route,
             chunk,
+            limit,
             commit: None,
             read: MaterialRead::new(
                 storage,
                 ReadSpec {
                     token,
-                    name: "commit",
+                    name: if retired { "commit.released" } else { "commit" },
                     bytes: 56,
                     limit: 56,
                     chunk,
@@ -82,7 +95,7 @@ impl ManifestRead {
                     token: self.token,
                     name: "manifest",
                     bytes: commit.manifest_bytes,
-                    limit: length,
+                    limit: length.min(self.limit),
                     chunk: self.chunk,
                     route: self.route,
                 },
@@ -99,9 +112,11 @@ impl ManifestRead {
     ) -> Result<(), Rejected<IoCompletion>> {
         self.read.accept(storage, completion)
     }
-    #[cfg(test)]
     pub fn has_resources(&self) -> bool {
         self.read.has_resources()
+    }
+    pub fn manifest_bytes(&self) -> Option<u64> {
+        self.commit.as_ref().map(|commit| commit.manifest_bytes)
     }
     pub fn take_result(&mut self) -> Option<Result<Manifest, Error>> {
         self.result.take()

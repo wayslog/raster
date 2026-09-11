@@ -13,6 +13,7 @@ pub(crate) enum Action {
     Gc,
     GrowIndex,
     Compact,
+    ReleaseCheckpoint,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -29,6 +30,7 @@ pub(crate) enum Phase {
     GrowPrepare,
     GrowCopy,
     Compacting,
+    ReclaimCheckpoint,
     Failed,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

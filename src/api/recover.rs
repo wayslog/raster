@@ -390,6 +390,7 @@ fn build<S: Schema>(
         scans: Default::default(),
         compaction: std::sync::Mutex::new(Default::default()),
         gc: std::sync::Mutex::new(Default::default()),
+        checkpoint_release: std::sync::Mutex::new(Default::default()),
         io: Arc::new(CompletionHub::new(set.store, io_capacity)?),
         growth: std::sync::Mutex::new(Default::default()),
         checkpoints: std::sync::Mutex::new(

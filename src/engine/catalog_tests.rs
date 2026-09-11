@@ -7,6 +7,8 @@ use std::sync::{
 #[derive(Default)]
 struct Control {
     attempts: AtomicUsize,
+    pause_namespace: AtomicBool,
+    namespace_blocked: AtomicBool,
     pause_reads: AtomicBool,
     read_blocked: AtomicBool,
     pause_publish: AtomicBool,
@@ -35,6 +37,16 @@ impl Device for Controlled {
     }
     fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {
         let lock = matches!(request.operation, IoOperation::TryLock { .. });
+        if self.control.pause_namespace.load(Ordering::SeqCst)
+            && matches!(&request.operation, IoOperation::CreateDirectory(path) if path.starts_with("checkpoints"))
+        {
+            self.control.namespace_blocked.store(true, Ordering::SeqCst);
+            return Err(RejectedIo {
+                request,
+                reason: Error::Busy,
+            });
+        }
+
         if self.control.pause_reads.load(Ordering::SeqCst)
             && matches!(request.operation, IoOperation::Read { .. })
         {
@@ -148,6 +160,7 @@ fn 独占目录锁阻挡检查点且发布共享锁覆盖提交重命名() {
     let guard = external(&store);
     let held = lock(&*guard, FileLockMode::Exclusive);
     control.pause_publish.store(true, Ordering::SeqCst);
+    control.pause_namespace.store(true, Ordering::SeqCst);
     let ticket = store
         .maintenance()
         .checkpoint(CheckpointKind::Full)
@@ -161,6 +174,14 @@ fn 独占目录锁阻挡检查点且发布共享锁覆盖提交重命名() {
         crate::coordination::Phase::WaitFlush
     );
     close(&*guard, held);
+    progress_until(&store, &mut session, || {
+        control.namespace_blocked.load(Ordering::SeqCst)
+    });
+    assert!(
+        matches!(try_lock(&*guard, FileLockMode::Exclusive), Err(Error::Busy)),
+        "创建命名空间之前必须已经取得共享锁"
+    );
+    control.pause_namespace.store(false, Ordering::SeqCst);
     progress_until(&store, &mut session, || {
         control.publish_blocked.load(Ordering::SeqCst)
     });
@@ -221,8 +242,27 @@ fn 恢复读取持有共享目录锁且实例发布前释放() {
     ));
     let shared = lock(&*guard, FileLockMode::Shared);
     close(&*guard, shared);
+    let mut releaser = store.start_session(Default::default()).unwrap();
+    let blocked = store
+        .maintenance()
+        .release_checkpoint(report.token)
+        .unwrap();
+    let result = releaser.wait_maintenance(&blocked, deadline()).unwrap();
+    assert!(
+        matches!(&*result, Err(Error::CheckpointReleaseFailed { cause, .. }) if matches!(&**cause, Error::Busy))
+    );
     control.pause_reads.store(false, Ordering::SeqCst);
     let (restored, _) = child.join().unwrap().unwrap();
+    let release = store
+        .maintenance()
+        .release_checkpoint(report.token)
+        .unwrap();
+    let result = releaser.wait_maintenance(&release, deadline()).unwrap();
+    assert_eq!(
+        result.as_ref().as_ref().unwrap().retirement,
+        CheckpointRetirement::Retired
+    );
+    releaser.close(deadline()).unwrap();
     let available = lock(&*guard, FileLockMode::Exclusive);
     let mut session = restored.start_session(Default::default()).unwrap();
     assert_eq!(read_value(&mut session, 0, 7), Some(7));
@@ -238,6 +278,13 @@ fn 等待目录锁期间基准索引失效则日志检查点拒绝发布() {
     let (_root, store) = setup(Some(Box::new(Factory(control.clone()))));
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
+    let anchor = wait(
+        &mut session,
+        &store
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
     let base = wait(
         &mut session,
         &store
@@ -245,49 +292,46 @@ fn 等待目录锁期间基准索引失效则日志检查点拒绝发布() {
             .checkpoint(CheckpointKind::Index)
             .unwrap(),
     );
-    let guard = external(&store);
-    let held = lock(&*guard, FileLockMode::Exclusive);
+    let release_control = Arc::new(Control::default());
+    let (other, _) = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(store.inner.config.clone())
+        .device(Box::new(Factory(release_control.clone())))
+        .recover(crate::api::maintenance::RecoverySet {
+            store: store.id(),
+            index: anchor.token,
+            log: anchor.token,
+        })
+        .unwrap();
+    let mut releaser = other.start_session(Default::default()).unwrap();
+    release_control.pause_reads.store(true, Ordering::SeqCst);
+    let release = other.maintenance().release_checkpoint(base.token).unwrap();
+    progress_until(&other, &mut releaser, || {
+        release_control.read_blocked.load(Ordering::SeqCst)
+    });
     let before = control.attempts.load(Ordering::SeqCst);
     let ticket = store.maintenance().checkpoint(CheckpointKind::Log).unwrap();
     progress_until(&store, &mut session, || {
         control.attempts.load(Ordering::SeqCst) >= before + 2
     });
-    // 测试在独占仲裁内模拟提交失效；公开释放及删除重试由后续任务接入。
-    let source = store
-        .inner
-        .storage
-        .checkpoint_path(base.token, "commit")
-        .unwrap();
-    let destination = store
-        .inner
-        .storage
-        .checkpoint_path(base.token, "commit.retired")
-        .unwrap();
-    execute(
-        &*guard,
-        IoOperation::Rename {
-            source: source.clone(),
-            destination,
-        },
-    )
-    .unwrap();
-    execute(
-        &*guard,
-        IoOperation::SyncDirectory(source.parent().unwrap().to_path_buf()),
-    )
-    .unwrap();
-    close(&*guard, held);
+    release_control.pause_reads.store(false, Ordering::SeqCst);
+    let result = releaser.wait_maintenance(&release, deadline()).unwrap();
+    assert_eq!(
+        result.as_ref().as_ref().unwrap().retirement,
+        CheckpointRetirement::Retired
+    );
     let result = session.wait_maintenance(&ticket, deadline()).unwrap();
     assert!(
         matches!(&*result, Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
     );
-    for entry in std::fs::read_dir(store.inner.config.storage.root.join("checkpoints")).unwrap() {
-        assert!(
-            !entry.unwrap().path().join("commit").exists(),
-            "不发布缺少基准索引的日志检查点"
-        );
-    }
-    // 检查点失败沿用失败关闭协议；未确认关闭的目录句柄由设备关闭释放。
+    let committed = std::fs::read_dir(store.inner.config.storage.root.join("checkpoints"))
+        .unwrap()
+        .filter(|entry| entry.as_ref().unwrap().path().join("commit").exists())
+        .count();
+    assert_eq!(
+        committed, 1,
+        "只保留原始完整集合，不能发布缺少基准索引的日志检查点"
+    );
+    let guard = external(&store);
     assert!(matches!(
         try_lock(&*guard, FileLockMode::Exclusive),
         Err(Error::Busy)
@@ -298,4 +342,14 @@ fn 等待目录锁期间基准索引失效则日志检查点拒绝发布() {
     let available = lock(&*guard, FileLockMode::Exclusive);
     close(&*guard, available);
     guard.shutdown(deadline()).unwrap();
+    assert_eq!(read_value(&mut releaser, 0, 7), Some(7));
+    wait(
+        &mut releaser,
+        &other
+            .maintenance()
+            .checkpoint(CheckpointKind::Full)
+            .unwrap(),
+    );
+    releaser.close(deadline()).unwrap();
+    other.shutdown(deadline()).unwrap();
 }
