@@ -75,6 +75,10 @@ jobs:
             cargo doc --locked --no-deps "${args[@]}"
             cargo run --locked --release --example memory "${args[@]}"
             cargo run --locked --release --example memory_matrix "${args[@]}"
+            cargo run --locked --release --example interface "${args[@]}"
+            cargo run --locked --release --example disk_lifecycle "${args[@]}"
+            cargo run --locked --release --example automatic "${args[@]}"
+            python3 scripts/check_examples.py
           } 2>&1 | python3 -c 'import os,sys; [sys.stdout.write(line.replace(os.environ["GITHUB_WORKSPACE"], "工作树").replace(os.environ["HOME"], "用户目录")) for line in sys.stdin]' | tee target/p0-evidence/checks.txt
       - name: 保存验收证据
         if: always()

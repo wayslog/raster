@@ -108,20 +108,24 @@ fn 磁盘读改写读取与删除挂起跨越扩容且回调只执行一次() {
     else {
         panic!("旧页必须挂起")
     };
-    let mut deleter = store.start_session(SessionOptions::default()).unwrap();
-    let Submission::Pending(mut deleted) = deleter
-        .delete(Serial(10), Delete(1), Default::default())
-        .unwrap()
-    else {
-        panic!("旧页删除必须挂起")
-    };
+    let worker_store = store.clone();
+    let deleter = crate::engine::session_actor::Actor::new(move || {
+        let mut session = worker_store.start_session(Default::default()).unwrap();
+        let Submission::Pending(ticket) = session
+            .delete(Serial(10), Delete(1), Default::default())
+            .unwrap()
+        else {
+            panic!("冷页删除必须挂起");
+        };
+        (session, ticket)
+    });
     let growth = store.maintenance().grow_index().unwrap();
     assert!(matches!(
         store.maintenance().checkpoint(CheckpointKind::Full),
         Err(Error::Busy)
     ));
     session.refresh().unwrap();
-    deleter.refresh().unwrap();
+    deleter.call(|(session, _)| session.refresh().unwrap());
     finish_growth(&store, &growth).as_ref().as_ref().unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 0, "维护轮询不能执行用户回调");
     assert!(matches!(
@@ -129,11 +133,13 @@ fn 磁盘读改写读取与删除挂起跨越扩容且回调只执行一次() {
         crate::api::completion::Outcome::Success(5)
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(matches!(
-        deleter.wait(&mut deleted, deadline()).unwrap().unwrap(),
-        crate::api::completion::Outcome::Success(())
-    ));
-    deleter.close(deadline()).unwrap();
+    deleter.call(|(session, ticket)| {
+        assert!(matches!(
+            session.wait(ticket, deadline()).unwrap().unwrap(),
+            crate::api::Outcome::Success(())
+        ));
+        session.close(deadline()).unwrap();
+    });
     let Submission::Pending(mut read) = session
         .read(Serial(401), Read(2), Default::default())
         .unwrap()

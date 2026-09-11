@@ -63,16 +63,27 @@ pub(crate) struct Coordinator {
     max_sessions: usize,
 }
 impl Coordinator {
-    pub fn active_sessions(&self) -> Result<usize, Error> {
+    pub fn active_session_ids(&self) -> Result<Vec<SessionId>, Error> {
         let registry = self
             .registry
             .lock()
             .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
-        Ok(registry
-            .sessions
-            .values()
-            .filter(|entry| entry.active)
-            .count())
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(
+            registry
+                .sessions
+                .values()
+                .filter(|entry| entry.active)
+                .count(),
+        )
+        .map_err(|_| Error::OutOfMemory)?;
+        ids.extend(
+            registry
+                .sessions
+                .iter()
+                .filter_map(|(&id, entry)| entry.active.then_some(id)),
+        );
+        Ok(ids)
     }
     pub fn new(max_sessions: usize) -> Result<Self, Error> {
         if max_sessions == 0 {

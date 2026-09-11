@@ -248,21 +248,28 @@ impl<S: Schema> Maintenance<S> {
     ) -> Result<MaintenanceTicket<CheckpointReleaseReport>, Error> {
         self.inner.start_checkpoint_release(token)
     }
+    /// 接受三种检查点之一，返回待完成票据。Index 不承诺会话进度，Log 须绑定
+    /// 本实例已提交的索引材料；只有成功报告代表持久化完成。
     pub fn checkpoint(
         &self,
         kind: CheckpointKind,
     ) -> Result<MaintenanceTicket<CheckpointReport>, Error> {
         self.inner.start_checkpoint(kind)
     }
+    /// 按指定算法迁移仍需保留的记录；选项显式决定后续检查点和逻辑截断。
+    /// 已接受任务即使失败也可能复制部分记录，错误报告保留实际影响，不能盲目重放。
     pub fn compact(
         &self,
         options: CompactionOptions,
     ) -> Result<MaintenanceTicket<CompactionReport>, Error> {
         self.inner.start_compaction(options)
     }
+    /// 截断指定地址之前的逻辑日志；调用方必须先确认所需最新值已经迁移。
+    /// 物理回收可因租约延后，成功启动不等于删除已完成。
     pub fn shift_begin(&self, address: LogAddress) -> Result<MaintenanceTicket<GcReport>, Error> {
         self.inner.start_gc(address)
     }
+    /// 在线将桶数加倍；等待报告后保存 new_buckets，后续恢复需要匹配材料的容量。
     pub fn grow_index(&self) -> Result<MaintenanceTicket<IndexGrowthReport>, Error> {
         self.inner.start_growth()
     }

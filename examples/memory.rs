@@ -47,14 +47,14 @@ impl DeleteOperation<Schema> for Counter {
     type Output = ();
     fn complete(self, _: DeleteOutcome) {}
 }
-fn ready<T: 'static>(result: Submission<T>) -> Result<T, Error> {
+fn ready<T: 'static>(result: Submission<T>) -> Result<T, Box<dyn std::error::Error>> {
     match result {
         Submission::Ready(Ok(Outcome::Success(value))) => Ok(value),
-        Submission::Ready(Err(error)) => Err(error.cause),
-        _ => Err(Error::InvalidState("示例预期立即成功")),
+        Submission::Ready(Err(error)) => Err(error.into()),
+        _ => Err(Error::InvalidState("示例预期立即成功").into()),
     }
 }
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .device(Box::new(raster::device::null::NullDeviceFactory))
         .create()?;

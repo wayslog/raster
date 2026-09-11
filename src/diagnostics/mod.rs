@@ -1,7 +1,7 @@
 //! 结构化诊断与统计；计数不代表持久化，日志跨度和索引占用都不等于有效键数。
 use crate::{
     api::maintenance::AutoCompactionStatus,
-    types::{Generation, LogAddress},
+    types::{Generation, LogAddress, SessionId},
 };
 
 #[derive(Clone, Debug)]
@@ -16,6 +16,8 @@ pub struct Diagnostics {
     pub begin: LogAddress,
     pub tail: LogAddress,
     pub active_sessions: usize,
+    /// 与 active_sessions 来自同一次注册表读取，便于定位阻止关闭的会话。
+    pub active_session_ids: Vec<SessionId>,
     /// 已接受且尚未终结，包含同步执行中的回调。
     pub active_requests: usize,
     /// 已返回 Pending 且尚未终结；不包含已完成但未收取的结果槽。

@@ -55,7 +55,7 @@ impl<S: Schema> RasterKV<S> {
     pub fn maintenance(&self) -> Maintenance<S>;
     pub fn diagnostics(&self) -> Result<Diagnostics, Error>;
     pub fn scan(&self, options: ScanOptions) -> Result<RecordScanner<S>, ScanError>;
-    pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, ShutdownError>;
+    pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, Error>;
 }
 
 impl<S: Schema> Builder<S> {
@@ -336,3 +336,5 @@ v1 检查点持有独立材料副本，工作段回收不会删除这些材料�
 `stop_auto_compaction()` 幂等禁止新接受，已经接受的任务仍排空。`Maintenance::wait_auto_compaction(deadline)` 等待当前空闲或线程结束，`Session::wait_auto_compaction(deadline)` 还会在本线程推进自己的请求及屏障。Idle 是瞬时状态；需要确认彻底停止时先 stop 再 wait。超时不取消任务，不丢弃完成报告。Stopped/Failed 只有在收取调度线程后才可观察；失败关闭时未确认的设备资源仍保留到 shutdown。
 
 shutdown 先请求停止并等待自动任务，再检查活跃会话、扫描或手动动作；这些仍可能返回 Busy。即使随后 Busy，自动停止请求也已生效，原会话可继续完成和关闭。若自动任务等待手动检查点，调用者仍须用该手动任务的等待或 Maintenance::poll 驱动材料阶段，并让参与会话刷新屏障；自动等待本身不替代独立手动任务的驱动。失败关闭不生成成功检查点，也不重放业务回调。
+
+完整公开调用流程与每项功能的实际入口见 [公开接口使用流程](16-公开接口使用流程.md)。关闭使用统一 Error；活跃会话身份通过 Diagnostics.active_session_ids 提供。

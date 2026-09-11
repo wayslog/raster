@@ -17,7 +17,10 @@ mod progress;
 mod read;
 mod rmw;
 pub(crate) mod scan;
+#[cfg(test)]
+pub(crate) mod session_actor;
 mod storage_progress;
+pub(crate) mod thread_sessions;
 mod upsert;
 mod version_permit;
 
@@ -30,6 +33,7 @@ pub(crate) use pending::SessionRuntime;
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
     pub metrics: std::sync::Arc<metrics::Metrics>,
+    pub thread_sessions: std::sync::Arc<thread_sessions::ThreadSessions>,
     pub io: std::sync::Arc<io_hub::CompletionHub>,
     pub scans: scan::ScanRegistry,
     pub auto_compaction: auto_compaction::AutoCompactionRuntime,

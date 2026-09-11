@@ -276,6 +276,17 @@ impl Config {
         document::parse(input, &[])
     }
     /// 子表路径以各段键名表示，段内的点号不再拆分。
+    ///
+    /// ```
+    /// use raster::config::Config;
+    /// let config = Config::from_toml_str_at(
+    ///     "[app.raster.log]\npage_bytes=4096\n[app.raster.statistics]\nenabled=true",
+    ///     &["app", "raster"],
+    /// )?;
+    /// assert_eq!(config.log.page_bytes, 4096);
+    /// assert!(config.statistics.enabled);
+    /// # Ok::<(), raster::types::Error>(())
+    /// ```
     #[cfg(feature = "config-toml")]
     pub fn from_toml_str_at(input: &str, table_path: &[&str]) -> Result<Self, Error> {
         document::parse(input, table_path)

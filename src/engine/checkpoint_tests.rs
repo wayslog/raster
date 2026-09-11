@@ -207,7 +207,7 @@ fn 空存储完整检查点和丢弃票据后推进均可结束() {
 fn 检查点等待超时保留动作且会话放弃使已接受票据失败() {
     let (_root, store) = setup(None);
     let mut first = store.start_session(SessionOptions::default()).unwrap();
-    let second = store.start_session(SessionOptions::default()).unwrap();
+    let second = crate::engine::session_actor::session(&store);
     let ticket = store
         .maintenance()
         .checkpoint(CheckpointKind::Full)

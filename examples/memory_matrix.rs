@@ -12,6 +12,7 @@ use std::{
     sync::{Barrier, atomic::Ordering},
     time::{Duration, Instant},
 };
+type ExampleResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type Fixed = SchemaPair<U64Key, AtomicU64Value>;
 type Variable = SchemaPair<U64Key, SerializedValue<ByteValueCodec>>;
 struct Number {
@@ -67,7 +68,7 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
     make: impl Fn(u64, u64) -> O + Sync,
     threads: usize,
     hot: bool,
-) -> Result<(f64, u128, u128, u128, u64), Error> {
+) -> ExampleResult<(f64, u128, u128, u128, u64)> {
     let store = RasterKV::builder(schema)
         .device(Box::new(raster::device::null::NullDeviceFactory))
         .create()?;
@@ -79,12 +80,13 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
             let store = &store;
             let barrier = &barrier;
             let make = &make;
-            handles.push(scope.spawn(move || -> Result<(Vec<u128>, u64), Error> {
+            handles.push(scope.spawn(move || -> ExampleResult<(Vec<u128>, u64)> {
                 let session = store.start_session(SessionOptions::default());
                 let mut latency = Vec::with_capacity(count / threads);
                 let mut retries = 0;
                 barrier.wait();
                 let mut session = session?;
+                let end = Instant::now() + Duration::from_secs(60);
                 for i in 0..count / threads {
                     let sequence = (worker * count + i) as u64;
                     let key = if hot {
@@ -98,7 +100,10 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
                         match session.upsert(Serial(i as u64), request) {
                             Err(rejected) => {
                                 if !matches!(rejected.reason, Error::Busy) {
-                                    return Err(rejected.reason);
+                                    return Err(rejected.reason.into());
+                                }
+                                if Instant::now() >= end {
+                                    return Err(Error::DeadlineExceeded.into());
                                 }
                                 retries += 1;
                                 request = rejected.request;
@@ -109,8 +114,8 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
                                 latency.push(start.elapsed().as_nanos());
                                 break;
                             }
-                            Ok(Submission::Ready(Err(error))) => return Err(error.cause),
-                            _ => return Err(Error::InvalidState("基线预期同步完成")),
+                            Ok(Submission::Ready(Err(error))) => return Err(error.into()),
+                            _ => return Err(Error::InvalidState("基线预期同步完成").into()),
                         }
                     }
                 }
@@ -144,7 +149,7 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
         retries,
     ))
 }
-fn main() -> Result<(), Error> {
+fn main() -> ExampleResult<()> {
     println!("布局,分布,线程,轮次,操作数,每秒操作,P50纳秒,P95纳秒,P99纳秒,拒绝重试");
     for variable in [false, true] {
         for hot in [false, true] {

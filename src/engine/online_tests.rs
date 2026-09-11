@@ -100,13 +100,17 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
     else {
         panic!("冷页读改写必须挂起");
     };
-    let mut deleter = store.start_session(SessionOptions::default()).unwrap();
-    let Submission::Pending(mut deleted) = deleter
-        .delete(Serial(0), Delete(2), Default::default())
-        .unwrap()
-    else {
-        panic!("冷页删除必须挂起");
-    };
+    let worker_store = store.clone();
+    let deleter = crate::engine::session_actor::Actor::new(move || {
+        let mut session = worker_store.start_session(Default::default()).unwrap();
+        let Submission::Pending(ticket) = session
+            .delete(Serial(0), Delete(2), Default::default())
+            .unwrap()
+        else {
+            panic!("冷页删除必须挂起");
+        };
+        (session, ticket)
+    });
     let growth = store.maintenance().grow_index().unwrap();
     assert!(matches!(store.maintenance().grow_index(), Err(Error::Busy)));
     assert!(matches!(
@@ -114,7 +118,7 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         Err(Error::Busy)
     ));
     session.refresh().unwrap();
-    deleter.refresh().unwrap();
+    deleter.call(|(session, _)| session.refresh().unwrap());
     collect_one(&mut scanner, &mut rows);
     let end = deadline();
     let report = loop {
@@ -145,11 +149,13 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         Outcome::Success(6)
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(matches!(
-        deleter.wait(&mut deleted, deadline()).unwrap().unwrap(),
-        Outcome::Success(())
-    ));
-    deleter.close(deadline()).unwrap();
+    deleter.call(|(session, ticket)| {
+        assert!(matches!(
+            session.wait(ticket, deadline()).unwrap().unwrap(),
+            crate::api::Outcome::Success(())
+        ));
+        session.close(deadline()).unwrap();
+    });
     let Submission::Pending(mut reading) = session
         .read(Serial(403), Read(3), Default::default())
         .unwrap()

@@ -118,25 +118,27 @@ fn 迟到磁盘读取不将更新或删除之前的值重新装入缓存() {
     else {
         panic!("旧页应挂起")
     };
-    let mut deleter = store.start_session(SessionOptions::default()).unwrap();
-    match deleter
-        .delete(Serial(0), Delete(1), Default::default())
-        .unwrap()
-    {
-        Submission::Ready(result) => {
-            result.unwrap();
+    let deleter = crate::engine::session_actor::session(&store);
+    deleter.call(|deleter| {
+        match deleter
+            .delete(Serial(0), Delete(1), Default::default())
+            .unwrap()
+        {
+            Submission::Ready(result) => {
+                result.unwrap();
+            }
+            Submission::Pending(mut ticket) => {
+                deleter.wait(&mut ticket, deadline()).unwrap().unwrap();
+            }
         }
-        Submission::Pending(mut ticket) => {
-            deleter.wait(&mut ticket, deadline()).unwrap().unwrap();
-        }
-    }
+    });
     assert!(matches!(
         session.wait(&mut old, deadline()).unwrap().unwrap(),
         crate::api::completion::Outcome::Success(1)
     ));
     assert_eq!(read_value(&mut session, 404, 1), None);
     assert_eq!(store.inner.cache.allocated_bytes(), 0);
-    deleter.close(deadline()).unwrap();
+    deleter.call(|session| session.close(deadline()).unwrap());
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }

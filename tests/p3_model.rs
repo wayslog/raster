@@ -1,4 +1,6 @@
 //! 用 P0 的独立模型逐操作核验公开引擎；适配器不模拟索引和日志。
+#[path = "support/actor.rs"]
+mod actor;
 #[allow(dead_code)]
 mod support;
 use raster::{
@@ -208,23 +210,41 @@ fn replay_store(trace: Trace, store: RasterKV<Schema>) -> [usize; 4] {
     let mut sessions = std::collections::BTreeMap::new();
     let mut model = Model::default();
     for (i, step) in trace.steps.iter().enumerate() {
-        let session = sessions
-            .entry(step.session)
-            .or_insert_with(|| store.start_session(SessionOptions::default()).unwrap());
+        let session = sessions.entry(step.session).or_insert_with(|| {
+            let store = store.clone();
+            actor::Actor::new(move || store.start_session(SessionOptions::default()).unwrap())
+        });
         let expected = model.submit(step.clone());
-        assert_eq!(
-            actual(session, step, &mut pending),
-            expected,
-            "种子 {} 步骤 {i}",
-            trace.seed
-        );
-        assert_eq!(
-            session.last_accepted().map(|s| s.0),
-            model.last_accepted(step.session)
-        );
+        let input = step.clone();
+        let (observed, step_pending, last) = session.call(move |session| {
+            let mut pending = [0; 4];
+            let observed = actual(session, &input, &mut pending);
+            (observed, pending, session.last_accepted())
+        });
+        assert_eq!(observed, expected, "种子 {} 步骤 {i}", trace.seed);
+        assert_eq!(last.map(|s| s.0), model.last_accepted(step.session));
+        for (sum, count) in pending.iter_mut().zip(step_pending) {
+            *sum += count;
+        }
     }
+    for session in sessions.values() {
+        session.call(|session| {
+            session
+                .close(Deadline(
+                    std::time::Instant::now() + std::time::Duration::from_secs(15),
+                ))
+                .unwrap()
+        });
+    }
+    drop(sessions);
+    store
+        .shutdown(Deadline(
+            std::time::Instant::now() + std::time::Duration::from_secs(15),
+        ))
+        .unwrap();
     pending
 }
+
 #[test]
 fn 固定轨迹通过真实引擎逐操作对照() {
     replay(Trace::decode(include_str!("fixtures/p0.trace")).unwrap());

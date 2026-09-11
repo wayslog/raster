@@ -158,23 +158,27 @@ fn setup() -> RasterKV<Schema> {
 fn 会话轮询隔离回调且结果预算在收取后释放() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
-    let mut second = store.start_session(SessionOptions::default()).unwrap();
     let a = Rc::new(Cell::new(0));
-    let b = Rc::new(Cell::new(0));
     let Submission::Pending(mut ta) = first
         .read(Serial(0), request(0, &a), ReadOptions::default())
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("应挂起");
     };
-    let Submission::Pending(mut tb) = second
-        .read(Serial(0), request(1, &b), ReadOptions::default())
-        .map_err(|r| r.reason)
-        .unwrap()
-    else {
-        panic!("应挂起")
-    };
+    let worker_store = store.clone();
+    let second = crate::engine::session_actor::Actor::new(move || {
+        let mut second = worker_store.start_session(Default::default()).unwrap();
+        let b = Rc::new(Cell::new(0));
+        let Submission::Pending(tb) = second
+            .read(Serial(0), request(1, &b), ReadOptions::default())
+            .map_err(|r| r.reason)
+            .unwrap()
+        else {
+            panic!("应挂起");
+        };
+        (second, tb, b)
+    });
     assert!(
         first
             .read(Serial(1), request(0, &a), ReadOptions::default())
@@ -184,8 +188,10 @@ fn 会话轮询隔离回调且结果预算在收取后释放() {
         first.poll(PollBudget::default()).unwrap();
     }
     assert_eq!(a.get(), 1);
-    assert_eq!(b.get(), 0);
-    assert!(matches!(tb.try_take(), Ok(TicketState::Pending)));
+    second.call(|(_, tb, b)| {
+        assert_eq!(b.get(), 0);
+        assert!(matches!(tb.try_take(), Ok(TicketState::Pending)));
+    });
     assert!(
         first
             .read(Serial(1), request(0, &a), ReadOptions::default())
@@ -200,13 +206,11 @@ fn 会话轮询隔离回调且结果预算在收取后释放() {
             .read(Serial(1), request(0, &a), ReadOptions::default())
             .is_ok()
     );
-    for _ in 0..4 {
-        second.poll(PollBudget::default()).unwrap();
-    }
-    assert_eq!(b.get(), 1);
-    assert!(
-        matches!(tb.try_take(), Ok(TicketState::Ready(Ok(Outcome::Success(value)))) if *value==1)
-    );
+    second.call(|(second, tb, b)| {
+        for _ in 0..4 { second.poll(PollBudget::default()).unwrap(); }
+        assert_eq!(b.get(), 1);
+        assert!(matches!(tb.try_take(), Ok(TicketState::Ready(Ok(Outcome::Success(value)))) if *value==1));
+    });
 }
 #[test]
 fn 丢弃票据仍执行读取而丢弃会话明确终结未执行请求() {
@@ -468,7 +472,7 @@ fn finish_number(session: &mut crate::Session<Schema>, submission: Submission<u6
 fn 冷键查询期间发生替换时先重查新值再计算() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
-    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let second = crate::engine::session_actor::session(&store);
     let copies = Rc::new(Cell::new(0));
     let initials = Rc::new(Cell::new(0));
     let pending = first
@@ -485,18 +489,20 @@ fn 冷键查询期间发生替换时先重查新值再计算() {
         .map_err(|r| r.reason)
         .unwrap();
     assert!(matches!(pending, Submission::Pending(_)));
-    let replacement = second
-        .upsert(
-            Serial(0),
-            CountedPut {
-                key: 0,
-                value: 100,
-                calls: Rc::new(Cell::new(0)),
-            },
-        )
-        .map_err(|r| r.reason)
-        .unwrap();
-    assert_eq!(finish_number(&mut second, replacement), 100);
+    second.call(|second| {
+        let replacement = second
+            .upsert(
+                Serial(0),
+                CountedPut {
+                    key: 0,
+                    value: 100,
+                    calls: Rc::new(Cell::new(0)),
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        assert_eq!(finish_number(second, replacement), 100);
+    });
     assert_eq!(finish_number(&mut first, pending), 101);
     assert_eq!(copies.get(), 1);
     assert_eq!(initials.get(), 0);
@@ -522,7 +528,6 @@ fn 冷键查询期间发生替换时先重查新值再计算() {
 fn 读改写新建跨越容量窗口且两个冷键增量不会丢失() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
-    let mut second = store.start_session(SessionOptions::default()).unwrap();
     let copies = Rc::new(Cell::new(0));
     let initials = Rc::new(Cell::new(0));
     let request = |key| Add {
@@ -535,13 +540,29 @@ fn 读改写新建跨越容量窗口且两个冷键增量不会丢失() {
         .rmw(Serial(0), request(0), RmwOptions::default())
         .map_err(|r| r.reason)
         .unwrap();
-    let b = second
-        .rmw(Serial(0), request(0), RmwOptions::default())
-        .map_err(|r| r.reason)
-        .unwrap();
-    assert!(matches!(a, Submission::Pending(_)) && matches!(b, Submission::Pending(_)));
+    assert!(matches!(a, Submission::Pending(_)));
+    let worker_store = store.clone();
+    let second = crate::engine::session_actor::Actor::new(move || {
+        let mut second = worker_store.start_session(Default::default()).unwrap();
+        let copies = Rc::new(Cell::new(0));
+        let b = second
+            .rmw(
+                Serial(0),
+                Add {
+                    key: 0,
+                    delta: 1,
+                    copies: copies.clone(),
+                    initials: Rc::new(Cell::new(0)),
+                },
+                RmwOptions::default(),
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        assert!(matches!(b, Submission::Pending(_)));
+        (second, Some(b), copies)
+    });
     assert_eq!(finish_number(&mut first, a), 1);
-    assert_eq!(finish_number(&mut second, b), 2);
+    second.call(|(second, b, _)| assert_eq!(finish_number(second, b.take().unwrap()), 2));
     let mut waiting = 0;
     for i in 0..400 {
         let result = first
@@ -555,32 +576,18 @@ fn 读改写新建跨越容量窗口且两个冷键增量不会丢失() {
     }
     assert!(waiting > 3);
     assert!(initials.get() >= 400);
-    assert_eq!(copies.get(), 2);
-    let reads = Rc::new(Cell::new(0));
-    for key in [0, 1000, 1199, 1399] {
-        let serial = Serial(2000 + key);
-        let result = second
-            .read(serial, self::request(key, &reads), ReadOptions::default())
-            .map_err(|r| r.reason)
-            .unwrap();
-        let result = match result {
-            Submission::Ready(result) => result,
-            Submission::Pending(mut ticket) => {
-                let mut result = None;
-                for _ in 0..100 {
-                    second.poll(PollBudget::default()).unwrap();
-                    if let TicketState::Ready(value) = ticket.try_take().unwrap() {
-                        result = Some(value);
-                        break;
-                    }
-                }
-                result.unwrap()
-            }
-        };
-        assert!(
-            matches!(result, Ok(Outcome::Success(value)) if *value == if key == 0 { 2 } else { 1 })
-        );
-    }
+    assert_eq!(copies.get() + second.call(|(_, _, copies)| copies.get()), 2);
+    second.call(|(second, _, _)| {
+        let reads = Rc::new(Cell::new(0));
+        for key in [0, 1000, 1199, 1399] {
+            let result = second.read(Serial(2000 + key), self::request(key, &reads), ReadOptions::default()).map_err(|r| r.reason).unwrap();
+            let result = match result {
+                Submission::Ready(result) => result,
+                Submission::Pending(mut ticket) => second.wait(&mut ticket, wait_deadline()).unwrap(),
+            };
+            assert!(matches!(result, Ok(Outcome::Success(value)) if *value == if key == 0 { 2 } else { 1 }));
+        }
+    });
 }
 
 struct Erase {
@@ -605,7 +612,7 @@ impl DeleteOperation<Schema> for Erase {
 fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
-    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let second = crate::engine::session_actor::session(&store);
     let calls = Rc::new(Cell::new(0));
     let delete = |key| Erase {
         key,
@@ -617,18 +624,20 @@ fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
         .map_err(|r| r.reason)
         .unwrap();
     assert!(matches!(pending, Submission::Pending(_)));
-    let replace = second
-        .upsert(
-            Serial(0),
-            CountedPut {
-                key: 0,
-                value: 100,
-                calls: Rc::new(Cell::new(0)),
-            },
-        )
-        .map_err(|r| r.reason)
-        .unwrap();
-    assert_eq!(finish_number(&mut second, replace), 100);
+    second.call(|second| {
+        let replace = second
+            .upsert(
+                Serial(0),
+                CountedPut {
+                    key: 0,
+                    value: 100,
+                    calls: Rc::new(Cell::new(0)),
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        assert_eq!(finish_number(second, replace), 100);
+    });
     assert_eq!(finish_number(&mut first, pending), 0);
     let missing = first
         .delete(Serial(1), delete(999), DeleteOptions::default())
@@ -655,38 +664,40 @@ fn 删除等待期间重查替换记录且强制墓碑可以等待空间() {
         assert_eq!(calls.get(), i as usize + 2);
     }
     assert!(waiting >= 3);
-    for key in [0, 1000, 1399] {
-        let read = second
-            .read(
-                Serial(1000 + key),
-                request(key, &Rc::new(Cell::new(0))),
-                ReadOptions {
-                    abort_if_tombstone: true,
-                },
-            )
-            .map_err(|r| r.reason)
-            .unwrap();
-        let result = match read {
-            Submission::Ready(result) => result,
-            Submission::Pending(mut ticket) => {
-                let mut result = None;
-                for _ in 0..100 {
-                    second.poll(PollBudget::default()).unwrap();
-                    if let TicketState::Ready(value) = ticket.try_take().unwrap() {
-                        result = Some(value);
-                        break;
+    second.call(|second| {
+        for key in [0, 1000, 1399] {
+            let read = second
+                .read(
+                    Serial(1000 + key),
+                    request(key, &Rc::new(Cell::new(0))),
+                    ReadOptions {
+                        abort_if_tombstone: true,
+                    },
+                )
+                .map_err(|r| r.reason)
+                .unwrap();
+            let result = match read {
+                Submission::Ready(result) => result,
+                Submission::Pending(mut ticket) => {
+                    let mut result = None;
+                    for _ in 0..100 {
+                        second.poll(PollBudget::default()).unwrap();
+                        if let TicketState::Ready(value) = ticket.try_take().unwrap() {
+                            result = Some(value);
+                            break;
+                        }
                     }
+                    result.unwrap()
                 }
-                result.unwrap()
-            }
-        };
-        assert!(matches!(
-            result,
-            Ok(Outcome::Aborted(
-                crate::api::completion::AbortReason::Tombstone
-            ))
-        ));
-    }
+            };
+            assert!(matches!(
+                result,
+                Ok(Outcome::Aborted(
+                    crate::api::completion::AbortReason::Tombstone
+                ))
+            ));
+        }
+    });
 }
 #[test]
 fn 磁盘删除完成回调恐慌只终结一次且保留已生效墓碑() {
@@ -747,17 +758,20 @@ fn wait_deadline() -> Deadline {
 fn 等待超时保留请求且错会话不能推进票据() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
-    let mut second = store.start_session(SessionOptions::default()).unwrap();
+    let other_store = setup();
+    let mut other = other_store
+        .start_session(SessionOptions::default())
+        .unwrap();
     let calls = Rc::new(Cell::new(0));
     let Submission::Pending(mut ticket) = first
         .read(Serial(0), request(0, &calls), ReadOptions::default())
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("应挂起");
     };
     assert!(matches!(
-        second.wait(&mut ticket, wait_deadline()),
+        other.wait(&mut ticket, wait_deadline()),
         Err(Error::InvalidState(_))
     ));
     assert_eq!(calls.get(), 0);
@@ -766,6 +780,12 @@ fn 等待超时保留请求且错会话不能推进票据() {
         Err(Error::DeadlineExceeded)
     ));
     assert!(matches!(ticket.try_take(), Ok(TicketState::Pending)));
+    first.close(wait_deadline()).unwrap();
+    let mut next = store.start_session(Default::default()).unwrap();
+    assert!(matches!(
+        next.wait(&mut ticket, wait_deadline()),
+        Err(Error::InvalidState(_))
+    ));
     assert!(
         matches!(first.wait(&mut ticket, wait_deadline()).unwrap(), Ok(Outcome::Success(value)) if *value==0)
     );
@@ -774,6 +794,8 @@ fn 等待超时保留请求且错会话不能推进票据() {
         first.wait(&mut ticket, wait_deadline()),
         Err(Error::InvalidState(_))
     ));
+    next.close(wait_deadline()).unwrap();
+    other.close(wait_deadline()).unwrap();
 }
 #[test]
 fn 关闭超时后停止接受但仍可排空并在关闭后收取结果() {
@@ -1644,6 +1666,40 @@ fn 新版本替换与读改写不原地修改旧记录但同版本仍可更新()
     assert_eq!(old_rmw.read(|v| v).unwrap(), 58);
 }
 
+type NumberActor = crate::engine::session_actor::Actor<(
+    crate::Session<Schema>,
+    Option<crate::Ticket<u64>>,
+    Rc<Cell<usize>>,
+)>;
+fn number_actor(store: &RasterKV<Schema>) -> NumberActor {
+    let store = store.clone();
+    crate::engine::session_actor::Actor::new(move || {
+        (
+            store.start_session(Default::default()).unwrap(),
+            None,
+            Rc::new(Cell::new(0)),
+        )
+    })
+}
+fn begin_actor_cut(
+    store: &RasterKV<Schema>,
+    old: &mut crate::Session<Schema>,
+    new: &NumberActor,
+) -> MaintenanceId {
+    let id = store
+        .inner
+        .coordinator
+        .start_action(crate::coordination::Action::CheckpointLog)
+        .unwrap();
+    old.refresh().unwrap();
+    new.call(|(session, _, _)| session.refresh().unwrap());
+    store
+        .inner
+        .coordinator
+        .advance(id, crate::coordination::Phase::Prepare)
+        .unwrap();
+    id
+}
 #[test]
 fn 四操作等待同键旧版本终结且读取在许可后重新取得链头() {
     struct NumberRead {
@@ -1664,10 +1720,9 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
     }
     for operation in 0..4 {
         let store = setup();
-        let mut old = store.start_session(SessionOptions::default()).unwrap();
-        let mut new = store.start_session(SessionOptions::default()).unwrap();
+        let mut old = store.start_session(Default::default()).unwrap();
+        let new = number_actor(&store);
         let old_calls = Rc::new(Cell::new(0));
-        let new_calls = Rc::new(Cell::new(0));
         let Submission::Pending(mut old_ticket) = old
             .rmw(
                 Serial(0),
@@ -1682,65 +1737,68 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
             .map_err(|r| r.reason)
             .unwrap()
         else {
-            panic!("旧请求应等待读盘")
+            panic!("旧请求应等待读盘");
         };
-        let _action = begin_test_cut(&store, &mut [&mut old, &mut new]);
-        new.runtime.switch_version(CheckpointVersion(1)).unwrap();
-        let submission = match operation {
-            0 => new
-                .read(
-                    Serial(0),
-                    NumberRead {
-                        key: 0,
-                        calls: new_calls.clone(),
-                    },
-                    ReadOptions::default(),
-                )
-                .map_err(|r| r.reason),
-            1 => new
-                .upsert(
-                    Serial(0),
-                    CountedPut {
-                        key: 0,
-                        value: 100,
-                        calls: new_calls.clone(),
-                    },
-                )
-                .map_err(|r| r.reason),
-            2 => new
-                .rmw(
-                    Serial(0),
-                    Add {
-                        key: 0,
-                        delta: 2,
-                        copies: new_calls.clone(),
-                        initials: Rc::new(Cell::new(0)),
-                    },
-                    RmwOptions::default(),
-                )
-                .map_err(|r| r.reason),
-            _ => new
-                .delete(
-                    Serial(0),
-                    Erase {
-                        key: 0,
-                        calls: new_calls.clone(),
-                        panic: false,
-                    },
-                    DeleteOptions::default(),
-                )
-                .map_err(|r| r.reason),
-        }
-        .unwrap();
-        let Submission::Pending(mut ticket) = submission else {
-            panic!("新版本必须等待旧版本许可")
-        };
-        for _ in 0..5 {
-            new.poll(PollBudget::default()).unwrap();
-        }
+        let _action = begin_actor_cut(&store, &mut old, &new);
+        new.call(move |(new, ticket, new_calls)| {
+            new.runtime.switch_version(CheckpointVersion(1)).unwrap();
+            let submission = match operation {
+                0 => new
+                    .read(
+                        Serial(0),
+                        NumberRead {
+                            key: 0,
+                            calls: new_calls.clone(),
+                        },
+                        ReadOptions::default(),
+                    )
+                    .map_err(|r| r.reason),
+                1 => new
+                    .upsert(
+                        Serial(0),
+                        CountedPut {
+                            key: 0,
+                            value: 100,
+                            calls: new_calls.clone(),
+                        },
+                    )
+                    .map_err(|r| r.reason),
+                2 => new
+                    .rmw(
+                        Serial(0),
+                        Add {
+                            key: 0,
+                            delta: 2,
+                            copies: new_calls.clone(),
+                            initials: Rc::new(Cell::new(0)),
+                        },
+                        RmwOptions::default(),
+                    )
+                    .map_err(|r| r.reason),
+                _ => new
+                    .delete(
+                        Serial(0),
+                        Erase {
+                            key: 0,
+                            calls: new_calls.clone(),
+                            panic: false,
+                        },
+                        DeleteOptions::default(),
+                    )
+                    .map_err(|r| r.reason),
+            }
+            .unwrap();
+            let Submission::Pending(mut submitted) = submission else {
+                panic!("新版本必须等待旧版本许可");
+            };
+            for _ in 0..5 {
+                new.poll(PollBudget::default()).unwrap();
+            }
+            assert_eq!(new_calls.get(), 0);
+            assert!(matches!(submitted.try_take(), Ok(TicketState::Pending)));
+            *ticket = Some(submitted);
+        });
         assert_eq!(old_calls.get(), 0);
-        assert_eq!(new_calls.get(), 0);
-        assert!(matches!(ticket.try_take(), Ok(TicketState::Pending)));
         assert!(matches!(
             old.wait(&mut old_ticket, wait_deadline()).unwrap(),
             Ok(Outcome::Success(1))
@@ -1761,54 +1819,59 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
             .unwrap()
             .unwrap();
         let expected = [1, 100, 3, 0][operation];
-        assert!(
-            matches!(new.wait(&mut ticket,wait_deadline()).unwrap(),Ok(Outcome::Success(value)) if value==expected)
-        );
-        assert_eq!(new_calls.get(), 1);
+        new.call(move |(new, ticket, new_calls)| {
+            assert!(matches!(new.wait(ticket.as_mut().unwrap(), wait_deadline()).unwrap(), Ok(Outcome::Success(value)) if value == expected));
+            assert_eq!(new_calls.get(), 1);
+        });
         assert_eq!(old_value.read(|v| v).unwrap(), 1);
     }
 }
 #[test]
 fn 丢弃旧票据不释放许可而阶段放弃使新请求失败终结() {
     let store = setup();
-    let mut old = store.start_session(SessionOptions::default()).unwrap();
-    let mut new = store.start_session(SessionOptions::default()).unwrap();
+    let mut old = store.start_session(Default::default()).unwrap();
+    let new = number_actor(&store);
     let calls = Rc::new(Cell::new(0));
     let Submission::Pending(ticket) = old
         .read(Serial(0), request(0, &calls), ReadOptions::default())
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("应挂起");
     };
     drop(ticket);
-    let _action = begin_test_cut(&store, &mut [&mut old, &mut new]);
-    new.runtime.switch_version(CheckpointVersion(1)).unwrap();
-    let replacements = Rc::new(Cell::new(0));
-    let Submission::Pending(mut ticket) = new
-        .upsert(
-            Serial(0),
-            CountedPut {
-                key: 0,
-                value: 9,
-                calls: replacements.clone(),
-            },
-        )
-        .map_err(|r| r.reason)
-        .unwrap()
-    else {
-        panic!("应等待旧请求")
-    };
-    new.poll(PollBudget::default()).unwrap();
-    assert_eq!(replacements.get(), 0);
+    let _action = begin_actor_cut(&store, &mut old, &new);
+    new.call(|(new, ticket, replacements)| {
+        new.runtime.switch_version(CheckpointVersion(1)).unwrap();
+        let Submission::Pending(submitted) = new
+            .upsert(
+                Serial(0),
+                CountedPut {
+                    key: 0,
+                    value: 9,
+                    calls: replacements.clone(),
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap()
+        else {
+            panic!("应等待旧请求");
+        };
+        *ticket = Some(submitted);
+        new.poll(PollBudget::default()).unwrap();
+        assert_eq!(replacements.get(), 0);
+    });
     drop(old);
-    assert!(matches!(
-        new.wait(&mut ticket, wait_deadline()),
-        Err(Error::InvalidState(_))
-    ));
-    assert!(matches!(ticket.try_take(), Ok(TicketState::Ready(Err(_)))));
+    new.call(|(new, ticket, replacements)| {
+        let ticket = ticket.as_mut().unwrap();
+        assert!(matches!(
+            new.wait(ticket, wait_deadline()),
+            Err(Error::InvalidState(_))
+        ));
+        assert!(matches!(ticket.try_take(), Ok(TicketState::Ready(Err(_)))));
+        assert_eq!(replacements.get(), 0);
+    });
     assert_eq!(calls.get(), 0);
-    assert_eq!(replacements.get(), 0);
 }
 
 // 测试只驱动协调阶段，不写检查点材料或宣称持久化成功。
@@ -1864,8 +1927,9 @@ fn finish_test_cut(
 #[test]
 fn 提交和轮询自动观察版本且旧请求保持原切分() {
     let store = setup();
-    let mut old = store.start_session(SessionOptions::default()).unwrap();
-    let mut new = store.start_session(SessionOptions::default()).unwrap();
+    let mut old = store.start_session(Default::default()).unwrap();
+    let new = number_actor(&store);
+    let new_id = new.call(|(session, _, _)| session.id());
     let copies = Rc::new(Cell::new(0));
     let Submission::Pending(mut old_ticket) = old
         .rmw(
@@ -1881,41 +1945,47 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("旧请求应挂起")
+        panic!("旧请求应挂起");
     };
-    let id = begin_test_cut(&store, &mut [&mut old, &mut new]);
-    assert_eq!(new.runtime.current.version, CheckpointVersion(0));
-    let replacements = Rc::new(Cell::new(0));
-    let Submission::Pending(mut new_ticket) = new
-        .upsert(
-            Serial(9),
-            CountedPut {
-                key: 0,
-                value: 100,
-                calls: replacements.clone(),
-            },
-        )
-        .map_err(|r| r.reason)
-        .unwrap()
-    else {
-        panic!("新请求应等待旧请求")
-    };
-    assert_eq!(new.runtime.current.version, CheckpointVersion(1));
-    assert_eq!(new.runtime.previous.as_ref().unwrap().last_accepted, None);
-    assert_eq!(replacements.get(), 0);
+    let id = begin_actor_cut(&store, &mut old, &new);
+    new.call(|(new, ticket, replacements)| {
+        assert_eq!(new.runtime.current.version, CheckpointVersion(0));
+        let Submission::Pending(submitted) = new
+            .upsert(
+                Serial(9),
+                CountedPut {
+                    key: 0,
+                    value: 100,
+                    calls: replacements.clone(),
+                },
+            )
+            .map_err(|r| r.reason)
+            .unwrap()
+        else {
+            panic!("新请求应等待旧请求");
+        };
+        *ticket = Some(submitted);
+        assert_eq!(new.runtime.current.version, CheckpointVersion(1));
+        assert_eq!(new.runtime.previous.as_ref().unwrap().last_accepted, None);
+        assert_eq!(replacements.get(), 0);
+    });
     assert!(matches!(
         old.wait(&mut old_ticket, wait_deadline()).unwrap(),
         Ok(Outcome::Success(1))
     ));
+    assert_eq!(copies.get(), 1);
     assert_eq!(old.runtime.current.version, CheckpointVersion(1));
     assert_eq!(
         old.runtime.cut(CheckpointVersion(0)).unwrap().last_accepted,
         Some(Serial(7))
     );
-    assert!(matches!(
-        new.wait(&mut new_ticket, wait_deadline()).unwrap(),
-        Ok(Outcome::Success(100))
-    ));
+    new.call(|(new, ticket, replacements)| {
+        assert!(matches!(
+            new.wait(ticket.as_mut().unwrap(), wait_deadline()).unwrap(),
+            Ok(Outcome::Success(100))
+        ));
+        assert_eq!(replacements.get(), 1);
+    });
     use crate::coordination::Phase;
     store
         .inner
@@ -1923,7 +1993,7 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
         .advance(id, Phase::InProgress)
         .unwrap();
     old.refresh().unwrap();
-    new.refresh().unwrap();
+    new.call(|(new, _, _)| new.refresh().unwrap());
     store
         .inner
         .coordinator
@@ -1934,7 +2004,7 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
         && cut.last_accepted == Some(Serial(7))
         && cut.old_pending == 0));
     assert!(
-        cuts.iter().any(|cut| cut.session == new.id()
+        cuts.iter().any(|cut| cut.session == new_id
             && cut.last_accepted.is_none()
             && cut.old_pending == 0)
     );
@@ -1945,7 +2015,7 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
         .unwrap();
     store.inner.coordinator.finish_action(id).unwrap();
     old.close(wait_deadline()).unwrap();
-    new.close(wait_deadline()).unwrap();
+    new.call(|(new, _, _)| new.close(wait_deadline()).unwrap());
     store.shutdown(wait_deadline()).unwrap();
 }
 #[test]
@@ -2027,7 +2097,8 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
     };
     let store = setup();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
-    let mut idle = store.start_session(SessionOptions::default()).unwrap();
+    let idle = crate::engine::session_actor::session(&store);
+    let idle_id = idle.call(|session| session.id());
     let calls = Rc::new(Cell::new(0));
     let Submission::Pending(mut request_ticket) = session
         .rmw(
@@ -2068,7 +2139,7 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
         request_ticket.try_take(),
         Ok(TicketState::Ready(Ok(Outcome::Success(1))))
     ));
-    idle.close(wait_deadline()).unwrap();
+    idle.call(|session| session.close(wait_deadline()).unwrap());
     assert!(matches!(
         session.wait_maintenance(&ticket, deadline()),
         Err(Error::DeadlineExceeded)
@@ -2090,7 +2161,7 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
     );
     assert!(
         cuts.iter()
-            .any(|cut| cut.session == idle.id() && cut.last_accepted.is_none())
+            .any(|cut| cut.session == idle_id && cut.last_accepted.is_none())
     );
     // 组件测试以失败报告终结；不伪造没有写材料的成功检查点。
     store

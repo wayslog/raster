@@ -321,7 +321,7 @@ fn 自动调度等待手动屏障时可停止且不取消手动任务() {
     let gate = Arc::new(Gate::default());
     let (_root, store, _) = fixture(&gate);
     let mut session = store.start_session(Default::default()).unwrap();
-    let mut blocker = store.start_session(Default::default()).unwrap();
+    let blocker = crate::engine::session_actor::session(&store);
     let checkpoint = store
         .maintenance()
         .checkpoint(CheckpointKind::Full)
@@ -346,7 +346,7 @@ fn 自动调度等待手动屏障时可停止且不取消手动任务() {
         AutoPhase::Stopped
     );
     assert!(checkpoint.try_report().unwrap().is_none());
-    blocker.close(deadline()).unwrap();
+    blocker.call(|session| session.close(deadline()).unwrap());
     let report = session.wait_maintenance(&checkpoint, deadline()).unwrap();
     assert!(report.is_ok());
     session.close(deadline()).unwrap();
@@ -608,7 +608,7 @@ fn 自动接受前恐慌同步终结手动全局动作而不让关闭永久忙�
     let gate = Arc::new(Gate::default());
     let (_root, store, _) = fixture(&gate);
     let mut session = store.start_session(Default::default()).unwrap();
-    let blocker = store.start_session(Default::default()).unwrap();
+    let blocker = crate::engine::session_actor::session(&store);
     let checkpoint = store
         .maintenance()
         .checkpoint(CheckpointKind::Full)

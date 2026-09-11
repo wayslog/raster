@@ -29,7 +29,11 @@ fn 创建共享会话与关闭完整生命周期() {
         Err(Error::Busy)
     ));
     assert!(matches!(store.shutdown(deadline()), Err(Error::Busy)));
+    let busy = store.diagnostics().unwrap();
+    assert_eq!(busy.active_session_ids, vec![id]);
+    assert_eq!(busy.active_sessions, busy.active_session_ids.len());
     assert!(session.close(deadline()).unwrap().drained);
+    assert!(store.diagnostics().unwrap().active_session_ids.is_empty());
     assert!(session.close(deadline()).unwrap().drained);
     assert!(clone.shutdown(deadline()).unwrap().device_drained);
     assert!(store.shutdown(deadline()).unwrap().device_drained);
@@ -86,6 +90,63 @@ fn 共享实例可在另一线程注册并关闭会话() {
     })
     .join()
     .unwrap();
+    store.shutdown(deadline()).unwrap();
+}
+#[test]
+fn 线程会话名额按实例隔离且关闭不必销毁对象即可重新注册() {
+    let first_store = store();
+    let other_store = store();
+    let clone = first_store.clone();
+    let mut first = first_store.start_session(Default::default()).unwrap();
+    assert!(matches!(
+        clone.start_session(Default::default()),
+        Err(Error::Busy)
+    ));
+    let mut independent = other_store.start_session(Default::default()).unwrap();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let mut session = clone.start_session(Default::default()).unwrap();
+                session.close(deadline()).unwrap();
+            })
+            .join()
+            .unwrap();
+    });
+    first.close(deadline()).unwrap();
+    let mut replacement = clone.start_session(Default::default()).unwrap();
+    replacement.close(deadline()).unwrap();
+    independent.close(deadline()).unwrap();
+    first_store.shutdown(deadline()).unwrap();
+    other_store.shutdown(deadline()).unwrap();
+}
+#[test]
+fn 会话准备拒绝归还线程名额且不影响原有会话() {
+    let store = store();
+    assert!(
+        store
+            .start_session(SessionOptions {
+                id: Some(SessionId([0; 16]))
+            })
+            .is_err()
+    );
+    assert!(store.continue_session(SessionId([9; 16])).is_err());
+    let mut active = store.start_session(Default::default()).unwrap();
+    let id = active.id();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                assert!(matches!(
+                    store.start_session(SessionOptions { id: Some(id) }),
+                    Err(Error::Busy)
+                ));
+                let mut other = store.start_session(Default::default()).unwrap();
+                other.close(deadline()).unwrap();
+            })
+            .join()
+            .unwrap();
+    });
+    assert_eq!(active.id(), id);
+    active.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }
 #[test]

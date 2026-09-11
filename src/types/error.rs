@@ -148,10 +148,34 @@ pub enum Effect {
     Unknown,
 }
 
+/// 接受后的操作失败，错误链和格式化输出都保留原因与生效范围。
+///
+/// ```
+/// use raster::types::{Effect, Error, OperationError};
+/// let failure = OperationError { cause: Error::Codec("输出编码失败"), effect: Effect::Applied };
+/// assert!(failure.to_string().contains("已生效"));
+/// assert_eq!(std::error::Error::source(&failure).unwrap().to_string(), failure.cause.to_string());
+/// // 已生效或影响未知的修改不能因为输出失败而自动重放。
+/// ```
 #[derive(Debug)]
 pub struct OperationError {
     pub cause: Error,
     pub effect: Effect,
+}
+impl fmt::Display for OperationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let effect = match self.effect {
+            Effect::NotApplied => "未生效",
+            Effect::Applied => "已生效",
+            Effect::Unknown => "影响未知",
+        };
+        write!(f, "操作失败（{effect}）：{}", self.cause)
+    }
+}
+impl std::error::Error for OperationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
 }
 
 #[derive(Debug)]

@@ -98,6 +98,95 @@ fn 变长字节键值恢复后读改写扩展且重新恢复保持结果() {
 fn 启用读缓存的变长字节值命中后可读改写并再次恢复() {
     scenario(true);
 }
+#[test]
+fn 恢复会话线程名额覆盖关闭重续且序号不退回检查点() {
+    let root = std::env::temp_dir().join(format!(
+        "raster-resume-thread-{:x?}",
+        StoreId::generate().unwrap().0
+    ));
+    let mut config = Config::default();
+    config.storage.root = root.clone();
+    config.log.page_bytes = 4096;
+    let store = builder(config.clone()).create().unwrap();
+    let mut session = store.start_session(Default::default()).unwrap();
+    let id = session.id();
+    let submitted = session
+        .upsert(
+            Serial(10),
+            Context {
+                key: vec![1],
+                value: vec![2],
+            },
+        )
+        .unwrap();
+    assert_eq!(outcome(&mut session, submitted), vec![2]);
+    let ticket = store
+        .maintenance()
+        .checkpoint(CheckpointKind::Full)
+        .unwrap();
+    let checkpoint = session.wait_maintenance(&ticket, deadline()).unwrap();
+    let token = checkpoint.as_ref().as_ref().unwrap().token;
+    let set = RecoverySet {
+        store: store.id(),
+        index: token,
+        log: token,
+    };
+    session.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+    drop(session);
+    drop(store);
+    let (store, _) = builder(config).recover(set).unwrap();
+    let mut session = store.continue_session(id).unwrap().session;
+    assert!(matches!(store.continue_session(id), Err(Error::Busy)));
+    assert!(matches!(
+        store.start_session(Default::default()),
+        Err(Error::Busy)
+    ));
+    let submitted = session
+        .rmw(
+            Serial(20),
+            Context {
+                key: vec![1],
+                value: vec![3],
+            },
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(outcome(&mut session, submitted), vec![2, 3]);
+    session.close(deadline()).unwrap();
+    let resumed = store.continue_session(id).unwrap();
+    assert_eq!(resumed.progress.serial, Serial(10));
+    assert_eq!(resumed.session.last_accepted(), Some(Serial(20)));
+    let mut resumed = resumed.session;
+    assert!(
+        resumed
+            .read(
+                Serial(11),
+                Context {
+                    key: vec![1],
+                    value: vec![]
+                },
+                Default::default()
+            )
+            .is_err()
+    );
+    let submitted = resumed
+        .read(
+            Serial(21),
+            Context {
+                key: vec![1],
+                value: vec![],
+            },
+            Default::default(),
+        )
+        .unwrap();
+    assert_eq!(outcome(&mut resumed, submitted), vec![2, 3]);
+    resumed.close(deadline()).unwrap();
+    store.shutdown(deadline()).unwrap();
+    drop(resumed);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
 fn scenario(cache: bool) {
     struct Directory(PathBuf);
     impl Drop for Directory {

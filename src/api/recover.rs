@@ -393,6 +393,9 @@ fn build<S: Schema>(
     cache.set_metrics(metrics.clone());
     cache.preallocate()?;
     let engine = Engine {
+        thread_sessions: Arc::new(crate::engine::thread_sessions::ThreadSessions::new(
+            config.session.max_sessions,
+        )),
         metrics,
         id: set.store,
         scans: Default::default(),

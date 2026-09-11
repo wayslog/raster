@@ -35,6 +35,7 @@ pub struct CloseReport {
 /// ```
 pub struct Session<S: Schema> {
     pub(crate) engine: Arc<Engine<S>>,
+    pub(crate) thread_session: Option<crate::engine::thread_sessions::ThreadSession>,
     pub(crate) id: SessionId,
     pub(crate) participant: Option<crate::epoch::ParticipantId>,
     pub(crate) runtime: SessionRuntime,
@@ -212,6 +213,8 @@ impl<S: Schema> Session<S> {
             self.engine.auto_compaction.wait_change(deadline)?;
         }
     }
+    /// 在本线程推进旧版本请求和维护，返回可重复观察的共享终结报告。
+    /// 等待错误和报告内的维护错误分开处理；超时不取消票据。
     pub fn wait_maintenance<R>(
         &mut self,
         ticket: &MaintenanceTicket<R>,
@@ -267,6 +270,7 @@ impl<S: Schema> Session<S> {
             self.engine.coordinator.leave_drained(current, previous)?;
             self.engine.epoch.unregister(participant)?;
             self.participant = None;
+            self.thread_session = None;
         }
         Ok(CloseReport {
             session: self.id,

@@ -28,3 +28,14 @@ P0—P7 及 P8.1 已验收，下一项是 **P8.2 完整公开使用示例与 rus
 - [P7.3 自动维护交付记录](docs/acceptance/P7.3自动维护交付记录.md)
 
 - [配置与诊断](docs/15-配置与诊断.md)与 [P8.1 交付记录](docs/acceptance/P8.1配置诊断交付记录.md)
+
+- [公开接口使用流程](docs/16-公开接口使用流程.md)：五个可运行示例覆盖内存计数、变长值、多票据、超内存磁盘、恢复续跑和自动维护。
+
+```sh
+cargo run --locked --release --example memory
+cargo run --locked --release --example interface
+cargo run --locked --release --example disk_lifecycle
+cargo run --locked --release --example automatic
+```
+
+磁盘示例默认使用本次专属临时目录；显式传入的目录必须尚不存在，成功后保留。用法和错误、超时、关闭语义见上述流程文档。
