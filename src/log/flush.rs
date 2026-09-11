@@ -283,7 +283,7 @@ mod tests {
     }
     fn storage_with_size(segment_bytes: u64) -> (Arc<MemoryDevice>, SegmentedStorage, Vec<FileId>) {
         let device = Arc::new(MemoryDevice::new(16, 4096).unwrap());
-        let storage = SegmentedStorage::new(device.clone(), PathBuf::new(), segment_bytes).unwrap();
+        let storage = SegmentedStorage::new(device.clone(), segment_bytes).unwrap();
         execute(&*device, IoOperation::CreateDirectory("segments".into()))
             .result
             .unwrap();
@@ -670,7 +670,7 @@ mod tests {
             create_new: true,
         })
         .unwrap();
-        let storage = SegmentedStorage::new(Arc::from(device), root.0.clone(), 128).unwrap();
+        let storage = SegmentedStorage::new(Arc::from(device), 128).unwrap();
         let log = log();
         let mut task = log
             .begin_flush(&storage, CompletionRoute(77), CheckpointVersion(0))

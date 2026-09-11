@@ -146,12 +146,7 @@ mod tests {
     use super::*;
     use crate::device::memory::MemoryDevice;
     fn storage() -> SegmentedStorage {
-        SegmentedStorage::new(
-            Arc::new(MemoryDevice::new(8, 1024).unwrap()),
-            std::path::PathBuf::new(),
-            128,
-        )
-        .unwrap()
+        SegmentedStorage::new(Arc::new(MemoryDevice::new(8, 1024).unwrap()), 128).unwrap()
     }
     fn complete(storage: &SegmentedStorage) -> IoCompletion {
         let mut out = vec![];

@@ -15,9 +15,7 @@ pub(crate) struct EpochGuard<'a> {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeferredAction {
-    RecyclePage(PageId, Generation),
     ReleaseIndex(Generation),
-    AdvanceReadOnly(LogAddress),
 }
 struct Slot {
     generation: Generation,
@@ -188,7 +186,7 @@ impl Drop for EpochGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const ACTION: DeferredAction = DeferredAction::RecyclePage(PageId(3), Generation(4));
+    const ACTION: DeferredAction = DeferredAction::ReleaseIndex(Generation(4));
     #[test]
     fn 管理器身份隔离且真实线程退出后才交付动作() {
         let manager = EpochManager::new().unwrap();

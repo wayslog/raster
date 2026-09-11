@@ -36,8 +36,6 @@ struct ScanState {
     closed: bool,
     finished: bool,
     failed: bool,
-    /// 后续诊断报告使用；登记覆盖活跃扫描和关闭中的在途读取。
-    started: Instant,
 }
 struct ScanPage {
     page: PageId,
@@ -192,7 +190,6 @@ impl<S: Schema> Engine<S> {
                 closed: false,
                 finished: false,
                 failed: false,
-                started: Instant::now(),
             }),
         });
         let registration = self

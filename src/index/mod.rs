@@ -75,7 +75,7 @@ pub(crate) enum PublishResult {
         not(test),
         expect(
             dead_code,
-            reason = "当前引擎重新 prepare，冲突快照由索引协议测试验证并供后续条件复制使用"
+            reason = "引擎冲突后重新准备索引入口；协议测试检查本次冲突返回的完整快照"
         )
     )]
     Conflict(EntrySnapshot),

@@ -65,7 +65,7 @@ fn material_bytes(store: &RasterKV<Schema>, report: &CheckpointReport) -> Vec<Ve
                 .storage
                 .checkpoint_path(report.token, &name)
                 .unwrap();
-            std::fs::read(store.inner.storage.root.join(path)).unwrap()
+            std::fs::read(store.inner.config.storage.root.join(path)).unwrap()
         })
         .collect()
 }
@@ -187,7 +187,7 @@ fn 已发布检查点保留全部已知引用且恢复重建所选集合目录()
             assert!(runtime.retained.references_token(report.token));
         }
     }
-    let first_path = store.inner.storage.root.join(
+    let first_path = store.inner.config.storage.root.join(
         store
             .inner
             .storage

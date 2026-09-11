@@ -261,7 +261,6 @@ fn build<S: Schema>(
     }
     let storage = SegmentedStorage::recovered(
         device,
-        config.storage.root.clone(),
         config.storage.segment_bytes,
         CheckpointToken::generate()?,
     )?;

@@ -305,7 +305,6 @@ impl<S: Schema> Builder<S> {
                 })?;
         let storage = crate::storage::SegmentedStorage::new(
             Arc::from(device),
-            self.config.storage.root.clone(),
             self.config.storage.segment_bytes,
         )?;
         let store = RasterKV {

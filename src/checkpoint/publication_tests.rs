@@ -152,7 +152,7 @@ impl Fixture {
             inner,
             trace: Mutex::new(Trace::default()),
         });
-        let storage = SegmentedStorage::new(device.clone(), root.0.clone(), segment_bytes).unwrap();
+        let storage = SegmentedStorage::new(device.clone(), segment_bytes).unwrap();
         Self {
             storage,
             device,
@@ -585,8 +585,7 @@ fn 其他存储令牌名称或清单身份不能冒用同步材料凭据() {
 #[test]
 fn 目录及发布的错误身份和重复完成不推动当前状态() {
     let fixture = Fixture::new();
-    let other =
-        SegmentedStorage::new(fixture.device.clone(), fixture.root.0.clone(), 4096).unwrap();
+    let other = SegmentedStorage::new(fixture.device.clone(), 4096).unwrap();
     let mut directory = DirectoryPrepare::new(
         &fixture.storage,
         StoreId([1; 16]),

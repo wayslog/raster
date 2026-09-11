@@ -77,7 +77,7 @@ fn wait(
 fn manifest(store: &RasterKV<Schema>, report: &CheckpointReport) -> Manifest {
     let read = |name: &str| {
         std::fs::read(
-            store.inner.storage.root.join(
+            store.inner.config.storage.root.join(
                 store
                     .inner
                     .storage
@@ -314,7 +314,7 @@ fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
             material.generation,
         );
         let bytes = std::fs::read(
-            store.inner.storage.root.join(
+            store.inner.config.storage.root.join(
                 store
                     .inner
                     .storage
@@ -608,6 +608,7 @@ fn 恢复计划逐材料验证且同一完整检查点不重复计数() {
         let bytes = std::fs::read(
             store
                 .inner
+                .config
                 .storage
                 .root
                 .join(store.inner.storage.checkpoint_path(token, &name).unwrap()),
@@ -800,7 +801,7 @@ fn 日志材料校验通过但键编码不规范时恢复计划不接受材料()
         material.generation,
     );
     let bytes = std::fs::read(
-        store.inner.storage.root.join(
+        store.inner.config.storage.root.join(
             store
                 .inner
                 .storage
@@ -927,7 +928,7 @@ fn 完整恢复保留墓碑与进度并可继续写入再次检查点和恢复()
         .unwrap();
     let report = wait(&mut session, &ticket);
     let source_manifest = manifest(&store, &report);
-    let source_path = store.inner.storage.root.join(
+    let source_path = store.inner.config.storage.root.join(
         store
             .inner
             .storage

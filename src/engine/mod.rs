@@ -1,4 +1,4 @@
-//! 四操作编排中心；读取支持磁盘 Pending，写入与持久化路径继续分阶段接入。
+//! 四操作、挂起任务、持久化和维护的编排中心。
 pub(crate) mod auto_compaction;
 mod cache;
 pub(crate) mod checkpoint;
@@ -57,12 +57,6 @@ pub(crate) struct Engine<S: Schema> {
     pub coordinator: Coordinator,
     pub storage: SegmentedStorage,
 }
-impl<S: Schema> Engine<S> {
-    pub(crate) fn not_ready<T>(&self, module: &'static str) -> Result<T, Error> {
-        Err(Error::unimplemented(module))
-    }
-}
-
 impl<S: Schema> Engine<S> {
     fn prepare<O: crate::api::operation::Keyed<S>>(
         &self,

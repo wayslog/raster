@@ -391,9 +391,7 @@ mod tests {
         assert!(old.upgrade().is_some());
         drop(guard);
         for action in epoch.collect().unwrap() {
-            let DeferredAction::ReleaseIndex(generation) = action else {
-                panic!("错误延迟动作")
-            };
+            let DeferredAction::ReleaseIndex(generation) = action;
             index.release_retired(generation).unwrap();
         }
         assert!(old.upgrade().is_none());

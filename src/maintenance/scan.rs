@@ -55,11 +55,6 @@ impl Scan {
             cursor: None,
         })
     }
-    pub fn has_inflight(&self) -> bool {
-        self.reading
-            .as_ref()
-            .is_some_and(|reading| reading.page.has_inflight())
-    }
     /// 一个步骤最多提交一段 I/O 或产出一条记录；不等待设备或执行循环式同步扫描。
     pub fn step<S: Schema>(&mut self, engine: &Engine<S>) -> Result<ScanStep, Error> {
         if self.next < engine.log.frontiers()?.begin {

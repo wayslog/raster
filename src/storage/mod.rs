@@ -32,13 +32,12 @@ pub(crate) struct SegmentReadLease {
 pub(crate) struct SegmentedStorage {
     pub identity: Arc<()>,
     pub device: Arc<dyn Device>,
-    pub root: PathBuf,
     pub segment_bytes: u64,
     segments: Mutex<BTreeMap<u64, Binding>>,
     segment_directory: PathBuf,
 }
 impl SegmentedStorage {
-    pub fn new(device: Arc<dyn Device>, root: PathBuf, segment_bytes: u64) -> Result<Self, Error> {
+    pub fn new(device: Arc<dyn Device>, segment_bytes: u64) -> Result<Self, Error> {
         if !segment_bytes.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "storage.segment_bytes",
@@ -48,7 +47,6 @@ impl SegmentedStorage {
         Ok(Self {
             identity: Arc::new(()),
             device,
-            root,
             segment_bytes,
             segments: Mutex::new(BTreeMap::new()),
             segment_directory: PathBuf::from("segments"),
@@ -57,12 +55,11 @@ impl SegmentedStorage {
     /// 恢复输出使用独立目录，不能覆盖旧工作日志或检查点材料。
     pub fn recovered(
         device: Arc<dyn Device>,
-        root: PathBuf,
         segment_bytes: u64,
         nonce: CheckpointToken,
     ) -> Result<Self, Error> {
         nonce.validate()?;
-        let mut storage = Self::new(device, root, segment_bytes)?;
+        let mut storage = Self::new(device, segment_bytes)?;
         let name: String = nonce.0.iter().map(|b| format!("{b:02x}")).collect();
         storage.segment_directory = PathBuf::from(format!("restore-{name}"));
         Ok(storage)
@@ -259,7 +256,6 @@ mod tests {
     fn storage() -> SegmentedStorage {
         SegmentedStorage::new(
             Arc::new(crate::device::memory::MemoryDevice::new(8, 128).unwrap()),
-            PathBuf::new(),
             16,
         )
         .unwrap()

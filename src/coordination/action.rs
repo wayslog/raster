@@ -227,6 +227,7 @@ impl Coordinator {
         registry.system.phase = Phase::Failed;
         Ok(())
     }
+    #[cfg(test)]
     pub fn action_failure(&self, id: MaintenanceId) -> Result<Option<Arc<Error>>, Error> {
         let registry = self
             .registry

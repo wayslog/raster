@@ -90,6 +90,7 @@ macro_rules! permit {
     }};
 }
 impl<V: ValueLayout> PageValue<V> {
+    #[cfg(test)]
     pub fn initialize(pool: &PagePool, layout: Arc<V>, value: V::Owned) -> Result<Self, Error> {
         let plan = layout.plan(&value)?.validate()?;
         let range = pool.reserve(plan.capacity.max(1), plan.alignment)?;
@@ -111,6 +112,7 @@ impl<V: ValueLayout> PageValue<V> {
         owner.initialized = true;
         Ok(owner)
     }
+    #[cfg(test)]
     pub fn initialize_record(
         pool: &PagePool,
         layout: Arc<V>,
@@ -181,6 +183,7 @@ impl<V: ValueLayout> PageValue<V> {
             )
         }
     }
+    #[cfg(test)]
     pub fn version(&self) -> CheckpointVersion {
         self.version
     }
@@ -259,6 +262,7 @@ impl<V: ValueLayout> PageValue<V> {
         owner.initialized = true;
         Ok(owner)
     }
+    #[cfg(test)]
     pub fn generation(&self) -> Generation {
         self.range.as_ref().expect("值范围存在").generation()
     }
@@ -281,6 +285,7 @@ impl<V: ValueLayout> PageValue<V> {
         self.ready()?;
         Ok(f(self.layout.read(permit!(self, ReadPermit))?))
     }
+    #[cfg(test)]
     pub fn update<R>(
         &self,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
@@ -420,6 +425,7 @@ impl<V: ValueLayout> PageValue<V> {
         record.encode(&mut output)?;
         Ok(output)
     }
+    #[cfg(test)]
     pub fn encode(&self, output: &mut [u8]) -> Result<(), Error> {
         self.ready()?;
         let _gate = self.gate.try_replace()?;

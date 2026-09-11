@@ -353,7 +353,7 @@ mod tests {
     }
     fn fixture() -> (Arc<ScriptDevice>, SegmentedStorage, MaterialWrite) {
         let device = Arc::new(ScriptDevice::default());
-        let storage = SegmentedStorage::new(device.clone(), PathBuf::new(), 4096).unwrap();
+        let storage = SegmentedStorage::new(device.clone(), 4096).unwrap();
         let task = MaterialWrite::new(
             &storage,
             CheckpointToken([1; 16]),
@@ -462,7 +462,7 @@ mod tests {
         let mut completion = task.accept(&storage, completion).unwrap_err().request;
         assert_eq!(completion.buffer.as_ref().unwrap().as_slice(), b"1234");
         completion.route = CompletionRoute(7);
-        let other = SegmentedStorage::new(device.clone(), PathBuf::new(), 4096).unwrap();
+        let other = SegmentedStorage::new(device.clone(), 4096).unwrap();
         let completion = task.accept(&other, completion).unwrap_err().request;
         task.accept(&storage, completion)
             .map_err(|r| r.reason)
@@ -507,7 +507,6 @@ mod tests {
         );
         let memory = SegmentedStorage::new(
             Arc::new(crate::device::memory::MemoryDevice::new(4, 64).unwrap()),
-            PathBuf::new(),
             4096,
         )
         .unwrap();
@@ -558,7 +557,7 @@ mod tests {
             create_new: true,
         })
         .unwrap();
-        let storage = SegmentedStorage::new(Arc::from(device), root.0.clone(), 4096).unwrap();
+        let storage = SegmentedStorage::new(Arc::from(device), 4096).unwrap();
         let token = CheckpointToken([1; 16]);
         let path = storage.checkpoint_path(token, "material-0").unwrap();
         for directory in [

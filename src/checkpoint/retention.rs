@@ -54,24 +54,12 @@ impl RetentionCatalog {
         self.store = Some(manifest.store);
         Ok(())
     }
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "P7.2 回收与 P8 诊断将消费保留记录，当前由原生发布和恢复测试验证"
-        )
-    )]
+    #[cfg(test)]
     pub fn records(&self) -> impl Iterator<Item = &RetentionRecord> {
         self.records.values()
     }
     /// 仅列出本进程已知引用；未列出的磁盘 token 默认仍保留，不能据此授权删除。
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "P7.2 回收与 P8 诊断将消费保留记录，当前由原生发布和恢复测试验证"
-        )
-    )]
+    #[cfg(test)]
     pub fn references_token(&self, token: CheckpointToken) -> bool {
         self.records
             .values()

@@ -55,7 +55,7 @@ fn storage() -> (Directory, SegmentedStorage) {
         create_new: true,
     })
     .unwrap();
-    let storage = SegmentedStorage::new(Arc::from(device), root.0.clone(), 16).unwrap();
+    let storage = SegmentedStorage::new(Arc::from(device), 16).unwrap();
     (root, storage)
 }
 #[test]
@@ -207,7 +207,7 @@ fn 新实例不能覆盖已有段而恢复模式可以显式打开() {
         create_new: false,
     })
     .unwrap();
-    let second = SegmentedStorage::new(Arc::from(device), root.0.clone(), 16).unwrap();
+    let second = SegmentedStorage::new(Arc::from(device), 16).unwrap();
     assert!(
         matches!(drive(&second, true), Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists)
     );

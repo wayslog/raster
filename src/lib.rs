@@ -58,26 +58,18 @@ pub mod diagnostics;
 pub mod schema;
 pub mod types;
 
-// 内部协议不作为公开 API；遗留 dead_code 抑制在 P9.2 的入口审查中统一核对。
+// 内部协议不作为公开 API；测试专用入口在定义处限定编译范围。
 mod cache;
 mod checkpoint;
-#[allow(dead_code)]
 mod coordination;
-#[allow(dead_code)]
 mod engine;
-#[allow(dead_code)]
 mod epoch;
-#[allow(dead_code)]
 mod format;
 mod index;
-#[allow(dead_code)]
 mod log;
-#[allow(dead_code)]
 mod maintenance;
 mod scan;
-#[allow(dead_code)]
 mod storage;
-#[allow(dead_code)]
 mod sync;
 
 pub use api::{Builder, RasterKV, Session, Submission, Ticket};

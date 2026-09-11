@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 pub(crate) enum TaskStep {
     Complete,
-    AwaitingIo,
     Retry,
     Failed(OperationError),
 }

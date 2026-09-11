@@ -207,6 +207,7 @@ impl SegmentTransfer {
             .take()
             .map(|result| result.map(|()| std::mem::take(&mut self.bytes)))
     }
+    #[cfg(test)]
     pub fn completed_bytes(&self) -> usize {
         self.cursor
     }
@@ -216,7 +217,7 @@ impl SegmentTransfer {
 mod tests {
     use super::*;
     use crate::device::memory::{MemoryDevice, MemoryFault};
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
     fn execute(device: &dyn Device, operation: IoOperation) -> IoCompletion {
         device
             .submit(IoRequest {
@@ -231,7 +232,7 @@ mod tests {
     }
     fn setup() -> (Arc<MemoryDevice>, SegmentedStorage, Vec<FileId>) {
         let device = Arc::new(MemoryDevice::new(16, 1024).unwrap());
-        let storage = SegmentedStorage::new(device.clone(), PathBuf::new(), 16).unwrap();
+        let storage = SegmentedStorage::new(device.clone(), 16).unwrap();
         execute(&*device, IoOperation::CreateDirectory("segments".into()))
             .result
             .unwrap();

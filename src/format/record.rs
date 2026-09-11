@@ -142,9 +142,11 @@ impl<'a> Record<'a> {
 }
 
 /// 页尾不足一个头部，或上层明确结束该页时，用零填满剩余范围。
+#[cfg(test)]
 pub(crate) fn encode_padding(remaining_page: &mut [u8]) {
     remaining_page.fill(0);
 }
+#[cfg(test)]
 pub(crate) fn validate_padding(remaining_page: &[u8]) -> Result<(), Error> {
     if remaining_page.iter().all(|&b| b == 0) {
         Ok(())

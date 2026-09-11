@@ -155,6 +155,7 @@ fn 公开磁盘扫描保留无效记录标志并省略其值() {
     assert!(store.inner.log.frontiers().unwrap().head > LogAddress(0));
     let path = store
         .inner
+        .config
         .storage
         .root
         .join(store.inner.storage.segment_path(0, Generation(0)));

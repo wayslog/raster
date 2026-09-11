@@ -29,18 +29,8 @@ impl Drop for ReservationActivity<'_> {
 }
 /// 所有字节已独立编码，不含页面引用或用户视图，可以交给设备线程。
 pub(crate) struct EncodedPage {
-    pub page: PageId,
     pub generation: Generation,
     pub bytes: Vec<u8>,
-}
-pub(crate) struct PageState {
-    pub id: PageId,
-    pub generation: Generation,
-    pub frozen: bool,
-    pub closed: bool,
-    pub flushed: bool,
-    pub readers: usize,
-    pub io_references: usize,
 }
 /// 原始记录槽尚未消费拥有值，不能直接发布。
 pub(crate) struct RecordAllocation<'a, V: ValueLayout> {
@@ -68,6 +58,7 @@ impl<V: ValueLayout> RecordReservation<'_, V> {
         self.value = self.value.with_version(version);
         self
     }
+    #[cfg(test)]
     pub fn address(&self) -> Result<LogAddress, Error> {
         self.value.address()
     }
@@ -78,6 +69,7 @@ pub(crate) struct RecordLease<V: ValueLayout> {
     local: PhantomData<Rc<()>>,
 }
 impl<V: ValueLayout> RecordLease<V> {
+    #[cfg(test)]
     pub fn version(&self) -> CheckpointVersion {
         self.value.version()
     }
@@ -92,12 +84,14 @@ impl<V: ValueLayout> RecordLease<V> {
     pub fn read<R>(&self, f: impl for<'a> FnOnce(V::Read<'a>) -> R) -> Result<R, Error> {
         self.value.read(f)
     }
+    #[cfg(test)]
     pub fn update<R>(
         &self,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
     ) -> Result<R, Error> {
         self.value.update(f)
     }
+    #[cfg(test)]
     pub fn update_if_mutable<R>(
         &self,
         f: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
@@ -113,6 +107,7 @@ impl<V: ValueLayout> RecordLease<V> {
     pub fn previous(&self) -> Option<LogAddress> {
         self.value.previous()
     }
+    #[cfg(test)]
     pub fn generation(&self) -> Generation {
         self.value.generation()
     }
@@ -230,6 +225,7 @@ impl<V: ValueLayout> HybridLog<V> {
         result.tail = self.pool.tail()?;
         Ok(result)
     }
+    #[cfg(test)]
     pub fn reserve(&self, value: V::Owned) -> Result<RecordReservation<'_, V>, Error> {
         let activity = self.enter_reservation()?;
         Ok(RecordReservation {
@@ -316,6 +312,7 @@ impl<V: ValueLayout> HybridLog<V> {
         }
         Ok(None)
     }
+    #[cfg(test)]
     pub fn reserve_record(
         &self,
         key: &[u8],
@@ -335,6 +332,7 @@ impl<V: ValueLayout> HybridLog<V> {
             )?,
         })
     }
+    #[cfg(test)]
     pub fn find<K: crate::schema::KeyCodec>(
         &self,
         codec: &K,
@@ -396,6 +394,7 @@ impl<V: ValueLayout> HybridLog<V> {
             local: PhantomData,
         })
     }
+    #[cfg(test)]
     pub fn lease_generation(
         &self,
         address: LogAddress,
@@ -407,6 +406,7 @@ impl<V: ValueLayout> HybridLog<V> {
         }
         Ok(lease)
     }
+    #[cfg(test)]
     pub fn abandon(&self, reservation: RecordReservation<'_, V>) -> Result<(), Error> {
         if !std::ptr::eq(self, reservation.owner) {
             return Err(Error::InvalidState("预留属于其他日志"));
@@ -426,6 +426,7 @@ impl<V: ValueLayout> HybridLog<V> {
         drop(value);
         Ok(())
     }
+    #[cfg(test)]
     pub fn release_page(&self, page: PageId, generation: Generation) -> Result<(), Error> {
         self.pool.release(page, generation)
     }
@@ -547,11 +548,7 @@ impl<V: ValueLayout> HybridLog<V> {
             payload: &payload,
         }
         .encode()?;
-        Ok(EncodedPage {
-            page,
-            generation,
-            bytes,
-        })
+        Ok(EncodedPage { generation, bytes })
     }
 }
 mod gate;
@@ -856,9 +853,9 @@ mod tests {
         assert!(log.encode_page(PageId(0), CheckpointVersion(0)).is_err());
         log.advance_read_only(LogAddress(256)).unwrap();
         let encoded = log.encode_page(PageId(0), CheckpointVersion(0)).unwrap();
-        assert_eq!(encoded.page, PageId(0));
         assert_eq!(encoded.generation, Generation(0));
         let frame = crate::format::PageFrame::decode(&encoded.bytes, PageId(0), 256).unwrap();
+        assert_eq!(frame.page, PageId(0));
         let records = frame.records().unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].0, first);

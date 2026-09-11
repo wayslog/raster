@@ -11,3 +11,24 @@ python3 tools/acceptance/run_faults.py --output target/p9-faults
 “32 个入口”不是 32 个故障点：用户回调矩阵包含 11 个合法错误/恐慌组合，三个检查点矩阵按运行时实际 I/O 事件逐点中断，释放矩阵也逐点运行。输出中的预期恐慌属于被测输入，测试与命令的最终退出结果决定验收。进程中断和同步数据/命名空间的掉电模型分别验证；不能称为真实硬件断电。
 
 该矩阵不替代独立模型、上游相同业务轨迹、性能或长期资源检查。具体状态见 [一期验收报告](../../docs/acceptance/一期验收报告.md)。独立 CI 在 Linux/macOS 原生执行并保存逐项证据。
+
+## 同进程资源循环
+
+`resource_cycles` 在同一进程预热 8 轮、测量 64 轮；每轮直接运行完整磁盘生命周期和两次恢复，并核对固定的分配、RSS、句柄及线程增长门槛。两平台原生工作流保留环境、日志和逐轮 CSV。下载指定运行的制品后复核：
+
+```sh
+gh run download RUN_ID --dir target/p9-resources-native
+python3 tools/acceptance/audit_resources.py --sha FULL_SHA --run-id RUN_ID target/p9-resources-native
+```
+
+将 `RUN_ID` 和 `FULL_SHA` 替换为同一次运行的编号与完整提交。脚本核对提交、原生 target、两个任务最终状态、真实测试和业务次数、连续轮次及所有预设门槛，生成全新的 `audit.json`；已存在时拒绝覆盖。资源分配峰值只记录，不据此提高运行前固定的增长门槛。范围与限制见 [资源验收](../../docs/acceptance/P9.2资源与性能验收.md)。
+
+## Miri 内存安全检查
+
+本机先准备带 Miri 的 nightly；项目开发和正式验收仍使用 Rust 1.98.1。
+
+```sh
+python3 tools/acceptance/run_miri.py --output target/p9-miri
+```
+
+脚本记录解释器版本、提交和工作区是否包含未提交改动；逐组运行并验证真实通过数量。页范围及预分配、内建值布局、记录生命周期、缓存和验收计数分配器共 32 项使用默认泄漏检测；另一个故意 `forget` 租约的用例单独以 `-Zmiri-ignore-leaks` 检查访问安全。不能把这个例外扩大到其他用例。此矩阵不解释原生文件后端，不代替双平台故障/恢复测试或并发交错证据。

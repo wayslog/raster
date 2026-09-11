@@ -1,16 +1,5 @@
 //! 完成路由、重试与阶段推进的统一接口；不能用最大完成序号代替持久化进度。
-use crate::{device::IoCompletion, types::*};
-
-pub(crate) enum ResumeReason {
-    Io(IoCompletion),
-    EpochAdvanced,
-    PhaseChanged,
-    SpaceAvailable,
-}
-pub(crate) trait CompletionRouter {
-    fn route(&mut self, completion: IoCompletion) -> Result<(), Error>;
-    fn progress(&mut self, budget: PollBudget) -> Result<Progress, Error>;
-}
+use crate::types::*;
 
 impl<S: crate::schema::Schema> super::Engine<S> {
     pub(crate) fn poll_session(
@@ -117,7 +106,7 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                     task.abandon(error);
                     true
                 }
-                TaskStep::AwaitingIo | TaskStep::Retry => false,
+                TaskStep::Retry => false,
             };
             if ended {
                 if session.current.tasks.remove(&key).is_none()

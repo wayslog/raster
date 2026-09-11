@@ -54,6 +54,7 @@ pub(crate) struct PageRange {
     len: usize,
 }
 impl PageRange {
+    #[cfg(test)]
     pub fn page_id(&self) -> PageId {
         self.id
     }
