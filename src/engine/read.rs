@@ -21,6 +21,7 @@ use std::{
 };
 struct ReadTask<S: Schema, O: ReadOperation<S>> {
     engine: Arc<Engine<S>>,
+    monitor: super::metrics::Monitor,
     request: Option<O>,
     lookup: Option<LogLookup>,
     observed: Option<crate::index::EntrySnapshot>,
@@ -39,10 +40,8 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
             let result = self
                 .engine
                 .finish_request(request, result, Effect::NotApplied);
-            let delivered = catch_unwind(AssertUnwindSafe(|| self.complete.finish(result)));
-            if !matches!(delivered, Ok(Ok(()))) {
-                self.engine.failed.store(true, Ordering::SeqCst);
-            }
+            self.engine
+                .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
         }
     }
 }
@@ -89,6 +88,11 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
             || -> Result<Option<Outcome<O::Output>>, Error> {
                 if self.lookup.is_none() {
                     let resolved = self.engine.resolve_index(self.hash, &self.key)?;
+                    if self.engine.config.cache.enabled {
+                        self.engine
+                            .metrics
+                            .cache(super::metrics::CacheEvent::Lookup);
+                    }
                     if let Some(record) = resolved.cached {
                         if record.source < self.engine.log.frontiers()?.begin {
                             // GC 已替换缓存头；重新解析索引，不能把搬迁后的活键报告为截断。
@@ -97,6 +101,10 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                         let encoded = crate::format::Record::decode(record.encoded())?;
                         if encoded.header.version != record.version {
                             return Err(Error::InvalidState("缓存记录版本不匹配"));
+                        }
+                        self.engine.metrics.cache(super::metrics::CacheEvent::Hit);
+                        if let crate::index::IndexHead::Cache(address) = resolved.entry.head {
+                            self.engine.cache.touch(address)?;
                         }
                         let value = self.engine.log.decode_temporary(encoded.value)?;
                         return value
@@ -244,6 +252,7 @@ impl<S: Schema> Engine<S> {
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = ReadTask {
+            monitor: self.metrics.accept(super::metrics::Kind::Read),
             engine: self.clone(),
             request: Some(request),
             lookup: None,
@@ -264,6 +273,7 @@ impl<S: Schema> Engine<S> {
             };
             Ok(Submission::Ready(result))
         } else {
+            task.monitor.pending();
             session.current.tasks.insert(id.slot, Box::new(task));
             Ok(Submission::Pending(ticket))
         }

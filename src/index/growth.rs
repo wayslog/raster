@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 
 pub(crate) struct MemIndex {
     pub(super) state: RwLock<State>,
+    metrics: Arc<crate::engine::metrics::Metrics>,
 }
 pub(super) struct State {
     pub active: Arc<Table>,
@@ -36,12 +37,16 @@ impl State {
 impl MemIndex {
     pub fn new(config: IndexConfig) -> Result<Self, Error> {
         Ok(Self {
+            metrics: Arc::new(crate::engine::metrics::Metrics::new(false)),
             state: RwLock::new(State {
                 active: Arc::new(Table::new(config)?),
                 growing: None,
                 retired: None,
             }),
         })
+    }
+    pub fn set_metrics(&mut self, metrics: Arc<crate::engine::metrics::Metrics>) {
+        self.metrics = metrics;
     }
     pub fn identity(&self) -> Result<u64, Error> {
         Ok(self
@@ -52,6 +57,8 @@ impl MemIndex {
             .owner)
     }
     pub fn prepare(&self, hash: KeyHash) -> Result<EntrySnapshot, Error> {
+        self.metrics
+            .index(crate::engine::metrics::IndexEvent::Lookup);
         let state = self
             .state
             .read()
@@ -87,10 +94,60 @@ impl MemIndex {
             IndexHead::Cache(address) => address.validate()?,
             IndexHead::Empty => (),
         }
-        if expected.table_generation != table.generation {
-            return Ok(PublishResult::Conflict(table.prepare(hash)?));
+        self.metrics
+            .index(crate::engine::metrics::IndexEvent::Publish);
+        let result = if expected.table_generation != table.generation {
+            PublishResult::Conflict(table.prepare(hash)?)
+        } else {
+            table.compare_publish(expected, head)?
+        };
+        if matches!(result, PublishResult::Conflict(_)) {
+            self.metrics
+                .index(crate::engine::metrics::IndexEvent::Conflict);
         }
-        table.compare_publish(expected, head)
+        Ok(result)
+    }
+    pub fn diagnostics(
+        &self,
+    ) -> Result<
+        (
+            crate::diagnostics::IndexTableDiagnostics,
+            Option<crate::diagnostics::IndexTableDiagnostics>,
+            usize,
+            bool,
+        ),
+        Error,
+    > {
+        fn table(table: &Table) -> Result<crate::diagnostics::IndexTableDiagnostics, Error> {
+            let mut counts = Vec::new();
+            counts
+                .try_reserve_exact(table.buckets.len())
+                .map_err(|_| Error::OutOfMemory)?;
+            for bucket in &table.buckets {
+                let bucket = bucket
+                    .lock()
+                    .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+                counts.push(bucket.blocks.iter().flatten().flatten().count() as u64);
+            }
+            Ok(crate::diagnostics::IndexTableDiagnostics {
+                generation: table.generation,
+                bucket_distribution: counts,
+            })
+        }
+        let state = self
+            .state
+            .read()
+            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+        Ok((
+            table(&state.active)?,
+            state
+                .growing
+                .as_ref()
+                .map(|growth| table(&growth.table))
+                .transpose()?,
+            state.growing.as_ref().map_or(0, |growth| growth.next),
+            state.retired.is_some(),
+        ))
     }
     pub fn bucket_count(&self) -> Result<usize, Error> {
         let state = self

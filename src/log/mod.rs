@@ -134,6 +134,12 @@ impl<V: ValueLayout> HybridLog<V> {
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
     }
+    pub fn preallocate(&mut self) -> Result<(), Error> {
+        self.pool.preallocate()
+    }
+    pub fn memory_usage(&self) -> Result<(usize, usize), Error> {
+        self.pool.memory_usage()
+    }
     /// 调用者须先验证并安装旧日志材料；这里只建立冷日志边界，不执行恢复 I/O。
     pub fn from_checkpoint(
         config: LogConfig,

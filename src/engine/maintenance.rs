@@ -4,6 +4,7 @@ use crate::{coordination::Phase, schema::Schema, types::*};
 use std::sync::atomic::Ordering;
 impl<S: Schema> Engine<S> {
     pub(crate) fn poll_maintenance(&self, budget: PollBudget) -> Result<Progress, Error> {
+        let _timer = self.metrics.timer(true);
         let result = self.maintenance_step(budget);
         if result.is_err() {
             self.failed.store(true, Ordering::SeqCst);

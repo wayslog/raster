@@ -53,7 +53,7 @@ impl<S: Schema> RasterKV<S> {
     ) -> Result<ResumedSession<S>, SessionError>;
 
     pub fn maintenance(&self) -> Maintenance<S>;
-    pub fn diagnostics(&self) -> Diagnostics;
+    pub fn diagnostics(&self) -> Result<Diagnostics, Error>;
     pub fn scan(&self, options: ScanOptions) -> Result<RecordScanner<S>, ScanError>;
     pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, ShutdownError>;
 }
@@ -76,7 +76,7 @@ impl<S: Schema> Builder<S> {
 
 第一阶段建议每线程每存储最多一个活跃业务 Session，以便匹配原线程上下文语义，重复开始明确拒绝。不同线程共享一个 RasterKV。调用线程不会通过全局 TLS 查到另一个 store 的隐式会话。
 
-Config 分为索引、日志、缓存、维护、恢复预算、会话/请求预算和设备选项。`Config::from_toml_str` / `from_toml_file` 对应原配置入口；解析后必须验证范围。命名、默认值与上游差异要在实施时逐项记录。
+Config 包含 storage、index、log、cache、maintenance、session、recovery、scan、statistics 九组。P8.1 已接通 `from_toml_str` / `from_toml_file` 及带 `_at` 的子表选择入口；解析、默认值、预分配、非法输入和上游差异见 [配置与诊断](15-配置与诊断.md)。
 
 ## 3. 四种操作及拥有型上下文
 
@@ -244,7 +244,7 @@ GC 与检查点显式释放是分别报告的独立动作。延后或普通删�
 
 P6.3 已接入公开扫描驱动：Unbuffered/SinglePage/DoublePage 分别持有最多 1/2/3 个逻辑页槽，即当前页加 0/1/2 个预读页。`Config.scan` 默认最多 16 个扫描器、每次同步等待 30 秒；关闭中的在途读取仍占名额。墓碑和 invalid 记录返回拥有键及 None 值，invalid 键不可规范解码时报错。close 停止预读并排空已接受读取，Drop 交给引擎继续收尾。详见 [P6.3 交付记录](acceptance/P6.3物理扫描交付记录.md)。
 
-Diagnostics 返回结构化的 `log_span_bytes`、地址边界、会话数、在途数、缓存和压缩状态、索引分布及统计快照。`log_span_bytes` 对应原 Size 的日志跨度；不命名为 len 以免被当作键数量。格式化输出由 examples/工具或 tracing 完成。
+`diagnostics()` 返回真实组件状态，可能报错，且不是跨组件事务快照；日志跨度和物理索引条目都不等于有效键数。`statistics()` 返回独立历史采样，`enable_stats_collection` / `disable_stats_collection` 控制新请求采样，`write_statistics` 向调用方的 Write 输出中文计数，不安装全局订阅器。各字段单位与边界见 [配置与诊断](15-配置与诊断.md)。
 
 ## 8. 设计中有意改变的接口形式
 

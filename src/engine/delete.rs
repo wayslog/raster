@@ -21,6 +21,7 @@ use std::{
 };
 struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     engine: Arc<Engine<S>>,
+    monitor: super::metrics::Monitor,
     request: Option<O>,
     lookup: Option<(crate::index::EntrySnapshot, LogLookup)>,
     options: DeleteOptions,
@@ -98,6 +99,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             }
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
+                self.monitor.invalidate();
                 Err(Error::Busy)
             }
         }
@@ -109,12 +111,8 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             result
         };
         self.completed = true;
-        if !matches!(
-            catch_unwind(AssertUnwindSafe(|| self.complete.finish(result))),
-            Ok(Ok(()))
-        ) {
-            self.engine.failed.store(true, Ordering::SeqCst);
-        }
+        self.engine
+            .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
     }
     fn run_locked(&mut self, budget: PollBudget) -> TaskStep {
         if self.completed {
@@ -262,6 +260,7 @@ impl<S: Schema> Engine<S> {
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = DeleteTask {
+            monitor: self.metrics.accept(super::metrics::Kind::Delete),
             engine: self.clone(),
             request: Some(request),
             lookup: None,
@@ -283,6 +282,7 @@ impl<S: Schema> Engine<S> {
             };
             Ok(Submission::Ready(result))
         } else {
+            task.monitor.pending();
             session.current.tasks.insert(id.slot, Box::new(task));
             Ok(Submission::Pending(ticket))
         }

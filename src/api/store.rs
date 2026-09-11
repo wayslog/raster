@@ -106,7 +106,58 @@ impl<S: Schema> RasterKV<S> {
         }
     }
     pub fn diagnostics(&self) -> Result<Diagnostics, Error> {
-        Err(Error::unimplemented("diagnostics::snapshot"))
+        let frontiers = self.inner.log.frontiers()?;
+        let (table, growing_index, migrated_buckets, retired_index_retained) =
+            self.inner.index.diagnostics()?;
+        let (active_requests, pending_requests) = self.inner.metrics.activity()?;
+        let (log_resident_pages, log_allocated_bytes) = self.inner.log.memory_usage()?;
+        let auto_compaction = self.inner.auto_compaction_status()?;
+        Ok(Diagnostics {
+            log_span_bytes: frontiers
+                .tail
+                .0
+                .checked_sub(frontiers.begin.0)
+                .ok_or(Error::InvalidState("日志跨度倒置"))?,
+            begin: frontiers.begin,
+            tail: frontiers.tail,
+            active_sessions: self.inner.coordinator.active_sessions()?,
+            active_requests,
+            pending_requests,
+            cached_bytes: self.inner.cache.allocated_bytes(),
+            cache_reserved_bytes: self.inner.cache.reserved_bytes(),
+            log_resident_pages,
+            log_allocated_bytes,
+            auto_compaction_scheduled: matches!(
+                auto_compaction.phase,
+                super::maintenance::AutoCompactionPhase::Scheduled
+                    | super::maintenance::AutoCompactionPhase::Compacting
+                    | super::maintenance::AutoCompactionPhase::Reclaiming
+            ) || auto_compaction.active.is_some(),
+            auto_compaction,
+            table_generation: table.generation,
+            bucket_distribution: table.bucket_distribution,
+            growing_index,
+            migrated_buckets,
+            retired_index_retained,
+            failed: self.inner.failed.load(std::sync::atomic::Ordering::SeqCst),
+            shutdown_requested: self
+                .inner
+                .shutdown_requested
+                .load(std::sync::atomic::Ordering::SeqCst),
+        })
+    }
+    pub fn enable_stats_collection(&self) {
+        self.inner.metrics.enable(true);
+    }
+    pub fn disable_stats_collection(&self) {
+        self.inner.metrics.enable(false);
+    }
+    pub fn statistics(&self) -> crate::diagnostics::Statistics {
+        self.inner.metrics.snapshot()
+    }
+    /// 调用者选择输出位置；本库不安装全局日志订阅器。
+    pub fn write_statistics(&self, output: &mut impl std::io::Write) -> Result<(), Error> {
+        write!(output, "{}", self.statistics()).map_err(Error::Io)
     }
     pub fn scan(&self, options: ScanOptions) -> Result<RecordScanner<S>, Error> {
         RecordScanner::open(self.inner.clone(), options)
@@ -200,22 +251,27 @@ impl<S: Schema> Builder<S> {
                 reason: "必须提供设备工厂",
             });
         }
-        if self.config.storage.pre_allocate_log {
-            return Err(Error::NotImplemented {
-                module: "engine::高级配置",
-            });
-        }
         let id = StoreId::generate()?;
         let io_capacity = self.config.io_capacity()?;
         let io = Arc::new(crate::engine::io_hub::CompletionHub::new(id, io_capacity)?);
         let schema = Arc::new(self.schema);
-        let index = crate::index::MemIndex::new(self.config.index.clone())?;
-        let log = crate::log::HybridLog::new(
+        let metrics = Arc::new(crate::engine::metrics::Metrics::new(
+            self.config.statistics.enabled,
+        ));
+        let mut index = crate::index::MemIndex::new(self.config.index.clone())?;
+        index.set_metrics(metrics.clone());
+        let mut log = crate::log::HybridLog::new(
             self.config.log.clone(),
             Arc::new(crate::schema::SharedValue(schema.clone())),
         )?;
+        if self.config.storage.pre_allocate_log {
+            log.preallocate()?;
+        }
         let epoch = crate::epoch::EpochManager::new()?;
         let coordinator = crate::coordination::Coordinator::new(self.config.session.max_sessions)?;
+        let mut cache = crate::cache::ReadCache::new(self.config.cache.clone());
+        cache.set_metrics(metrics.clone());
+        cache.preallocate()?;
         let device =
             self.device
                 .expect("设备工厂已检查")
@@ -228,10 +284,10 @@ impl<S: Schema> Builder<S> {
             self.config.storage.root.clone(),
             self.config.storage.segment_bytes,
         )?;
-        let cache = crate::cache::ReadCache::new(self.config.cache.clone());
         let store = RasterKV {
             inner: Arc::new(Engine {
                 id,
+                metrics,
                 io,
                 scans: Default::default(),
                 auto_compaction: Default::default(),

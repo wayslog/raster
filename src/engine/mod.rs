@@ -10,6 +10,7 @@ pub(crate) mod gc;
 pub(crate) mod growth;
 pub(crate) mod io_hub;
 mod maintenance;
+pub(crate) mod metrics;
 mod observe;
 mod pending;
 mod progress;
@@ -28,6 +29,7 @@ pub(crate) use pending::SessionRuntime;
 
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
+    pub metrics: std::sync::Arc<metrics::Metrics>,
     pub io: std::sync::Arc<io_hub::CompletionHub>,
     pub scans: scan::ScanRegistry,
     pub auto_compaction: auto_compaction::AutoCompactionRuntime,
@@ -137,3 +139,28 @@ mod pending_read_tests;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod checkpoint_tests;
+
+impl<S: Schema> Engine<S> {
+    fn complete_tracked<T: 'static>(
+        &self,
+        monitor: &mut metrics::Monitor,
+        id: RequestId,
+        complete: &crate::api::completion::Completer<T>,
+        result: crate::api::completion::OperationResult<T>,
+    ) {
+        let summary = metrics::Completed::result(&result);
+        let io = if monitor.sampled() {
+            self.io.completion_count(id).ok()
+        } else {
+            Some(0)
+        };
+        let delivered =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| complete.finish(result)));
+        if matches!(delivered, Ok(Ok(()))) {
+            monitor.finish(summary, io);
+        } else {
+            self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            monitor.finish(metrics::Completed::Failed(Effect::Unknown), io);
+        }
+    }
+}

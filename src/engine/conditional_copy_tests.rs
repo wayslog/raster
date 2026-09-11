@@ -75,6 +75,7 @@ impl RmwOperation<Schema> for Add {
 #[test]
 fn 候选捕获后原地更新保持源地址但复制当前值且只终结一次() {
     let (_root, store) = setup(None);
+    store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
     let old = source(&store.inner, 7);
@@ -99,6 +100,10 @@ fn 候选捕获后原地更新保持源地址但复制当前值且只终结一�
         Err(Error::InvalidState(_))
     ));
     assert!(task.drain(&store.inner.storage).unwrap());
+    let stats = store.statistics().conditional_copies;
+    assert_eq!((stats.accepted, stats.completed, stats.success), (1, 1, 1));
+    assert_eq!(stats.io_per_request[0], 1);
+    assert_eq!(store.diagnostics().unwrap().active_requests, 0);
     finish(&store.inner, id);
     assert_eq!(read_value(&mut session, 2, 7), Some(12));
     session.close(deadline()).unwrap();
@@ -107,6 +112,7 @@ fn 候选捕获后原地更新保持源地址但复制当前值且只终结一�
 #[test]
 fn 追加和删除使旧源失效且最新墓碑可迁移但不复活旧值() {
     let (_root, store) = setup(None);
+    store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 9);
     let old = source(&store.inner, 9);
@@ -118,6 +124,7 @@ fn 追加和删除使旧源失效且最新墓碑可迁移但不复活旧值() {
     put(&mut session, 1, 9);
     let tail = store.inner.log.frontiers().unwrap().tail;
     assert_eq!(drive(&store.inner, &mut task), CopyResult::Obsolete);
+    assert_eq!(store.statistics().conditional_copies.not_found, 1);
     assert_eq!(store.inner.log.frontiers().unwrap().tail, tail);
     let current = source(&store.inner, 9);
     let mut task = store

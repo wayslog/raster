@@ -1,0 +1,52 @@
+# RasterKV 的完整默认配置。使用文件后端前，为 storage.root 指定数据目录。
+[storage]
+root = ""
+segment_bytes = 1073741824
+pre_allocate_log = false
+
+[index]
+buckets = 1024
+
+[log]
+page_bytes = 33554432
+memory_pages = 4
+mutable_fraction = 0.9
+
+[cache]
+enabled = false
+capacity_bytes = 0
+mutable_fraction = 0.5
+pre_allocate = false
+
+[maintenance]
+max_checkpoint_tokens = 4096
+max_checkpoint_catalog_bytes = 67108864
+max_compaction_keys = 1000000
+max_compaction_key_bytes = 67108864
+max_compaction_workers = 64
+auto_compaction = false
+workers = 1
+
+[maintenance.auto_compaction_policy]
+check_interval_ms = 250
+trigger_fraction = 0.8
+compact_fraction = 0.2
+max_compacted_bytes = 536870912
+log_size_budget = 0
+
+[session]
+max_sessions = 96
+max_pending = 1024
+max_results = 1024
+
+[recovery]
+max_records = 1000000
+max_index_bytes = 134217728
+timeout_ms = 300000
+
+[scan]
+max_scanners = 16
+timeout_ms = 30000
+
+[statistics]
+enabled = false

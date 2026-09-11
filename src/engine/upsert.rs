@@ -25,6 +25,7 @@ struct Prepared<S: Schema, T> {
 }
 struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     engine: Arc<Engine<S>>,
+    monitor: super::metrics::Monitor,
     request: Option<O>,
     prepared: Option<Prepared<S, O::Output>>,
     key: Vec<u8>,
@@ -93,6 +94,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             }
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
+                self.monitor.invalidate();
                 Err(Error::Busy)
             }
         }
@@ -108,12 +110,8 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         }
         if let Some(request) = self.request.take() {
             let result = self.engine.finish_request(request, result, self.effect);
-            if !matches!(
-                catch_unwind(AssertUnwindSafe(|| self.complete.finish(result))),
-                Ok(Ok(()))
-            ) {
-                self.engine.failed.store(true, Ordering::SeqCst);
-            }
+            self.engine
+                .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
         }
     }
     fn run_locked(&mut self) -> TaskStep {
@@ -256,6 +254,7 @@ impl<S: Schema> Engine<S> {
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = UpsertTask {
+            monitor: self.metrics.accept(super::metrics::Kind::Upsert),
             engine: self.clone(),
             request: Some(request),
             prepared: None,
@@ -275,6 +274,7 @@ impl<S: Schema> Engine<S> {
             };
             Ok(Submission::Ready(result))
         } else {
+            task.monitor.pending();
             session.current.tasks.insert(id.slot, Box::new(task));
             Ok(Submission::Pending(ticket))
         }

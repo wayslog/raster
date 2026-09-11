@@ -37,6 +37,8 @@ struct Entry {
 struct State {
     entries: Vec<Entry>,
     next_id: u64,
+    preallocated: bool,
+    spare: Vec<Arc<Allocation>>,
 }
 pub(crate) struct PagePool {
     bytes: usize,
@@ -93,6 +95,8 @@ impl PagePool {
             state: Mutex::new(State {
                 entries: Vec::new(),
                 next_id: 0,
+                preallocated: false,
+                spare: Vec::new(),
             }),
         })
     }
@@ -105,6 +109,50 @@ impl PagePool {
             .map_err(|_| Error::InvalidState("页池锁中毒"))?
             .next_id = first.0;
         Ok(pool)
+    }
+    /// 创建或恢复发布前预分配全部内存页；不创建逻辑页、记录或磁盘文件。
+    pub fn preallocate(&mut self) -> Result<(), Error> {
+        let state = self
+            .state
+            .get_mut()
+            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+        if state.preallocated {
+            return Ok(());
+        }
+        if !state.entries.is_empty() {
+            return Err(Error::InvalidState("页池已开始分配，不能切换预分配策略"));
+        }
+        let mut spare = Vec::new();
+        spare
+            .try_reserve_exact(self.max_pages)
+            .map_err(|_| Error::OutOfMemory)?;
+        for _ in 0..self.max_pages {
+            spare.push(Arc::new(Allocation::new(self.bytes)?));
+        }
+        state
+            .entries
+            .try_reserve_exact(self.max_pages)
+            .map_err(|_| Error::OutOfMemory)?;
+        state.spare = spare;
+        state.preallocated = true;
+        Ok(())
+    }
+    /// 页负载分配量包含尚未使用及回收后保留的预分配页，不含池元数据或 OS RSS。
+    pub fn memory_usage(&self) -> Result<(usize, usize), Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+        let active = state
+            .entries
+            .iter()
+            .filter(|entry| entry.page.is_some())
+            .count();
+        let bytes = active
+            .checked_add(state.spare.len())
+            .and_then(|n| n.checked_mul(self.bytes))
+            .ok_or(Error::CapacityExceeded)?;
+        Ok((active, bytes))
     }
     pub fn generation(&self, page: PageId) -> Result<Generation, Error> {
         let state = self
@@ -207,7 +255,11 @@ impl PagePool {
             .next_id
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
-        let page = Arc::new(Allocation::new(self.bytes)?);
+        let page = if state.preallocated {
+            state.spare.pop().ok_or(Error::CapacityExceeded)?
+        } else {
+            Arc::new(Allocation::new(self.bytes)?)
+        };
         let generation = if let Some(i) = free {
             Generation(state.entries[i].generation.0 + 1)
         } else {
@@ -251,7 +303,18 @@ impl PagePool {
         if Arc::strong_count(entry.page.as_ref().expect("已检查页存在")) != 1 {
             return Err(Error::Busy);
         }
-        entry.page = None;
+        let mut page = entry.page.take().expect("已检查页存在");
+        if state.preallocated {
+            let allocation = Arc::get_mut(&mut page).expect("分配不暴露 Weak 且所有范围已经退出");
+            // SAFETY: 页池独占最后一个 Arc，旧 PageRange 已全部退出；原页释放条件同样保证值析构完成。
+            unsafe {
+                allocation
+                    .pointer
+                    .as_ptr()
+                    .write_bytes(0, allocation.layout.size())
+            };
+            state.spare.push(page);
+        }
         Ok(())
     }
 }
@@ -353,5 +416,41 @@ mod tests {
         let generation = range.generation();
         std::mem::forget(range);
         assert!(pool.release(id, generation).is_err());
+    }
+}
+
+#[cfg(test)]
+mod preallocation_tests {
+    use super::*;
+    #[test]
+    fn 预分配不占逻辑地址且所有租约退出才清零复用同一物理页() {
+        let mut pool = PagePool::new_at(4096, 2, PageId(7)).unwrap();
+        assert_eq!(pool.memory_usage().unwrap(), (0, 0));
+        pool.preallocate().unwrap();
+        pool.preallocate().unwrap();
+        assert_eq!(pool.memory_usage().unwrap(), (0, 8192));
+        assert_eq!(pool.tail().unwrap(), LogAddress(7 * 4096));
+        assert!(pool.generation(PageId(7)).is_err());
+        let mut first = pool.reserve(4096, 8).unwrap();
+        first.bytes_mut().fill(0xa5);
+        let pointer = first.pointer();
+        let second = pool.reserve(4096, 8).unwrap();
+        assert!(matches!(
+            pool.release(first.page_id(), first.generation()),
+            Err(Error::Busy)
+        ));
+        assert!(pool.reserve(1, 1).is_err());
+        drop(first);
+        pool.release(PageId(7), Generation(0)).unwrap();
+        let mut third = pool.reserve(4096, 8).unwrap();
+        assert_eq!(third.pointer(), pointer);
+        assert_eq!(third.page_id(), PageId(9));
+        assert_eq!(third.generation(), Generation(1));
+        assert!(third.bytes_mut().iter().all(|&b| b == 0));
+        assert_eq!(pool.memory_usage().unwrap(), (2, 8192));
+        drop(pool);
+        drop(second);
+        third.bytes_mut().fill(7);
+        assert_eq!(third.bytes_mut()[0], 7);
     }
 }

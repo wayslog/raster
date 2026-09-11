@@ -13,7 +13,7 @@ path = "src/lib.rs"
 default = []
 # 仅控制后端骨架的编译，不表示已经实现对应能力。
 io-uring = []
-config-toml = []
+config-toml = ["dep:toml"]
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -23,3 +23,6 @@ undocumented_unsafe_blocks = "deny"
 
 [dependencies]
 cap-std = "=4.0.3"
+
+# 只启用完整语法解析；字段映射与校验由配置模块负责。
+toml = { version = "=1.1.6", optional = true, default-features = false, features = ["std", "parse"] }

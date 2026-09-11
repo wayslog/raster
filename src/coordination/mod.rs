@@ -63,6 +63,17 @@ pub(crate) struct Coordinator {
     max_sessions: usize,
 }
 impl Coordinator {
+    pub fn active_sessions(&self) -> Result<usize, Error> {
+        let registry = self
+            .registry
+            .lock()
+            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+        Ok(registry
+            .sessions
+            .values()
+            .filter(|entry| entry.active)
+            .count())
+    }
     pub fn new(max_sessions: usize) -> Result<Self, Error> {
         if max_sessions == 0 {
             return Err(Error::InvalidConfig {

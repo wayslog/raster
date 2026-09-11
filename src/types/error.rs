@@ -13,6 +13,12 @@ pub enum CheckpointRetirement {
 
 #[derive(Debug)]
 pub enum Error {
+    /// 不保留或回显 TOML 原文及文件路径；offset 是 UTF-8 字节位置。
+    ConfigDocument {
+        field: &'static str,
+        offset: Option<usize>,
+        reason: &'static str,
+    },
     CheckpointReleaseFailed {
         token: super::CheckpointToken,
         retirement: CheckpointRetirement,
@@ -64,6 +70,11 @@ impl Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ConfigDocument {
+                field,
+                offset,
+                reason,
+            } => write!(f, "配置文档 {field} 错误（字节位置 {offset:?}）：{reason}"),
             Self::CheckpointReleaseFailed {
                 token,
                 retirement,

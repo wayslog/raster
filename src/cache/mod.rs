@@ -1,4 +1,5 @@
 //! 不可变磁盘记录缓存；索引条件发布、地址解析和淘汰共用控制锁。
+mod arena;
 use crate::{
     config::CacheConfig,
     format::Record,
@@ -9,22 +10,40 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
+enum Bytes {
+    Owned(Vec<u8>),
+    Reserved(arena::Lease),
+}
+impl Bytes {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Reserved(lease) => lease.bytes(),
+        }
+    }
+}
+impl Default for Bytes {
+    fn default() -> Self {
+        Self::Owned(Vec::new())
+    }
+}
 pub(crate) struct CachedRecord {
     pub source: LogAddress,
     pub version: CheckpointVersion,
     head: LogAddress,
     hash: KeyHash,
-    bytes: Vec<u8>,
+    bytes: Bytes,
+    position: AtomicU64,
     charge: usize,
     allocated: Arc<AtomicUsize>,
 }
 impl CachedRecord {
     pub fn encoded(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_slice()
     }
 }
 impl Drop for CachedRecord {
@@ -42,20 +61,64 @@ pub(crate) struct Resolved {
 struct State {
     owner: Option<u64>,
     next: u64,
+    clock: u64,
+    order: BTreeMap<u64, u64>,
     entries: BTreeMap<u64, Arc<CachedRecord>>,
 }
 pub(crate) struct ReadCache {
     config: CacheConfig,
+    arena: Option<Arc<arena::Arena>>,
+    metrics: Arc<crate::engine::metrics::Metrics>,
     allocated: Arc<AtomicUsize>,
     state: Mutex<State>,
 }
 impl ReadCache {
     pub fn new(config: CacheConfig) -> Self {
         Self {
+            metrics: Arc::new(crate::engine::metrics::Metrics::new(false)),
             config,
+            arena: None,
             allocated: Arc::new(AtomicUsize::new(0)),
             state: Mutex::new(State::default()),
         }
+    }
+    pub fn preallocate(&mut self) -> Result<(), Error> {
+        if self.config.enabled && self.config.pre_allocate && self.arena.is_none() {
+            self.arena = Some(arena::Arena::new(self.config.capacity_bytes)?);
+        }
+        Ok(())
+    }
+    pub fn reserved_bytes(&self) -> usize {
+        self.arena.as_ref().map_or(0, |arena| arena.capacity())
+    }
+    /// 仅调整不可变记录的淘汰顺序；不改索引头、日志地址或正在读取的字节。
+    pub fn touch(&self, address: CacheAddress) -> Result<(), Error> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
+        let Some(record) = state.entries.get(&address.0).cloned() else {
+            return Ok(());
+        };
+        let old = record.position.load(Ordering::Relaxed);
+        let recent = (self.config.capacity_bytes as f64 * self.config.mutable_fraction) as u64;
+        if state.clock.saturating_sub(old) <= recent {
+            return Ok(());
+        }
+        let Some(next) = state.clock.checked_add(record.charge as u64) else {
+            return Ok(());
+        };
+        state.order.remove(&old);
+        let position = state.clock;
+        record.position.store(position, Ordering::Relaxed);
+        state.order.insert(position, address.0);
+        state.clock = next;
+        self.metrics
+            .cache(crate::engine::metrics::CacheEvent::Promote);
+        Ok(())
+    }
+    pub fn set_metrics(&mut self, metrics: Arc<crate::engine::metrics::Metrics>) {
+        self.metrics = metrics;
     }
     pub fn max_record_bytes(&self) -> usize {
         self.config
@@ -127,10 +190,13 @@ impl ReadCache {
             return Err(Error::InvalidFormat("缓存源记录前驱没有递减"));
         }
         let version = record.header.version;
-        let charge = bytes
-            .capacity()
-            .checked_add(std::mem::size_of::<CachedRecord>())
-            .ok_or(Error::CapacityExceeded)?;
+        let charge = if self.arena.is_some() {
+            bytes.len()
+        } else {
+            bytes.capacity()
+        }
+        .checked_add(std::mem::size_of::<CachedRecord>())
+        .ok_or(Error::CapacityExceeded)?;
         if charge > self.config.capacity_bytes {
             return Ok(None);
         }
@@ -153,11 +219,27 @@ impl ReadCache {
             .checked_add(charge)
             .is_none_or(|bytes| bytes > self.config.capacity_bytes)
         {
-            let Some(address) = state.entries.keys().next().copied() else {
+            let Some(address) = state.order.first_key_value().map(|(_, &address)| address) else {
                 return Ok(None);
             };
-            Self::remove(&mut state, index, address)?;
+            self.remove(&mut state, index, address)?;
         }
+        let bytes = if let Some(arena) = &self.arena {
+            let mut lease = loop {
+                if let Some(lease) = arena.allocate(bytes.len())? {
+                    break lease;
+                }
+                let Some(address) = state.order.first_key_value().map(|(_, &address)| address)
+                else {
+                    return Ok(None);
+                };
+                self.remove(&mut state, index, address)?;
+            };
+            lease.initialize(&bytes);
+            Bytes::Reserved(lease)
+        } else {
+            Bytes::Owned(bytes)
+        };
         // 淘汰可能还原 expected 本身，重新取得快照但不接受其他写入造成的链变化。
         let current = index.prepare(hash)?;
         if current != expected {
@@ -168,6 +250,11 @@ impl ReadCache {
             return Ok(None);
         }
         state.next = state.next.checked_add(1).ok_or(Error::CapacityExceeded)?;
+        let position = state.clock;
+        state.clock = state
+            .clock
+            .checked_add(charge as u64)
+            .ok_or(Error::CapacityExceeded)?;
         self.allocated.fetch_add(charge, Ordering::SeqCst);
         let record = Arc::new(CachedRecord {
             source,
@@ -175,6 +262,7 @@ impl ReadCache {
             head,
             hash,
             bytes,
+            position: AtomicU64::new(position),
             charge,
             allocated: self.allocated.clone(),
         });
@@ -182,14 +270,19 @@ impl ReadCache {
             PublishResult::Conflict(_) => Ok(None),
             PublishResult::Published => {
                 state.entries.insert(address.0, record);
-                if let IndexHead::Cache(old) = expected.head {
-                    state.entries.remove(&old.0);
+                state.order.insert(position, address.0);
+                self.metrics
+                    .cache(crate::engine::metrics::CacheEvent::Insert);
+                if let IndexHead::Cache(old) = expected.head
+                    && let Some(old) = state.entries.remove(&old.0)
+                {
+                    state.order.remove(&old.position.load(Ordering::Relaxed));
                 }
                 Ok(Some(address))
             }
         }
     }
-    fn remove(state: &mut State, index: &MemIndex, address: u64) -> Result<(), Error> {
+    fn remove(&self, state: &mut State, index: &MemIndex, address: u64) -> Result<(), Error> {
         let record = state
             .entries
             .get(&address)
@@ -199,7 +292,11 @@ impl ReadCache {
             // 非缓存写入可抢先替换；冲突时无需覆盖其新链头。
             index.compare_publish(current, IndexHead::Log(record.head))?;
         }
+        let position = record.position.load(Ordering::Relaxed);
+        state.order.remove(&position);
         state.entries.remove(&address);
+        self.metrics
+            .cache(crate::engine::metrics::CacheEvent::Evict);
         Ok(())
     }
     #[cfg(test)]
@@ -210,7 +307,7 @@ impl ReadCache {
             .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
         Self::bind(&mut state, index)?;
         if state.entries.contains_key(&address.0) {
-            Self::remove(&mut state, index, address.0)?;
+            self.remove(&mut state, index, address.0)?;
         }
         Ok(())
     }
@@ -226,14 +323,10 @@ impl ReadCache {
             .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
         Self::bind(&mut state, index)?;
         while let Some(address) = state.entries.keys().next().copied() {
-            Self::remove(&mut state, index, address)?;
+            self.remove(&mut state, index, address)?;
         }
         operation()
     }
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "P8 诊断将读取缓存计费，当前由原生容量测试验证")
-    )]
     pub fn allocated_bytes(&self) -> usize {
         self.allocated.load(Ordering::SeqCst)
     }
@@ -274,7 +367,138 @@ mod tests {
         ReadCache::new(CacheConfig {
             enabled: true,
             capacity_bytes: capacity,
+            ..Default::default()
         })
+    }
+    #[test]
+    fn 预分配缓存的淘汰租约继续计费且最后读者退出才可复用() {
+        let index = index();
+        let encoded = bytes(b"a", b"v");
+        let charge = encoded.len() + std::mem::size_of::<CachedRecord>();
+        let mut cache = cache(charge);
+        cache.config.pre_allocate = true;
+        cache.preallocate().unwrap();
+        assert_eq!(cache.reserved_bytes(), charge);
+        assert_eq!(cache.allocated_bytes(), 0);
+        let first = head(&index, KeyHash(0), 10);
+        let second = head(&index, KeyHash(1), 20);
+        cache
+            .insert_if_current(&index, first, KeyHash(0), LogAddress(10), encoded)
+            .unwrap()
+            .unwrap();
+        let pinned = cache
+            .resolve(&index, KeyHash(0), b"a")
+            .unwrap()
+            .cached
+            .unwrap();
+        let pointer = pinned.encoded().as_ptr();
+        assert!(
+            cache
+                .insert_if_current(
+                    &index,
+                    second,
+                    KeyHash(1),
+                    LogAddress(20),
+                    bytes(b"b", b"x")
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(cache.allocated_bytes(), charge);
+        assert_eq!(Record::decode(pinned.encoded()).unwrap().value, b"v");
+        drop(pinned);
+        cache
+            .insert_if_current(
+                &index,
+                second,
+                KeyHash(1),
+                LogAddress(20),
+                bytes(b"b", b"x"),
+            )
+            .unwrap()
+            .unwrap();
+        let pinned = cache
+            .resolve(&index, KeyHash(1), b"b")
+            .unwrap()
+            .cached
+            .unwrap();
+        assert_eq!(pinned.encoded().as_ptr(), pointer);
+        cache.with_normalized_index(&index, || Ok(())).unwrap();
+        assert_eq!(cache.allocated_bytes(), charge);
+        drop(cache);
+        assert_eq!(Record::decode(pinned.encoded()).unwrap().value, b"x");
+    }
+    #[test]
+    fn 最近窗口比例控制命中刷新而旧读者和索引头保持有效() {
+        for fraction in [0.0, 0.75] {
+            let index = index();
+            let charge = bytes(b"a", b"v").capacity() + std::mem::size_of::<CachedRecord>();
+            let mut cache = cache(charge * 3);
+            cache.config.mutable_fraction = fraction;
+            let metrics = Arc::new(crate::engine::metrics::Metrics::new(true));
+            cache.set_metrics(metrics.clone());
+            let hashes = std::array::from_fn::<_, 4, _>(|i| KeyHash((i as u64 + 1) << 48));
+            let mut addresses = Vec::new();
+            for (i, &hash) in hashes[..2].iter().enumerate() {
+                let expected = head(&index, hash, 10 + i as u64);
+                addresses.push(
+                    cache
+                        .insert_if_current(
+                            &index,
+                            expected,
+                            hash,
+                            LogAddress(10 + i as u64),
+                            bytes(&[b'a' + i as u8], b"v"),
+                        )
+                        .unwrap()
+                        .unwrap(),
+                );
+            }
+            let pinned = cache
+                .resolve(&index, hashes[0], b"a")
+                .unwrap()
+                .cached
+                .unwrap();
+            let snapshot = index.prepare(hashes[0]).unwrap();
+            cache.touch(addresses[0]).unwrap();
+            assert_eq!(index.prepare(hashes[0]).unwrap(), snapshot);
+            assert_eq!(Record::decode(pinned.encoded()).unwrap().value, b"v");
+            drop(pinned);
+            for (i, &hash) in hashes.iter().enumerate().skip(2) {
+                let expected = head(&index, hash, 10 + i as u64);
+                cache
+                    .insert_if_current(
+                        &index,
+                        expected,
+                        hash,
+                        LogAddress(10 + i as u64),
+                        bytes(&[b'a' + i as u8], b"v"),
+                    )
+                    .unwrap()
+                    .unwrap();
+            }
+            assert_eq!(
+                cache
+                    .resolve(&index, hashes[0], b"a")
+                    .unwrap()
+                    .cached
+                    .is_some(),
+                fraction == 0.0
+            );
+            assert_eq!(
+                cache
+                    .resolve(&index, hashes[1], b"b")
+                    .unwrap()
+                    .cached
+                    .is_some(),
+                fraction != 0.0
+            );
+            assert_eq!(
+                metrics.snapshot().cache.promotions,
+                u64::from(fraction == 0.0)
+            );
+            assert_eq!(metrics.snapshot().cache.evictions, 1);
+        }
     }
     #[test]
     fn 缓存条件安装完整键命中且快照先还原日志地址() {

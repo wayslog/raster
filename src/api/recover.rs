@@ -222,9 +222,6 @@ pub(crate) fn recover<S: Schema>(
     set.store.validate()?;
     set.index.validate()?;
     set.log.validate()?;
-    if config.storage.pre_allocate_log {
-        return Err(Error::unimplemented("engine::高级配置"));
-    }
     let deadline = Deadline(
         Instant::now()
             .checked_add(config.recovery.timeout)
@@ -286,7 +283,7 @@ fn build<S: Schema>(
     };
     let schema = Arc::new(schema);
     let mut plan = RecoveryPlan::new(&set, index_manifest, log_manifest, &*schema, &config)?;
-    let log = crate::log::HybridLog::from_checkpoint(
+    let mut log = crate::log::HybridLog::from_checkpoint(
         config.log.clone(),
         Arc::new(SharedValue(schema.clone())),
         plan.log().begin,
@@ -296,6 +293,9 @@ fn build<S: Schema>(
         .requests()
         .map(|(token, material)| (token, material.clone()))
         .collect();
+    if config.storage.pre_allocate_log {
+        log.preallocate()?;
+    }
     let mut source_index = None;
     for (token, material) in requests {
         let bytes = read_material(&storage, token, &material, &config, deadline)?;
@@ -338,7 +338,11 @@ fn build<S: Schema>(
     for entry in source_index.entries {
         replay.resolve_head(entry.address, entry.tag)?;
     }
+    let metrics = Arc::new(crate::engine::metrics::Metrics::new(
+        config.statistics.enabled,
+    ));
     let mut index = crate::index::MemIndex::new(config.index.clone())?;
+    index.set_metrics(metrics.clone());
     index.restore(replay.index()?)?;
     let coordinator = crate::coordination::Coordinator::from_checkpoint(
         config.session.max_sessions,
@@ -385,7 +389,11 @@ fn build<S: Schema>(
     let io_capacity = config.io_capacity()?;
     catalog_lock.release()?;
     drive_catalog_lock(&storage, &mut catalog_lock, true, deadline)?;
+    let mut cache = crate::cache::ReadCache::new(config.cache.clone());
+    cache.set_metrics(metrics.clone());
+    cache.preallocate()?;
     let engine = Engine {
+        metrics,
         id: set.store,
         scans: Default::default(),
         auto_compaction: Default::default(),
@@ -404,7 +412,7 @@ fn build<S: Schema>(
         coordinator,
         storage,
         epoch: crate::epoch::EpochManager::new()?,
-        cache: crate::cache::ReadCache::new(config.cache.clone()),
+        cache,
         config,
         shutdown_state: crate::sync::Mutex::new(false),
         version_permits: Default::default(),

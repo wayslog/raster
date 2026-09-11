@@ -1350,3 +1350,6 @@ mod compaction_worker;
 
 #[path = "auto_compaction_tests.rs"]
 mod auto_compaction;
+
+#[path = "p8_tests.rs"]
+mod p8;

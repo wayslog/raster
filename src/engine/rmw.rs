@@ -21,6 +21,7 @@ use std::{
 };
 struct RmwTask<S: Schema, O: RmwOperation<S>> {
     engine: Arc<Engine<S>>,
+    monitor: super::metrics::Monitor,
     request: Option<O>,
     lookup: Option<(crate::index::EntrySnapshot, LogLookup)>,
     options: RmwOptions,
@@ -117,6 +118,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
+                self.monitor.invalidate();
                 Err(Error::Busy)
             }
         }
@@ -124,12 +126,8 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
     fn finish(&mut self, result: OperationResult<O::Output>) {
         if let Some(request) = self.request.take() {
             let result = self.engine.finish_request(request, result, self.effect);
-            if !matches!(
-                catch_unwind(AssertUnwindSafe(|| self.complete.finish(result))),
-                Ok(Ok(()))
-            ) {
-                self.engine.failed.store(true, Ordering::SeqCst);
-            }
+            self.engine
+                .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
         }
     }
     fn run_locked(&mut self, budget: PollBudget) -> TaskStep {
@@ -278,6 +276,7 @@ impl<S: Schema> Engine<S> {
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = RmwTask {
+            monitor: self.metrics.accept(super::metrics::Kind::Rmw),
             engine: self.clone(),
             request: Some(request),
             lookup: None,
@@ -299,6 +298,7 @@ impl<S: Schema> Engine<S> {
             };
             Ok(Submission::Ready(result))
         } else {
+            task.monitor.pending();
             session.current.tasks.insert(id.slot, Box::new(task));
             Ok(Submission::Pending(ticket))
         }

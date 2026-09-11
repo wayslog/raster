@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 struct Mailbox {
     id: RequestId,
     completion: Option<IoCompletion>,
+    completions: u64,
 }
 struct State {
     next: u64,
@@ -55,6 +56,7 @@ impl CompletionHub {
             Mailbox {
                 id,
                 completion: None,
+                completions: 0,
             },
         );
         state.next = next;
@@ -77,6 +79,18 @@ impl CompletionHub {
             return Err(Error::InvalidState("请求邮箱归属不匹配"));
         }
         Ok(mailbox.completion.take())
+    }
+    pub fn completion_count(&self, id: RequestId) -> Result<u64, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+        state
+            .mailboxes
+            .get(&id.slot)
+            .filter(|mailbox| mailbox.id == id)
+            .map(|mailbox| mailbox.completions)
+            .ok_or(Error::InvalidState("完成计数路由不存在"))
     }
     /// 请求终结或会话放弃时注销；设备仍拥有尚未返回的 I/O 缓冲。
     pub fn release(&self, id: RequestId) -> Result<(), Error> {
@@ -139,6 +153,7 @@ impl CompletionHub {
         let count = completions.len();
         for completion in completions {
             if let Some(mailbox) = state.mailboxes.get_mut(&completion.route.0) {
+                mailbox.completions = mailbox.completions.saturating_add(1);
                 if mailbox.completion.is_some() {
                     error.get_or_insert(Error::InvalidState("一个请求存在多个未收取 I/O 完成"));
                 } else {

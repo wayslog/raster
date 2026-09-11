@@ -1,8 +1,12 @@
-//! 只校验配置，不打开设备；默认值是骨架起点，不是性能承诺。
+//! 拥有型配置与严格 TOML 映射；解析和校验不打开存储设备，默认值不构成性能承诺。
 
 use crate::types::Error;
+#[cfg(feature = "config-toml")]
+mod document;
+#[cfg(all(test, feature = "config-toml"))]
+mod tests;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub storage: StorageConfig,
     pub index: IndexConfig,
@@ -12,43 +16,62 @@ pub struct Config {
     pub session: SessionConfig,
     pub recovery: RecoveryConfig,
     pub scan: ScanConfig,
+    pub statistics: StatisticsConfig,
+}
+/// 关闭采集不影响实时资源诊断；已采样请求继续记录至终结。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StatisticsConfig {
+    pub enabled: bool,
 }
 /// 扫描注册和同步调用的预算；关闭中的在途扫描也占用名额。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScanConfig {
     pub max_scanners: usize,
     pub timeout: std::time::Duration,
 }
 /// 恢复的临时元数据与索引输入预算，不改变日志驻留页预算。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RecoveryConfig {
     pub max_records: usize,
     pub max_index_bytes: usize,
     pub timeout: std::time::Duration,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StorageConfig {
     /// 文件设备要求实际根目录，非文件设备可忽略。
     pub root: std::path::PathBuf,
     pub segment_bytes: u64,
     pub pre_allocate_log: bool,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IndexConfig {
     pub buckets: usize,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LogConfig {
     pub page_bytes: usize,
     pub memory_pages: usize,
     pub mutable_fraction: f64,
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CacheConfig {
     pub enabled: bool,
     pub capacity_bytes: usize,
+    /// 最近插入字节窗口的比例；更老的命中刷新淘汰顺序，记录值始终不可变。
+    pub mutable_fraction: f64,
+    pub pre_allocate: bool,
 }
-#[derive(Clone, Debug)]
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            capacity_bytes: 0,
+            mutable_fraction: 0.5,
+            pre_allocate: false,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq)]
 pub struct MaintenanceConfig {
     /// 检查点释放按磁盘目录核对依赖；包含已失效目录，超限整体拒绝。
     pub max_checkpoint_tokens: usize,
@@ -64,7 +87,7 @@ pub struct MaintenanceConfig {
     pub workers: usize,
 }
 /// 自动压缩按日志跨度触发；预算不是拒写上限，也不代表有效数据量。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AutoCompactionPolicy {
     pub check_interval: std::time::Duration,
     pub trigger_fraction: f64,
@@ -84,7 +107,7 @@ impl Default for AutoCompactionPolicy {
         }
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionConfig {
     pub max_sessions: usize,
     pub max_pending: usize,
@@ -116,6 +139,7 @@ impl Default for Config {
                 auto_compaction_policy: AutoCompactionPolicy::default(),
                 workers: 1,
             },
+            statistics: StatisticsConfig::default(),
             scan: ScanConfig {
                 max_scanners: 16,
                 timeout: std::time::Duration::from_secs(30),
@@ -136,13 +160,21 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
         let invalid = |field, reason| Error::InvalidConfig { field, reason };
-        if self.scan.max_scanners == 0 || self.scan.timeout.is_zero() {
+        if self.scan.max_scanners == 0
+            || self.scan.timeout.is_zero()
+            || std::time::Instant::now()
+                .checked_add(self.scan.timeout)
+                .is_none()
+        {
             return Err(invalid("scan", "扫描名额和超时必须非零"));
         }
         self.io_capacity()?;
         if self.recovery.max_records == 0
             || self.recovery.max_index_bytes < 36
             || self.recovery.timeout.is_zero()
+            || std::time::Instant::now()
+                .checked_add(self.recovery.timeout)
+                .is_none()
         {
             return Err(invalid(
                 "recovery",
@@ -176,6 +208,11 @@ impl Config {
             || !(0.0..1.0).contains(&self.log.mutable_fraction)
         {
             return Err(invalid("log.mutable_fraction", "必须有限且位于 [0, 1)"));
+        }
+        if !self.cache.mutable_fraction.is_finite()
+            || !(0.0..1.0).contains(&self.cache.mutable_fraction)
+        {
+            return Err(invalid("cache.mutable_fraction", "必须有限且位于 [0, 1)"));
         }
         if self.cache.enabled && self.cache.capacity_bytes == 0 {
             return Err(invalid("cache.capacity_bytes", "启用缓存时必须非零"));
@@ -233,12 +270,22 @@ impl Config {
             .ok_or(Error::CapacityExceeded)
     }
 
+    /// 解析文档根表；未知字段、类型错误与超限输入不会静默忽略。
     #[cfg(feature = "config-toml")]
-    pub fn from_toml_str(_input: &str) -> Result<Self, Error> {
-        Err(Error::unimplemented("config::toml"))
+    pub fn from_toml_str(input: &str) -> Result<Self, Error> {
+        document::parse(input, &[])
+    }
+    /// 子表路径以各段键名表示，段内的点号不再拆分。
+    #[cfg(feature = "config-toml")]
+    pub fn from_toml_str_at(input: &str, table_path: &[&str]) -> Result<Self, Error> {
+        document::parse(input, table_path)
     }
     #[cfg(feature = "config-toml")]
-    pub fn from_toml_file(_path: &std::path::Path) -> Result<Self, Error> {
-        Err(Error::unimplemented("config::toml"))
+    pub fn from_toml_file(path: &std::path::Path) -> Result<Self, Error> {
+        document::file(path, &[])
+    }
+    #[cfg(feature = "config-toml")]
+    pub fn from_toml_file_at(path: &std::path::Path, table_path: &[&str]) -> Result<Self, Error> {
+        document::file(path, table_path)
     }
 }

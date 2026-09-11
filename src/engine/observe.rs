@@ -8,6 +8,7 @@ use crate::{
 use std::sync::atomic::Ordering;
 impl<S: Schema> Engine<S> {
     pub(crate) fn observe_session(&self, session: &mut SessionRuntime) -> Result<bool, Error> {
+        let _timer = self.metrics.timer(false);
         let mut changed = false;
         // 每次观察有固定上限；并发动作不断变化时让调用者下一轮继续。
         for _ in 0..8 {

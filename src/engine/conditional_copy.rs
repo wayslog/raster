@@ -14,6 +14,7 @@ use std::sync::{Arc, TryLockError, atomic::Ordering};
 
 pub(crate) struct ConditionalCopy {
     hub: Arc<CompletionHub>,
+    monitor: super::metrics::Monitor,
     id: Option<RequestId>,
     action: MaintenanceId,
     version: CheckpointVersion,
@@ -77,7 +78,9 @@ impl ConditionalCopy {
         if self.has_inflight() {
             return Ok(false);
         }
+        let io = self.id.and_then(|id| self.hub.completion_count(id).ok());
         self.release()?;
+        self.monitor.finish(super::metrics::Completed::Aborted, io);
         Ok(true)
     }
 }
@@ -85,6 +88,13 @@ impl Drop for ConditionalCopy {
     fn drop(&mut self) {
         // 正常调度先 drain；异常销毁仅注销历史邮箱，设备仍拥有已接受的缓冲。
         if let Some(id) = self.id.take() {
+            let io = if self.has_inflight() {
+                None
+            } else {
+                self.hub.completion_count(id).ok()
+            };
+            self.monitor
+                .finish(super::metrics::Completed::Failed(Effect::Unknown), io);
             let _ = self.hub.release(id);
         }
     }
@@ -125,6 +135,7 @@ impl<S: Schema> Engine<S> {
             let id = self.io.reserve(SessionId(self.id.0))?;
             Ok(ConditionalCopy {
                 hub: self.io.clone(),
+                monitor: self.metrics.accept(super::metrics::Kind::Copy),
                 id: Some(id),
                 action,
                 version: state.version,
@@ -171,29 +182,55 @@ impl<S: Schema> Engine<S> {
             .ok_or(Error::InvalidState("条件复制缺少版本许可"))?
             .ready()?
         {
+            request.monitor.pending();
             return Ok(CopyResult::Retry);
         }
         let _gate =
             match self.operations[request.hash.0 as usize % self.operations.len()].try_lock() {
                 Ok(gate) => gate,
-                Err(TryLockError::WouldBlock) => return Ok(CopyResult::Retry),
+                Err(TryLockError::WouldBlock) => {
+                    request.monitor.pending();
+                    return Ok(CopyResult::Retry);
+                }
                 Err(_) => return Err(Error::InvalidState("条件复制遇到业务仲裁锁中毒")),
             };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.copy_step(request, budget)
         }));
-        let result = match result {
+        let mut result = match result {
             Ok(result) => result,
             Err(_) => {
                 self.failed.store(true, Ordering::SeqCst);
                 Err(Error::InvalidState("条件复制布局或发布恐慌"))
             }
         };
-        if matches!(result, Ok(CopyResult::Copied(_) | CopyResult::Obsolete)) || result.is_err() {
+        if matches!(result, Ok(CopyResult::Retry)) {
+            request.monitor.pending();
+        } else {
             request.ended = true;
-            if !request.has_inflight() {
-                request.release()?;
+            let io = if request.has_inflight() {
+                None
+            } else {
+                request
+                    .id
+                    .and_then(|id| request.hub.completion_count(id).ok())
+            };
+            if !request.has_inflight()
+                && let Err(error) = request.release()
+            {
+                result = Err(error);
             }
+            let summary = match &result {
+                Ok(CopyResult::Copied(_)) => super::metrics::Completed::Success,
+                Ok(CopyResult::Obsolete) => super::metrics::Completed::NotFound,
+                Err(_) => super::metrics::Completed::Failed(if request.published.is_some() {
+                    Effect::Applied
+                } else {
+                    Effect::NotApplied
+                }),
+                Ok(CopyResult::Retry) => unreachable!("重试已单独处理"),
+            };
+            request.monitor.finish(summary, io);
         }
         result
     }
@@ -312,10 +349,12 @@ impl<S: Schema> Engine<S> {
                 }
                 Ok(PublishResult::Conflict(_)) => {
                     self.log.retire(address)?;
+                    request.monitor.invalidate();
                     Ok(CopyResult::Retry)
                 }
                 Err(error) => {
                     self.log.retire(address)?;
+                    request.monitor.invalidate();
                     Err(error)
                 }
             },
