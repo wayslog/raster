@@ -13,7 +13,7 @@ jobs:
   upstream:
     name: 固定上游构建及文件后端探测（非兼容性验收）
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: 检出 RasterKV
         uses: actions/checkout@v6
@@ -60,6 +60,33 @@ jobs:
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
           python3 tools/upstream/probe.py --cpp target/p9-build/faster-replay --output target/p9-upstream-evidence |
             tee target/p9-upstream-evidence/checks.txt
+      - name: 三种检查点与超内存生命周期对照
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -o pipefail
+          export CARGO_TERM_COLOR=never
+          export RUST_BACKTRACE=0
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          python3 -B tools/upstream/lifecycle.py --cpp target/p9-build/faster-replay --output target/p9-lifecycle-evidence |
+            tee target/p9-lifecycle.log
+      - name: 保存生命周期原始证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-upstream-lifecycle
+          path: |
+            target/p9-lifecycle-evidence
+            target/p9-lifecycle.log
+          if-no-files-found: warn
+      - name: 保存失败的合成存储材料
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-upstream-failure-materials
+          path: ${{ runner.temp }}/raster-lifecycle-*
+          if-no-files-found: ignore
       - name: 保存上游环境证据
         if: always()
         uses: actions/upload-artifact@v4

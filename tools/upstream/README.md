@@ -25,7 +25,20 @@ Rust 执行端是 `cargo test --locked --test p9_upstream -- --nocapture`；默�
 | RASTER_UPSTREAM_ROOT | 原生文件后端的全新根目录；未提供则使用 Null |
 | RASTER_UPSTREAM_SPLIT | 完成指定步数后进行检查点、关闭、恢复和会话续接 |
 | RASTER_UPSTREAM_CHECKPOINT | full 或 pair；后者使用 Index+Log 配对 |
+| RASTER_UPSTREAM_TIMEOUT | 单次检查点及边界关闭的等待秒数，默认 60，上限 600；不改变引擎默认恢复预算 |
 
 上游相同业务轨迹、Rust 参考模型、并发历史和协议故障是不相互替代的证据层次。P9 完成前仍需补充原生结果、磁盘/恢复对照及故障交叉矩阵。
 
 独立 CI“P9 上游执行环境基线”先原生验证 libaio 可用、Null/文件两种执行端的固定原始结果。它保留已观察的两处状态差异，明确不是跨实现兼容性通过；`probe.json` 的 compatibility_acceptance 为 not_completed。
+
+## 检查点与超内存生命周期
+
+```sh
+python3 -B tools/upstream/lifecycle.py --cpp target/p9-build/faster-replay --output target/p9-lifecycle
+```
+
+同一文件分别交给两个真实执行端，在指定边界执行 Full 或 Index+Log，关闭实例、恢复并续接三个原会话。C++ 检查每个持久化回调的身份、次数、状态与序号，所有会话回到 REST 后才发起下一动作。每个操作仍比较原始结果，任何差异均失败。
+
+`scenarios.py` 固定三组场景：141 步小轨迹分别覆盖 Full、Index+Log；大轨迹固定 32,768 次至少 16 KiB 的追加 Upsert，加上冷键、变长 RMW、墓碑、恢复后读写。大轨迹必须实际输出超过 512 MiB 的上游日志跨度，以及非零 Read、RMW Pending。生成器记录步数、恢复边界、写入负载及 SHA-256，不能用输入大小代替实际日志跨度。
+
+脚本预先固定每个进程 1,200 秒截止、Rust 检查点等待 600 秒、C++ 检查点 120 秒及单个 Pending 60 秒；运行 Rust 发布模式。输出保存完整输入、结果和日志；失败时保留该次合成存储目录，由 CI 上传，成功后清理。上游小轨迹没有触发 Pending 也须如实记录。生命周期通过只覆盖这些固定场景，不能替代尚待处理的 7,508 步随机对照差异。

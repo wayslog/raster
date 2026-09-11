@@ -50,7 +50,10 @@ fn encode(result: &Submission) -> String {
 }
 type Sessions = BTreeMap<u64, actor::Actor<raster::Session<replay::Schema>>>;
 fn deadline() -> Deadline {
-    Deadline(Instant::now() + Duration::from_secs(60))
+    let seconds =
+        std::env::var("RASTER_UPSTREAM_TIMEOUT").map_or(60, |value| value.parse::<u64>().unwrap());
+    assert!((1..=600).contains(&seconds), "轨迹等待预算越界");
+    Deadline(Instant::now() + Duration::from_secs(seconds))
 }
 fn builder(config: Config, native: bool) -> raster::Builder<replay::Schema> {
     let factory: Box<dyn raster::device::DeviceFactory> = if native {
