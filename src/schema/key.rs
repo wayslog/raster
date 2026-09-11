@@ -17,7 +17,7 @@ pub trait KeyCodec: Send + Sync + 'static {
     fn equals_encoded(&self, key: &Self::Key, encoded: &[u8]) -> Result<bool, Error>;
     fn decode_owned(&self, encoded: &[u8]) -> Result<Self::OwnedKey, Error>;
 
-    /// 检查持久材料声明的键语义；材料解析及恢复入口由后续任务接入。
+    /// 检查持久材料声明的键语义；恢复入口在解释记录前验证格式、算法与种子。
     fn validate_identity(&self, format: FormatId, hash: &HashDescriptor) -> Result<(), Error> {
         if self.format_id() != format {
             return Err(Error::InvalidFormat("键编码版本不匹配"));

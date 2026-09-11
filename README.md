@@ -1,43 +1,26 @@
 # RasterKV
 
-RasterKV 是 raster 仓库的 Rust 嵌入式键值存储引擎。第一阶段目标是完整复刻 FASTER C++ `FasterKv` 的功能与行为，使用独立持久化文件格式；F2 等高级功能列为后续 TODO。
+RasterKV 是 Rust 嵌入式键值存储，以固定 FASTER C++ FasterKv 为功能与行为基线，采用独立磁盘格式。已实现共享存储与线程会话、四种操作、混合日志及磁盘 Pending、三类检查点与恢复、在线索引扩容、读缓存、物理扫描、压缩回收和自动维护。
 
-当前已实现创建与会话、内存四操作、混合日志与磁盘 Pending，以及 Linux/macOS 基础文件后端。Full、Index、Log 检查点已接入真实材料写入和同步提交；恢复入口和会话续接已接通，支持恢复后继续写入与再次检查点。在线扩容、读缓存、物理扫描、压缩回收和自动维护也已通过双平台交付检查。
+**P0—P8 已验收，P9 总验收仍进行中。** 上游原始随机轨迹仍有两类删除返回差异待确定最终契约；旧内存原型对照的性能复核已完成，但吞吐和部分尾延迟差距明确保留，不承诺达到旧原型或 C++ 的性能。
 
-- [第一期实现计划地图（后续执行入口）](docs/14-RasterKV第一期实现计划地图.md)
-- [文档入口](docs/README.md)
-- [P0 验收报告](docs/acceptance/P0验收报告.md)
-- [P1.1 类型与键验收报告](docs/acceptance/P1.1验收报告.md)
-- [第一阶段范围与支持库选型](docs/05-RasterKV第一阶段与支持库选型.md)
-- [Rust 抽象与模块设计](docs/09-RasterKV模块设计.md)
-- [领域术语](CONTEXT.md)
-- [各模块基础骨架与接入说明](docs/13-模块基础骨架.md)
+- [第一期实现计划地图](docs/14-RasterKV第一期实现计划地图.md)：任务状态与后续执行入口。
+- [一期验收报告](docs/acceptance/一期验收报告.md)：上游对照、完整历史、故障及尚存差异。
+- [性能复核与限制](docs/acceptance/P9.2性能复核结论.md)：完整同机比较及处理依据。
+- [公开接口](docs/10-RasterKV公开接口.md)与[实际使用流程](docs/16-公开接口使用流程.md)：签名、结果、错误和可运行示例。
+- [配置与诊断](docs/15-配置与诊断.md)、[架构](docs/09-RasterKV模块设计.md)、[模块接入地图](docs/13-模块基础骨架.md)、[状态协议](docs/11-RasterKV内存与状态协议.md)。
+- [文档索引](docs/README.md)、[一期范围及实际依赖](docs/05-RasterKV第一阶段与支持库选型.md)、[领域术语](CONTEXT.md)。
 
-开发工具链与 MSRV：Rust **1.98.1**。基础检查：`cargo test --locked --all-features`。完整交付检查覆盖格式、Clippy、测试、示例和 rustdoc，并由 Linux/macOS 三组特性 CI 验证。
-
-P0—P8 已验收，下一项是 **P9.1 上游对照及交叉验收**。检查点仅索引模式不承诺会话持久化进度；仅日志模式需要绑定本引擎已提交的索引检查点。独立磁盘格式 v1 已通过 P5.4 验收冻结。
-
-- [读缓存交付记录](docs/acceptance/P6.2读缓存交付记录.md)
-- [在线索引扩容交付记录](docs/acceptance/P6.1索引扩容交付记录.md)
-- [恢复安全与格式冻结交付记录](docs/acceptance/P5.4恢复安全交付记录.md)
-- [检查点交付记录](docs/acceptance/P5.2检查点交付记录.md)
-- [混合日志交付记录](docs/acceptance/P4.3混合日志交付记录.md)
-
-第一期正式验收 Linux + macOS 基础本地文件后端，Windows、io_uring 和 F2 后置。物理扫描、压缩搬迁、检查点保留集合释放及自动维护均已接通；完整配置、预分配及真实诊断统计也已接通；五个公开生命周期示例已通过原生 CI，最终验收继续按实现计划地图推进。
-
-- [P7.3 自动维护交付记录](docs/acceptance/P7.3自动维护交付记录.md)
-
-- [配置与诊断](docs/15-配置与诊断.md)与 [P8.1 交付记录](docs/acceptance/P8.1配置诊断交付记录.md)
-
-- [P8.2 公开流程交付记录](docs/acceptance/P8.2公开流程交付记录.md)
-
-- [公开接口使用流程](docs/16-公开接口使用流程.md)：五个可运行示例覆盖内存计数、变长值、多票据、超内存磁盘、恢复续跑和自动维护。
+工具链和 MSRV 为 **Rust 1.98.1**。正式基础文件后端覆盖 Linux 与 macOS；Windows、io_uring、远端设备、F2/ColdIndex、跨 store 压缩及外部运行时 async 外观后置。全部特性可编译不表示 io_uring 可用，Cargo 当前禁止发布 crates.io。
 
 ```sh
+cargo test --locked --all-features
 cargo run --locked --release --example memory
 cargo run --locked --release --example interface
 cargo run --locked --release --example disk_lifecycle
 cargo run --locked --release --example automatic
 ```
 
-磁盘示例默认使用本次专属临时目录；显式传入的目录必须尚不存在，成功后保留。用法和错误、超时、关闭语义见上述流程文档。
+内存示例使用 Null 后端，不提供磁盘溢出或持久化。磁盘示例使用本次独立临时目录；显式传入的目录必须尚不存在，成功后保留。完整工程检查含格式、Clippy、单元/集成测试、示例及严格 rustdoc，由 Linux/macOS 默认、config-toml、全部特性六组 CI 验证；正式验收另运行故障、资源、上游和性能矩阵。
+
+请求 Ready/Pending 表示结果交付方式；完成、排空和关闭均不代替检查点持久化。Index 检查点不承诺会话持久化进度，Log 须绑定已提交的索引材料；恢复成功后原会话需显式续接。扫描返回拥有型物理记录，可含旧版本与重复键；日志跨度不是有效键数。v1 独立格式与恢复保留规则见[格式规范](docs/acceptance/磁盘格式规范.md)和[恢复安全记录](docs/acceptance/P5.4恢复安全交付记录.md)。

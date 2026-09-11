@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
-description = "RasterKV 嵌入式键值存储的模块骨架"
+description = "RasterKV 嵌入式键值存储：混合日志、会话与检查点恢复"
 
 [lib]
 path = "src/lib.rs"
