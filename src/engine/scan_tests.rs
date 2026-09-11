@@ -619,6 +619,21 @@ fn compaction_options(
         checkpoint: false,
     }
 }
+// 受控内存设备没有操作系统 I/O 等待；用有限推进步数捕获卡死，避免共享 runner 调度改变功能验收。
+fn finish_compaction(
+    session: &mut crate::api::session::Session<TestSchema>,
+    ticket: &crate::api::maintenance::MaintenanceTicket<crate::api::maintenance::CompactionReport>,
+) -> crate::api::maintenance::SharedReport<crate::api::maintenance::CompactionReport> {
+    for _ in 0..100_000 {
+        if let Some(report) = ticket.try_report().unwrap() {
+            return report;
+        }
+        session
+            .poll(PollBudget(std::num::NonZeroUsize::new(1).unwrap()))
+            .unwrap();
+    }
+    panic!("有限输入的压缩超过推进步数上限");
+}
 #[derive(Debug)]
 struct ReadCompaction(u64);
 impl Keyed<TestSchema> for ReadCompaction {
@@ -659,17 +674,13 @@ fn 压缩轮询不等待设备且短读跨段与用户完成分流可仅由会�
             panic!("用户冷读取应挂起")
         };
         assert_eq!(control.reads.load(Ordering::SeqCst), 2);
+        assert!(matches!(
+            session.wait_maintenance(&ticket, Deadline(Instant::now())),
+            Err(Error::DeadlineExceeded)
+        ));
         control.paused.store(false, Ordering::SeqCst);
-        let end = deadline();
-        while ticket.try_report().unwrap().is_none() {
-            assert!(!end.expired());
-            session.poll(budget).unwrap();
-        }
         assert_eq!(
-            ticket
-                .try_report()
-                .unwrap()
-                .unwrap()
+            finish_compaction(&mut session, &ticket)
                 .as_ref()
                 .as_ref()
                 .unwrap()
@@ -708,9 +719,7 @@ fn 压缩读取失败不会自动重试且新动作可重新执行同一范围()
         .compact(compaction_options(CompactionAlgorithm::Lookup, until))
         .unwrap();
     assert_eq!(
-        session
-            .wait_maintenance(&ticket, deadline())
-            .unwrap()
+        finish_compaction(&mut session, &ticket)
             .as_ref()
             .as_ref()
             .unwrap()
