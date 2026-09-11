@@ -192,7 +192,7 @@ mod failure {
     use super::*;
     use std::sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     #[derive(Clone, Copy, Debug)]
     enum Point {
@@ -202,6 +202,7 @@ mod failure {
     struct Control {
         point: Point,
         armed: AtomicBool,
+        completions: AtomicUsize,
         pending: Mutex<std::collections::BTreeSet<IoId>>,
     }
     struct Factory(Arc<Control>);
@@ -241,6 +242,9 @@ mod failure {
         }
         fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
             self.inner.poll(budget, output)?;
+            self.control
+                .completions
+                .fetch_add(output.len(), Ordering::SeqCst);
             for completion in output {
                 if self.control.pending.lock().unwrap().remove(&completion.id) {
                     assert!(matches!(completion.result, Ok(IoOutcome::Done)));
@@ -268,6 +272,7 @@ mod failure {
             let control = Arc::new(Control {
                 point,
                 armed: true.into(),
+                completions: AtomicUsize::new(0),
                 pending: Mutex::new(Default::default()),
             });
             let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
@@ -289,7 +294,37 @@ mod failure {
                     true,
                 ))
                 .unwrap();
-            let result = session.wait_maintenance(&ticket, deadline()).unwrap();
+            // 这里包含 400 条复制、完整检查点和原生目录同步；共享 CI 的总预算独立于 API 的短等待测试。
+            // 切片超时始终复用原票据，不重新提交。总预算耗尽时保留阶段和实际 I/O 进度以诊断停滞。
+            let started = Instant::now();
+            let limit = Deadline(started + Duration::from_secs(60));
+            let result = loop {
+                let slice = Deadline((Instant::now() + Duration::from_secs(10)).min(limit.0));
+                match session.wait_maintenance(&ticket, slice) {
+                    Ok(result) => break result,
+                    Err(Error::DeadlineExceeded) if !limit.expired() => {
+                        eprintln!(
+                            "复合故障 {point:?} 等待切片结束：阶段 {:?}，边界 {:?}，完成 I/O {}，故障待触发 {}",
+                            store.inner.coordinator.snapshot(),
+                            store.inner.log.frontiers(),
+                            control.completions.load(Ordering::SeqCst),
+                            control.armed.load(Ordering::SeqCst)
+                        );
+                    }
+                    Err(error) => panic!(
+                        "复合故障 {point:?} 未终结：{error:?}，阶段 {:?}，边界 {:?}，完成 I/O {}，故障待触发 {}",
+                        store.inner.coordinator.snapshot(),
+                        store.inner.log.frontiers(),
+                        control.completions.load(Ordering::SeqCst),
+                        control.armed.load(Ordering::SeqCst)
+                    ),
+                }
+            };
+            eprintln!(
+                "复合故障 {point:?} 已终结：耗时 {:?}，完成 I/O {}",
+                started.elapsed(),
+                control.completions.load(Ordering::SeqCst)
+            );
             let Err(Error::CompactionFailed {
                 until,
                 copied,
