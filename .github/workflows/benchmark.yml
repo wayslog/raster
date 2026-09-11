@@ -5,7 +5,7 @@ on:
       group:
         description: 配对场景组
         type: choice
-        options: [focus, remaining]
+        options: [focus, remaining, control]
         default: focus
 permissions:
   contents: read
@@ -64,10 +64,15 @@ jobs:
         run: |
           set -o pipefail
           cases=()
+          candidate=target/release/examples/benchmark
+          if [ "$PAIR_GROUP" = control ]; then
+            candidate=target/paired-baseline/target/release/examples/benchmark
+          fi
+          printf '%s\n' "$PAIR_GROUP" > target/paired-evidence/group.txt
           if [ "$PAIR_GROUP" = remaining ]; then
             cases=(--case u64-uniform-t1-memory-r1 --case u64-hot-t1-memory-r1 --case u64-hot-t1-disk-r1 --case bytes-uniform-t1-memory-r1 --case bytes-hot-t4-disk-r1)
           fi
-          python3 -B tools/acceptance/paired_benchmark.py --baseline target/paired-baseline/target/release/examples/benchmark --candidate target/release/examples/benchmark --output target/paired-evidence/results "${cases[@]}" | tee target/paired-evidence/checks.txt
+          python3 -B tools/acceptance/paired_benchmark.py --baseline target/paired-baseline/target/release/examples/benchmark --candidate "$candidate" --output target/paired-evidence/results "${cases[@]}" | tee target/paired-evidence/checks.txt
       - name: 保存全部原始配对证据
         if: always()
         uses: actions/upload-artifact@v4
