@@ -1,0 +1,30 @@
+diff --git a/src/engine/metrics.rs b/src/engine/metrics.rs
+index d9eb8b6..b629dee 100644
+--- a/src/engine/metrics.rs
++++ b/src/engine/metrics.rs
+@@ -114,23 +114,2 @@ impl Metrics {
+-        if !matches!(kind, Kind::Copy) {
+-            self.active.fetch_add(1, Ordering::SeqCst);
+-        }
+-        let sampled = self.enabled.load(Ordering::SeqCst);
+-        if sampled {
+-            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+-            let State {
+-                operations,
+-                saturated,
+-                ..
+-            } = &mut *s;
+-            add(&mut operations[kind as usize].accepted, 1, saturated);
+-        }
+-        Monitor {
+-            metrics: self.clone(),
+-            kind,
+-            sampled,
+-            pending: None,
+-            finished: false,
+-            invalidations: 0,
+-            saturated: false,
+-        }
+-    }
++Monitor { metrics:self.clone(), kind, sampled:false, pending:None, finished:true, invalidations:0, saturated:false }
++}

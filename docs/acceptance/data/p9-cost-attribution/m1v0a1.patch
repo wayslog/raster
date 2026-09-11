@@ -1,0 +1,80 @@
+diff --git a/src/engine/io_hub.rs b/src/engine/io_hub.rs
+index 03110e7..3e96afe 100644
+--- a/src/engine/io_hub.rs
++++ b/src/engine/io_hub.rs
+@@ -39,26 +39,2 @@ impl CompletionHub {
+-        session.validate()?;
+-        let mut state = self
+-            .state
+-            .lock()
+-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+-        if state.mailboxes.len() >= self.capacity {
+-            return Err(Error::Busy);
+-        }
+-        let next = state.next.checked_add(1).ok_or(Error::CapacityExceeded)?;
+-        let id = RequestId {
+-            store: self.store,
+-            session,
+-            slot: state.next,
+-            generation: Generation(0),
+-        };
+-        state.mailboxes.insert(
+-            id.slot,
+-            Mailbox {
+-                id,
+-                completion: None,
+-                completions: 0,
+-            },
+-        );
+-        state.next = next;
+-        Ok(id)
+-    }
++session.validate()?; Ok(RequestId { store:self.store, session, slot:0, generation:Generation(0) })
++}
+@@ -97,14 +73,2 @@ impl CompletionHub {
+-        let mut state = self
+-            .state
+-            .lock()
+-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+-        if state
+-            .mailboxes
+-            .get(&id.slot)
+-            .is_none_or(|mailbox| mailbox.id != id)
+-        {
+-            return Err(Error::InvalidState("请求邮箱归属不匹配"));
+-        }
+-        state.mailboxes.remove(&id.slot);
+-        Ok(())
+-    }
++let _ = id; Ok(())
++}
+diff --git a/src/engine/metrics.rs b/src/engine/metrics.rs
+index d9eb8b6..b629dee 100644
+--- a/src/engine/metrics.rs
++++ b/src/engine/metrics.rs
+@@ -114,23 +114,2 @@ impl Metrics {
+-        if !matches!(kind, Kind::Copy) {
+-            self.active.fetch_add(1, Ordering::SeqCst);
+-        }
+-        let sampled = self.enabled.load(Ordering::SeqCst);
+-        if sampled {
+-            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+-            let State {
+-                operations,
+-                saturated,
+-                ..
+-            } = &mut *s;
+-            add(&mut operations[kind as usize].accepted, 1, saturated);
+-        }
+-        Monitor {
+-            metrics: self.clone(),
+-            kind,
+-            sampled,
+-            pending: None,
+-            finished: false,
+-            invalidations: 0,
+-            saturated: false,
+-        }
+-    }
++Monitor { metrics:self.clone(), kind, sampled:false, pending:None, finished:true, invalidations:0, saturated:false }
++}

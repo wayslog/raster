@@ -1,0 +1,188 @@
+Analysis of sampling old-p3 (pid 70218) every 1 millisecond
+Process:         old-p3 [70218]
+Path:            /Users/USER/*/old-p3
+Load Address:    0x104e5c000
+Identifier:      old-p3
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  python3.10 [69664]
+Target Type:     live task
+
+Date/Time:       2026-09-11 22:36:19.399 +0800
+Launch Time:     2026-09-11 22:36:18.870 +0800
+OS Version:      macOS 26.5.2 (25F84)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         33.1M
+Physical footprint (peak):  33.1M
+Idle exit:                  untracked
+----
+
+Call graph:
+    744 Thread_100611105   DispatchQueue_1: com.apple.main-thread  (serial)
+      744 start  (in dyld) + 6992  [0x185fe7e00]
+        744 main  (in old-p3) + 52  [0x104e636a0]
+          744 _RNvNtCs82bWklYMk3w_3std2rt19lang_start_internal  (in old-p3) + 952  [0x104e82b80]
+            744 _RNCINvNtCs82bWklYMk3w_3std2rt10lang_startuE0Csib8ufr20yIW_16cost_attribution  (in old-p3) + 16  [0x104e60a34]
+              744 _RINvNtNtCs82bWklYMk3w_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsib8ufr20yIW_16cost_attribution  (in old-p3) + 12  [0x104e60a1c]
+                732 _RNvCsib8ufr20yIW_16cost_attribution4main  (in old-p3) + 896  [0x104e62560]
+                + 239 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 744  [0x104e5e6f4]
+                + ! 170 _xzm_free  (in libsystem_malloc.dylib) + 1048  [0x1861c3484]
+                + ! : 169 mach_absolute_time  (in libsystem_kernel.dylib) + 108,112,...  [0x18636210c,0x186362110,...]
+                + ! : 1 DYLD-STUB$$mach_absolute_time  (in libsystem_malloc.dylib) + 8  [0x1861dab14]
+                + ! 40 _xzm_free  (in libsystem_malloc.dylib) + 196,1144,...  [0x1861c3130,0x1861c34e4,...]
+                + ! 24 _free  (in libsystem_malloc.dylib) + 44,0,...  [0x1861d2c78,0x1861d2c4c,...]
+                + ! 5 DYLD-STUB$$free  (in old-p3) + 4  [0x104ea2d04]
+                + 81 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 1012  [0x104e5e800]
+                + ! 28 _RINvMs0_NtCsdkrAzORDIaB_6raster3logINtB6_9HybridLogINtNtB8_6schema11SharedValueINtNtBQ_7builtin10SchemaPairNtB1i_6U64KeyNtB1i_14AtomicU64ValueEEE4findB1H_ECsib8ufr20yIW_16cost_attribution  (in old-p3) + 108  [0x104e5ef24]
+                + ! : 26 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3) + 12  [0x104e77d80]
+                + ! : | 21 pthread_mutex_lock  (in libsystem_pthread.dylib) + 52,112,...  [0x1863a0430,0x1863a046c,...]
+                + ! : | 5 DYLD-STUB$$pthread_mutex_lock  (in old-p3) + 4  [0x104ea2df4]
+                + ! : 2 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3) + 0,12  [0x104e77d74,0x104e77d80]
+                + ! 24 _RINvMs0_NtCsdkrAzORDIaB_6raster3logINtB6_9HybridLogINtNtB8_6schema11SharedValueINtNtBQ_7builtin10SchemaPairNtB1i_6U64KeyNtB1i_14AtomicU64ValueEEE4findB1H_ECsib8ufr20yIW_16cost_attribution  (in old-p3) + 280  [0x104e5efd0]
+                + ! : 21 pthread_mutex_unlock  (in libsystem_pthread.dylib) + 48,120,...  [0x1863a0974,0x1863a09bc,...]
+                + ! : 3 DYLD-STUB$$pthread_mutex_unlock  (in old-p3) + 4  [0x104ea2e0c]
+                + ! 19 _RINvMs0_NtCsdkrAzORDIaB_6raster3logINtB6_9HybridLogINtNtB8_6schema11SharedValueINtNtBQ_7builtin10SchemaPairNtB1i_6U64KeyNtB1i_14AtomicU64ValueEEE4findB1H_ECsib8ufr20yIW_16cost_attribution  (in old-p3) + 316,24,...  [0x104e5eff4,0x104e5eed0,...]
+                + ! 10 _RINvMs0_NtCsdkrAzORDIaB_6raster3logINtB6_9HybridLogINtNtB8_6schema11SharedValueINtNtBQ_7builtin10SchemaPairNtB1i_6U64KeyNtB1i_14AtomicU64ValueEEE4findB1H_ECsib8ufr20yIW_16cost_attribution  (in old-p3) + 340  [0x104e5f00c]
+                + !   10 _RNvXs1_NtNtCsdkrAzORDIaB_6raster6schema7builtinNtB5_6U64KeyNtNtB7_3key8KeyCodec14equals_encoded  (in old-p3) + 32,0,...  [0x104e68158,0x104e68138,...]
+                + 70 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 1628,2516,...  [0x104e5ea68,0x104e5ede0,...]
+                + 62 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 780  [0x104e5e718]
+                + ! 29 _RNvMNtCsdkrAzORDIaB_6raster12coordinationNtB2_11Coordinator13accept_serial  (in old-p3) + 48  [0x104e65d68]
+                + ! : 29 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3) + 12  [0x104e77d80]
+                + ! :   25 pthread_mutex_lock  (in libsystem_pthread.dylib) + 52,0,...  [0x1863a0430,0x1863a03fc,...]
+                + ! :   4 DYLD-STUB$$pthread_mutex_lock  (in old-p3) + 0,4  [0x104ea2df0,0x104ea2df4]
+                + ! 17 pthread_mutex_unlock  (in libsystem_pthread.dylib) + 104,72,...  [0x1863a09ac,0x1863a098c,...]
+                + ! 14 _RNvMNtCsdkrAzORDIaB_6raster12coordinationNtB2_11Coordinator13accept_serial  (in old-p3) + 72,372,...  [0x104e65d80,0x104e65eac,...]
+                + ! 2 DYLD-STUB$$pthread_mutex_unlock  (in old-p3) + 4  [0x104ea2e0c]
+                + 56 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 292  [0x104e5e530]
+                + ! 53 _RNvMs5_NtCshxvaOLs88l5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsib8ufr20yIW_16cost_attribution  (in old-p3) + 120  [0x104e9e26c]
+                + ! : 47 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 536,672,...  [0x1861c80ec,0x1861c8174,...]
+                + ! : 3 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 52,108,...  [0x1861c2108,0x1861c2140,...]
+                + ! : 1 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 56  [0x1861d2070]
+                + ! : 1 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 324  [0x1861c2a04]
+                + ! : 1 malloc  (in libsystem_malloc.dylib) + 8  [0x186198cf0]
+                + ! 3 _RNvMs5_NtCshxvaOLs88l5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsib8ufr20yIW_16cost_attribution  (in old-p3) + 0  [0x104e9e1f4]
+                + 43 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 348  [0x104e5e568]
+                + ! 34 _RNvMs1_NtCshxvaOLs88l5_5alloc3vecINtB5_3VechE6resizeCsib8ufr20yIW_16cost_attribution  (in old-p3) + 96  [0x104e64c58]
+                + ! : 30 _platform_memset  (in libsystem_platform.dylib) + 200,180,...  [0x1863af158,0x1863af144,...]
+                + ! : 4 DYLD-STUB$$memset  (in old-p3) + 8  [0x104ea2d68]
+                + ! 9 _RNvMs1_NtCshxvaOLs88l5_5alloc3vecINtB5_3VechE6resizeCsib8ufr20yIW_16cost_attribution  (in old-p3) + 68,36,...  [0x104e64c3c,0x104e64c1c,...]
+                + 41 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 1308  [0x104e5e928]
+                + ! 19 _RINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB3_9PageValueINtNtB7_6schema11SharedValueINtNtBV_7builtin10SchemaPairNtB1n_6U64KeyNtB1n_14AtomicU64ValueEEE6updateINtNtNtB7_3api9operation14UpdateDecisionyENCNCINvMNtNtB7_6engine6upsertINtB3l_6EngineB1k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0EB46_  (in old-p3) + 140,244,...  [0x104e61ca8,0x104e61d10,...]
+                + ! 12 _RINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB3_9PageValueINtNtB7_6schema11SharedValueINtNtBV_7builtin10SchemaPairNtB1n_6U64KeyNtB1n_14AtomicU64ValueEEE6updateINtNtNtB7_3api9operation14UpdateDecisionyENCNCINvMNtNtB7_6engine6upsertINtB3l_6EngineB1k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0EB46_  (in old-p3) + 336  [0x104e61d6c]
+                + ! : 12 _RINvNvNtCs82bWklYMk3w_3std9panicking12catch_unwind7do_callINtNtNtCs8Mbv00yxnRz_4core5panic11unwind_safe16AssertUnwindSafeNCINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB21_9PageValueINtNtB25_6schema11SharedValueINtNtB2U_7builtin10SchemaPairNtB3n_6U64KeyNtB3n_14AtomicU64ValueEEE6updateINtNtNtB25_3api9operation14UpdateDecisionyENCNCINvMNtNtB25_6engine6upsertINtB5n_6EngineB3k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0E0EINtNtB11_6result6ResultB4w_NtNtNtB25_5types5error5ErrorEEB69_  (in old-p3) + 4,100,...  [0x104e62158,0x104e621b8,...]
+                + ! 10 _RINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB3_9PageValueINtNtB7_6schema11SharedValueINtNtBV_7builtin10SchemaPairNtB1n_6U64KeyNtB1n_14AtomicU64ValueEEE6updateINtNtNtB7_3api9operation14UpdateDecisionyENCNCINvMNtNtB7_6engine6upsertINtB3l_6EngineB1k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0EB46_  (in old-p3) + 164  [0x104e61cc0]
+                + !   10 _RNvMs_NtNtCsdkrAzORDIaB_6raster3log4gateNtB4_12MutationGate10try_update  (in old-p3) + 24,36,...  [0x104e67d54,0x104e67d60,...]
+                + 40 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 844  [0x104e5e758]
+                + ! 15 _RNvMNtCsdkrAzORDIaB_6raster5indexNtB2_8MemIndex7prepare  (in old-p3) + 76  [0x104e68d58]
+                + ! : 12 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3) + 12  [0x104e77d80]
+                + ! : | 11 pthread_mutex_lock  (in libsystem_pthread.dylib) + 52,32  [0x1863a0430,0x1863a041c]
+                + ! : | 1 DYLD-STUB$$pthread_mutex_lock  (in old-p3) + 4  [0x104ea2df4]
+                + ! : 3 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3) + 0  [0x104e77d74]
+                + ! 12 pthread_mutex_unlock  (in libsystem_pthread.dylib) + 104,12,...  [0x1863a09ac,0x1863a0950,...]
+                + ! 11 _RNvMNtCsdkrAzORDIaB_6raster5indexNtB2_8MemIndex7prepare  (in old-p3) + 28,68,...  [0x104e68d28,0x104e68d50,...]
+                + ! 2 DYLD-STUB$$pthread_mutex_unlock  (in old-p3) + 4  [0x104ea2e0c]
+                + 31 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 524  [0x104e5e618]
+                + ! 29 _RNvMs5_NtNtNtCs82bWklYMk3w_3std4sync6poison5mutexINtB5_5MutexuE8try_lockCsib8ufr20yIW_16cost_attribution  (in old-p3) + 32  [0x104e60b00]
+                + ! : 28 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex8try_lock  (in old-p3) + 12  [0x104e77da0]
+                + ! : | 28 pthread_mutex_trylock  (in libsystem_pthread.dylib) + 48,0,...  [0x1863a3178,0x1863a3148,...]
+                + ! : 1 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex8try_lock  (in old-p3) + 0  [0x104e77d94]
+                + ! 2 _RNvMs5_NtNtNtCs82bWklYMk3w_3std4sync6poison5mutexINtB5_5MutexuE8try_lockCsib8ufr20yIW_16cost_attribution  (in old-p3) + 24,72  [0x104e60af8,0x104e60b28]
+                + 24 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 172  [0x104e5e4b8]
+                + ! 13 _RNvMNtCsdkrAzORDIaB_6raster12coordinationNtB2_11Coordinator13last_accepted  (in old-p3) + 44  [0x104e65fd8]
+                + ! : 13 _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3) + 12  [0x104e77d80]
+                + ! :   8 pthread_mutex_lock  (in libsystem_pthread.dylib) + 124,112,...  [0x1863a0478,0x1863a046c,...]
+                + ! :   5 DYLD-STUB$$pthread_mutex_lock  (in old-p3) + 0  [0x104ea2df0]
+                + ! 6 _RNvMNtCsdkrAzORDIaB_6raster12coordinationNtB2_11Coordinator13last_accepted  (in old-p3) + 280,496,...  [0x104e660c4,0x104e6619c,...]
+                + ! 5 pthread_mutex_unlock  (in libsystem_pthread.dylib) + 12  [0x1863a0950]
+                + 18 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 2540  [0x104e5edf8]
+                + ! 11 pthread_mutex_unlock  (in libsystem_pthread.dylib) + 72,104,...  [0x1863a098c,0x1863a09ac,...]
+                + ! 7 DYLD-STUB$$pthread_mutex_unlock  (in old-p3) + 4  [0x104ea2e0c]
+                + 6 _RINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB3_9PageValueINtNtB7_6schema11SharedValueINtNtBV_7builtin10SchemaPairNtB1n_6U64KeyNtB1n_14AtomicU64ValueEEE6updateINtNtNtB7_3api9operation14UpdateDecisionyENCNCINvMNtNtB7_6engine6upsertINtB3l_6EngineB1k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0EB46_  (in old-p3) + 88  [0x104e61c74]
+                + 6 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 376  [0x104e5e584]
+                + ! 6 _RNvXs1_NtNtCsdkrAzORDIaB_6raster6schema7builtinNtB5_6U64KeyNtNtB7_3key8KeyCodec6encode  (in old-p3) + 20  [0x104e6820c]
+                + 6 _RNvMs1_NtCshxvaOLs88l5_5alloc3vecINtB5_3VechE6resizeCsib8ufr20yIW_16cost_attribution  (in old-p3) + 136  [0x104e64c80]
+                + 5 _xzm_free  (in libsystem_malloc.dylib) + 1548  [0x1861c3678]
+                + 4 _RNvMs5_NtCshxvaOLs88l5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsib8ufr20yIW_16cost_attribution  (in old-p3) + 172  [0x104e9e2a0]
+                9 _RNvCsib8ufr20yIW_16cost_attribution4main  (in old-p3) + 924,988  [0x104e6257c,0x104e625bc]
+                3 _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3) + 112  [0x104e5e47c]
+
+Total number in stack (recursive counted multiple, when >=5):
+        5       pthread_mutex_unlock  (in libsystem_pthread.dylib) + 0  [0x1863a0944]
+
+Sort by top of stack, same collapsed (when >= 5):
+        mach_absolute_time  (in libsystem_kernel.dylib)        169
+        _RINvMNtNtCsdkrAzORDIaB_6raster6engine6upsertINtB5_6EngineINtNtNtB7_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE6upsertNtCsib8ufr20yIW_16cost_attribution3PutEB2c_  (in old-p3)        73
+        pthread_mutex_unlock  (in libsystem_pthread.dylib)        66
+        pthread_mutex_lock  (in libsystem_pthread.dylib)        65
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        47
+        _xzm_free  (in libsystem_malloc.dylib)        45
+        _platform_memset  (in libsystem_platform.dylib)        30
+        pthread_mutex_trylock  (in libsystem_pthread.dylib)        28
+        _RINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB3_9PageValueINtNtB7_6schema11SharedValueINtNtBV_7builtin10SchemaPairNtB1n_6U64KeyNtB1n_14AtomicU64ValueEEE6updateINtNtNtB7_3api9operation14UpdateDecisionyENCNCINvMNtNtB7_6engine6upsertINtB3l_6EngineB1k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0EB46_  (in old-p3)        25
+        _free  (in libsystem_malloc.dylib)        24
+        _RINvMs0_NtCsdkrAzORDIaB_6raster3logINtB6_9HybridLogINtNtB8_6schema11SharedValueINtNtBQ_7builtin10SchemaPairNtB1i_6U64KeyNtB1i_14AtomicU64ValueEEE4findB1H_ECsib8ufr20yIW_16cost_attribution  (in old-p3)        19
+        DYLD-STUB$$pthread_mutex_lock  (in old-p3)        15
+        _RNvMs1_NtCshxvaOLs88l5_5alloc3vecINtB5_3VechE6resizeCsib8ufr20yIW_16cost_attribution  (in old-p3)        15
+        DYLD-STUB$$pthread_mutex_unlock  (in old-p3)        14
+        _RNvMNtCsdkrAzORDIaB_6raster12coordinationNtB2_11Coordinator13accept_serial  (in old-p3)        14
+        _RINvNvNtCs82bWklYMk3w_3std9panicking12catch_unwind7do_callINtNtNtCs8Mbv00yxnRz_4core5panic11unwind_safe16AssertUnwindSafeNCINvMNtNtCsdkrAzORDIaB_6raster3log5valueINtB21_9PageValueINtNtB25_6schema11SharedValueINtNtB2U_7builtin10SchemaPairNtB3n_6U64KeyNtB3n_14AtomicU64ValueEEE6updateINtNtNtB25_3api9operation14UpdateDecisionyENCNCINvMNtNtB25_6engine6upsertINtB5n_6EngineB3k_E6upsertNtCsib8ufr20yIW_16cost_attribution3PutE0s_0E0EINtNtB11_6result6ResultB4w_NtNtNtB25_5types5error5ErrorEEB69_  (in old-p3)        12
+        _RNvMNtCsdkrAzORDIaB_6raster5indexNtB2_8MemIndex7prepare  (in old-p3)        11
+        _RNvMs_NtNtCsdkrAzORDIaB_6raster3log4gateNtB4_12MutationGate10try_update  (in old-p3)        10
+        _RNvXs1_NtNtCsdkrAzORDIaB_6raster6schema7builtinNtB5_6U64KeyNtNtB7_3key8KeyCodec14equals_encoded  (in old-p3)        10
+        _RNvCsib8ufr20yIW_16cost_attribution4main  (in old-p3)        9
+        _RNvMs5_NtCshxvaOLs88l5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsib8ufr20yIW_16cost_attribution  (in old-p3)        7
+        _RNvMNtCsdkrAzORDIaB_6raster12coordinationNtB2_11Coordinator13last_accepted  (in old-p3)        6
+        _RNvXs1_NtNtCsdkrAzORDIaB_6raster6schema7builtinNtB5_6U64KeyNtNtB7_3key8KeyCodec6encode  (in old-p3)        6
+        DYLD-STUB$$free  (in old-p3)        5
+        _RNvMNtNtNtNtNtCs82bWklYMk3w_3std3sys3pal4unix4sync5mutexNtB2_5Mutex4lock  (in old-p3)        5
+
+Binary Images:
+       0x104e5c000 -        0x104eb6b7f +old-p3 (0) <739B5855-56D6-3570-85A2-DFCD0D7DD43A> /Users/*/old-p3
+       0x185f40000 -        0x185f92b4b  libobjc.A.dylib (951.7) <FF1D8AE4-ABEF-35F1-A30A-1183B9CB414F> /usr/lib/libobjc.A.dylib
+       0x185f93000 -        0x185fc7d07  libdyld.dylib (1378) <B147D877-D0C2-388F-B38D-D3132E39905F> /usr/lib/system/libdyld.dylib
+       0x185fc8000 -        0x18606e217  dyld (1.0.0 - 1378) <F924BDD3-4365-3466-9580-8B1B3FA8F857> /usr/lib/dyld
+       0x18606f000 -        0x186072228  libsystem_blocks.dylib (96) <CC947089-488D-316B-A9C7-46DEC0F73145> /usr/lib/system/libsystem_blocks.dylib
+       0x186073000 -        0x1860c755f  libxpc.dylib (3102.120.13) <C40FCAE8-7A17-3D82-87CB-3DA4802ADEF1> /usr/lib/system/libxpc.dylib
+       0x1860c8000 -        0x1860e89ff  libsystem_trace.dylib (1861.120.4) <D0FABAB3-5AE7-3F10-8C62-60CBF5D70850> /usr/lib/system/libsystem_trace.dylib
+       0x1860e9000 -        0x1861975f7  libcorecrypto.dylib (1922.121.1) <A01A158D-6FE7-3B1C-A2C4-6BCB90D7314A> /usr/lib/system/libcorecrypto.dylib
+       0x186198000 -        0x1861e81d7  libsystem_malloc.dylib (812.100.31) <5FAE4807-4D2B-3A95-A63A-DD96D3DA11B4> /usr/lib/system/libsystem_malloc.dylib
+       0x1861e9000 -        0x18623023f  libdispatch.dylib (1542.100.32) <F071EFE4-299F-3089-ACC4-0025B8FFB52A> /usr/lib/system/libdispatch.dylib
+       0x186231000 -        0x186233ffb  libsystem_featureflags.dylib (103) <71FCFFBD-85F8-3365-AFE0-BECEA4369122> /usr/lib/system/libsystem_featureflags.dylib
+       0x186234000 -        0x1862b4d9f  libsystem_c.dylib (1752.120.2) <694B7881-1BF3-3D0F-8F19-B50AE4E8EF8A> /usr/lib/system/libsystem_c.dylib
+       0x1862b5000 -        0x186345ae7  libc++.1.dylib (2100.43) <5013C0F8-84A9-3B56-9FEB-C353816A750F> /usr/lib/libc++.1.dylib
+       0x186346000 -        0x18636075f  libc++abi.dylib (2100.43) <E482D257-E5A0-3816-BD97-7B39342958DA> /usr/lib/libc++abi.dylib
+       0x186361000 -        0x18639e2af  libsystem_kernel.dylib (12377.121.10) <FCA53B98-3D6A-38B2-A0EC-DF0F7E05F171> /usr/lib/system/libsystem_kernel.dylib
+       0x18639f000 -        0x1863abb3b  libsystem_pthread.dylib (539.100.4) <4F33683C-18C8-39A1-800B-2E3BD43BCC13> /usr/lib/system/libsystem_pthread.dylib
+       0x1863ac000 -        0x1863b4963  libsystem_platform.dylib (375.120.2) <160FD864-8D15-36FC-9E97-9725388CFAFE> /usr/lib/system/libsystem_platform.dylib
+       0x1863b5000 -        0x1863e46eb  libsystem_info.dylib (600) <3D62F2D9-F516-31BF-83C7-E203D872300B> /usr/lib/system/libsystem_info.dylib
+       0x18a37c000 -        0x18a385e5f  libsystem_darwin.dylib (1752.120.2) <8858F025-745A-388E-9544-080781CC9A69> /usr/lib/system/libsystem_darwin.dylib
+       0x18a7e7000 -        0x18a7f91b6  libsystem_notify.dylib (348.120.4) <64D76451-1E0C-369B-A631-54DA3140E083> /usr/lib/system/libsystem_notify.dylib
+       0x18cab4000 -        0x18cacef7b  libsystem_networkextension.dylib (2226.121.1) <0331EE20-A1FB-3C0D-990A-F65939CFF505> /usr/lib/system/libsystem_networkextension.dylib
+       0x18cb51000 -        0x18cb68fdf  libsystem_asl.dylib (406) <F40838DF-2F15-3F62-970F-DEE25706BF1B> /usr/lib/system/libsystem_asl.dylib
+       0x18e70f000 -        0x18e717387  libsystem_symptoms.dylib (2169.120.7) <F5029F5C-1BF3-31C7-892E-BC8606AC829E> /usr/lib/system/libsystem_symptoms.dylib
+       0x1929b3000 -        0x1929eb257  libsystem_containermanager.dylib (725.120.2) <518BE44D-AA31-31E6-B44B-A37AD5E47040> /usr/lib/system/libsystem_containermanager.dylib
+       0x193dc4000 -        0x193dc85d7  libsystem_configuration.dylib (1405.120.5) <0F7BBC1C-3D50-3E59-A31F-E4672A80BCEB> /usr/lib/system/libsystem_configuration.dylib
+       0x193dc9000 -        0x193dcf8cf  libsystem_sandbox.dylib (2680.120.12) <EC3A75EA-44C0-3A0B-9BF7-71C117B0A9C6> /usr/lib/system/libsystem_sandbox.dylib
+       0x195423000 -        0x1954261fb  libquarantine.dylib (196.120.2) <5849009B-ACA3-3796-94C4-BBDF8D300EBA> /usr/lib/system/libquarantine.dylib
+       0x195bc2000 -        0x195bc8d03  libsystem_coreservices.dylib (191.4.5) <9576143B-C303-35A3-BA63-1FD06EDA2BB1> /usr/lib/system/libsystem_coreservices.dylib
+       0x19614d000 -        0x19618aa77  libsystem_m.dylib (3312.100.1) <A7E0863C-101A-31A0-922B-ED9B02626151> /usr/lib/system/libsystem_m.dylib
+       0x19618c000 -        0x19618f527  libmacho.dylib (1378) <755441B4-C034-3E3A-8E3C-F424FBB28261> /usr/lib/system/libmacho.dylib
+       0x1961a9000 -        0x1961b63a7  libcommonCrypto.dylib (600035) <CE357BB1-2D49-37CC-9FFE-D093936B1475> /usr/lib/system/libcommonCrypto.dylib
+       0x1961b7000 -        0x1961c0ca3  libunwind.dylib (2100.2) <FC8F0C4E-6FB0-3E27-ABEF-B0FA720CD5E4> /usr/lib/system/libunwind.dylib
+       0x1961c9000 -        0x1961d37ff  libcopyfile.dylib (240) <8ACFAC7A-88E9-3EF4-853F-A9140FF110E5> /usr/lib/system/libcopyfile.dylib
+       0x1961d4000 -        0x1961d7987  libcompiler_rt.dylib (103.3) <AA79151F-C19D-3C7C-92F8-B10F04D82C1C> /usr/lib/system/libcompiler_rt.dylib
+       0x1961d8000 -        0x1961dc78b  libsystem_collections.dylib (1752.120.2) <72DB5BE7-EF78-37D0-8AAD-53E37CFE4287> /usr/lib/system/libsystem_collections.dylib
+       0x1961dd000 -        0x1961e04cf  libsystem_secinit.dylib (168.100.7) <E525C566-CDA4-3D99-B12B-1615FD54A1F3> /usr/lib/system/libsystem_secinit.dylib
+       0x1961e1000 -        0x1961e3bf7  libremovefile.dylib (85.100.6) <635E661D-80A7-340D-A165-3F7D318FDFC9> /usr/lib/system/libremovefile.dylib
+       0x1961e4000 -        0x1961e4f27  libkeymgr.dylib (31) <8C08891A-DF1C-3DCC-AB64-4742FD6BE9BA> /usr/lib/system/libkeymgr.dylib
+       0x1961e5000 -        0x1961ede37  libsystem_dnssd.dylib (2881.120.11) <6F45DF3F-233B-3BC3-BA8C-B43E7DA884BF> /usr/lib/system/libsystem_dnssd.dylib
+       0x1961ee000 -        0x1961f309b  libcache.dylib (95) <189B576E-6176-3F82-8FA4-5914B0BEAEE7> /usr/lib/system/libcache.dylib
+       0x1961f4000 -        0x1961f5ce3  libSystem.B.dylib (1356) <BA6A669A-3BB9-3BC7-85E8-8F0C1E68351E> /usr/lib/libSystem.B.dylib
+       0x2894b0000 -        0x2894b7349  libRosetta.dylib (367.9) <8651ED4F-6506-3788-B56B-32EE414A85CA> /usr/lib/libRosetta.dylib
+       0x28b0cd000 -        0x28b0d0a4b  libsystem_darwindirectory.dylib (122) <CF277A2C-C818-3F16-8B3F-3C7B39FCD164> /usr/lib/system/libsystem_darwindirectory.dylib
+       0x28b0d1000 -        0x28b0da5d3  libsystem_eligibility.dylib (319.121.1) <DDAC0531-0262-3DDC-8EC8-80EB9438847A> /usr/lib/system/libsystem_eligibility.dylib
+       0x28b0db000 -        0x28b0e288b  libsystem_sanitizers.dylib (26.1) <44C4234F-8B2D-38D3-A774-B4B3C75AF3A7> /usr/lib/system/libsystem_sanitizers.dylib
+       0x28b0e3000 -        0x28b0e3bb7  libsystem_trial.dylib (474.2.18.2) <68C583BA-AFF5-3916-86AE-6E38BFEF98D6> /usr/lib/system/libsystem_trial.dylib

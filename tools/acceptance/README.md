@@ -72,3 +72,12 @@ python3 tools/acceptance/audit_serial_precheck.py docs/acceptance/data/p9-serial
 ```
 
 完整八组和两批单线程热点补充共 228 行全部重算，保留负向场景；与旧 P3 的总体复核分开。
+
+
+## 同步路径成本诊断
+
+```sh
+python3 tools/acceptance/audit_cost_attribution.py docs/acceptance/data/p9-cost-attribution
+```
+
+诊断仅归因单线程驻留内存循环；验证真实最终值、接受进度和各组中位数，不把移除协议的变体当成功能验收。采样计时与普通计时分开。

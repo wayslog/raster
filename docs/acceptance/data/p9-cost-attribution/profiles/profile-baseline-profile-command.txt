@@ -1,0 +1,4 @@
+Sampling process 69727 for 3 seconds with 1 millisecond of run time between samples
+Sampling completed, processing symbols...
+Sample analysis of process 69727 written to file target/p9-cost-attribution/profile-baseline-sample.txt
+诊断窗口就绪
