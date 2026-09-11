@@ -1,0 +1,16 @@
+test engine::checkpoint_tests::gc::内存截断清除旧键释放整页并可继续循环写入 ... ok
+test engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收 ... FAILED
+test engine::checkpoint_tests::gc::冷边界切入记录时报告零效果并释放动作且合法回收排斥其他维护 ... ok
+test engine::checkpoint_tests::gc::同标签链头保留时迟到冷读取不能缓存已截断的链内旧键 ... ok
+
+thread 'engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收' (4072) panicked at src/engine/gc_tests.rs:254:47:
+有界 GC 应终结
+
+thread 'engine::checkpoint_tests::gc::公开截断使旧扫描失效且挂起读取保护段可延后再回收' (4072) panicked at src/engine/gc_tests.rs:254:47:
+有界 GC 应终结
+
+
+
+test result: FAILED. 344 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.54s
+
+error: test failed, to rerun pass `--lib`

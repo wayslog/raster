@@ -6,16 +6,16 @@
   "delayed_polls": 100001,
   "deadline_seconds": 10,
   "files": {
-    "clippy.log": "63c413ade33459e736f1e55818f3e1c90e836524a9092e70bdac26f32b9849ca",
+    "clippy.txt": "63c413ade33459e736f1e55818f3e1c90e836524a9092e70bdac26f32b9849ca",
     "environment.txt": "68dc6ea829a4abd4b9da88476fd2fbed0fa8c07bb09cd94c5279761b25899637",
-    "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "full-tests.log": "aeaf7d90f29b66fdf2d8687c5317644f91e6c5371a57a7881b39a9a99d9de1bb",
-    "green.log": "df245568619bd204b1f4d0aa0d01b17be988c291a2380d10d4d54a2fab310a4f",
+    "fmt.txt": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "full-tests.txt": "aeaf7d90f29b66fdf2d8687c5317644f91e6c5371a57a7881b39a9a99d9de1bb",
+    "green.txt": "4b5d9ef65ae926e63c82902617c0717956776ece86dc8cccafc34db740095f62",
     "local-results.json": "e7e165ede24236508f7fc560884e5c9b29e9af18dd7ebc111b3d831c68caf117",
-    "original-ci-excerpt.log": "055b701bb6e3aa4b1a4bab58db43ed87eaf1fcf9e183d4389a898759f19d935c",
+    "original-ci-excerpt.txt": "055b701bb6e3aa4b1a4bab58db43ed87eaf1fcf9e183d4389a898759f19d935c",
     "original-ci.json": "87a9b6726ef0d0c0a308fcfe87980f916bd7c3f90389ba1560ee11031dcd7465",
-    "red.log": "a53885d716a23a2ae746aeb1108594984e633358a7c2f27db1f4a065193ed7f2",
-    "repeated.log": "16c703ae33db5b6245927b2279d533fec0e518c68cadec3c1ad8587cabb82066",
-    "rustdoc.log": "0b188dd4603ceba256d644a4536db8f7f43131a5b0d3c76b38699362c3d68dfc"
+    "red.txt": "a53885d716a23a2ae746aeb1108594984e633358a7c2f27db1f4a065193ed7f2",
+    "repeated.txt": "f8bec63ce25aef91f9f0c6cbee0a8708531974ff517c12a736bb3f349ccdf79d",
+    "rustdoc.txt": "0b188dd4603ceba256d644a4536db8f7f43131a5b0d3c76b38699362c3d68dfc"
   }
 }
