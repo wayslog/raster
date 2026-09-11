@@ -1,0 +1,60 @@
+name: P9 故障与历史矩阵
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: faults-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  faults:
+    name: 故障与完整历史（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+      - name: 安装固定工具链
+        uses: dtolnay/rust-toolchain@1.98.1
+      - name: 记录原生环境
+        shell: bash
+        run: |
+          mkdir -p target/p9-fault-evidence
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            uname -srm
+            echo "镜像：${ImageOS:-未知} ${ImageVersion:-未知}"
+            echo '特性：all'
+            if [ "$(uname -s)" = Darwin ]; then
+              sw_vers
+              diskutil info "$(df -P . | awk 'NR==2 {print $1}')" | sed -n '/File System Personality/p'
+            else
+              cat /etc/os-release
+              stat -f -c '文件系统：%T' .
+            fi
+          } > target/p9-fault-evidence/environment.txt
+      - name: 逐项执行故障与历史矩阵
+        shell: bash
+        run: |
+          set -o pipefail
+          export CARGO_TERM_COLOR=never
+          export RUST_BACKTRACE=0
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          python3 tools/acceptance/run_faults.py --output target/p9-fault-evidence/results |
+            tee target/p9-fault-evidence/checks.txt
+      - name: 保存矩阵和逐项原始输出
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-faults-${{ matrix.os }}
+          path: target/p9-fault-evidence
+          if-no-files-found: warn
