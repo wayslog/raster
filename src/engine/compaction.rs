@@ -16,12 +16,15 @@ use crate::{
 };
 use std::{
     collections::BTreeMap,
-    sync::{TryLockError, atomic::Ordering},
+    sync::{Arc, TryLockError, atomic::Ordering},
 };
 
 #[path = "compaction_follow_up.rs"]
 mod follow_up;
 use follow_up::Stage;
+#[path = "compaction_workers.rs"]
+mod workers;
+use workers::Workers;
 
 #[derive(Default)]
 pub(crate) struct CompactionRuntime {
@@ -38,6 +41,7 @@ struct Job {
     candidates: BTreeMap<Vec<u8>, LogAddress>,
     key_bytes: usize,
     copying: Option<ConditionalCopy>,
+    workers: Option<Workers>,
     copied: u64,
     failure: Option<Error>,
     complete: MaintenanceCompleter<CompactionReport>,
@@ -45,10 +49,17 @@ struct Job {
 }
 impl Job {
     fn step<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
+        self.collect_workers(engine)?;
         if !matches!(self.stage, Stage::Copy) {
             return self.follow_up(engine);
         }
         if self.failure.is_some() {
+            if let Some(workers) = &self.workers {
+                workers.abort();
+            }
+            if !self.collect_workers(engine)? {
+                return Ok(false);
+            }
             if let Some(copy) = &mut self.copying
                 && !copy.drain(&engine.storage)?
             {
@@ -58,6 +69,21 @@ impl Job {
                 return Ok(false);
             }
             return self.finish(engine);
+        }
+        if let Some(workers) = &mut self.workers
+            && let Some(copy) = self.copying.take()
+        {
+            return match workers.submit(copy) {
+                Ok(()) => Ok(true),
+                Err(rejected) => {
+                    self.copying = Some(rejected.request);
+                    if matches!(rejected.reason, Error::Busy) {
+                        Ok(false)
+                    } else {
+                        Err(rejected.reason)
+                    }
+                }
+            };
         }
         if let Some(copy) = &mut self.copying {
             // 在可能发布之前验证计数，错误报告不能漏掉已生效迁移。
@@ -86,6 +112,12 @@ impl Job {
                 self.key_bytes -= key.len();
                 self.copying = Some(engine.new_conditional_copy(self.id, source, key)?);
                 return Ok(true);
+            }
+            if let Some(workers) = &self.workers {
+                workers.close();
+            }
+            if !self.collect_workers(engine)? {
+                return Ok(false);
             }
             return self.finish(engine);
         }
@@ -132,6 +164,18 @@ impl Job {
                 }
                 Ok(true)
             }
+        }
+    }
+    fn collect_workers<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
+        if let Some(workers) = &mut self.workers {
+            let progress = workers.poll(engine)?;
+            self.copied = progress.copied;
+            if let Some(error) = progress.failure {
+                self.fail(error);
+            }
+            Ok(progress.finished)
+        } else {
+            Ok(true)
         }
     }
     fn finish<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
@@ -186,6 +230,12 @@ impl Job {
     }
     fn report_failed<S: Schema>(&mut self, engine: &Engine<S>, cause: Error) -> Result<(), Error> {
         if !self.reported {
+            if let Some(workers) = &self.workers {
+                workers.abort();
+            }
+            if !self.collect_workers(engine)? {
+                return Ok(());
+            }
             let child = match self.stage {
                 Stage::Checkpoint(_) => {
                     engine.fail_checkpoint()?;
@@ -221,7 +271,7 @@ impl<S: Schema> Engine<S> {
         }
     }
     pub(crate) fn start_compaction(
-        &self,
+        self: &Arc<Self>,
         options: CompactionOptions,
     ) -> Result<MaintenanceTicket<CompactionReport>, Error> {
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
@@ -233,8 +283,11 @@ impl<S: Schema> Engine<S> {
                 reason: "压缩工作线程数必须非零",
             });
         }
-        if options.workers != 1 {
-            return Err(Error::unimplemented("compaction::多线程"));
+        if options.workers > self.config.maintenance.max_compaction_workers {
+            return Err(Error::InvalidConfig {
+                field: "compaction.workers",
+                reason: "超过配置的压缩线程预算",
+            });
         }
         if options.checkpoint {
             self.checkpoint_capabilities()?;
@@ -252,6 +305,14 @@ impl<S: Schema> Engine<S> {
         }
         let begin = self.log.frontiers()?.begin;
         let scan = Scan::new(self, begin, options.until)?;
+        if self.coordinator.snapshot()?.id.is_some() {
+            return Err(Error::Busy);
+        }
+        let workers = if options.workers > 1 {
+            Some(Workers::new(self, options.workers)?)
+        } else {
+            None
+        };
         let id = self.coordinator.start_action(Action::Compact)?;
         let (ticket, complete) = MaintenanceTicket::pair(self.id, id);
         runtime.job = Some(Job {
@@ -265,6 +326,7 @@ impl<S: Schema> Engine<S> {
             candidates: BTreeMap::new(),
             key_bytes: 0,
             copying: None,
+            workers,
             copied: 0,
             failure: None,
             complete,
@@ -324,6 +386,46 @@ impl<S: Schema> Engine<S> {
             job.report_failed(self, Error::InvalidState("引擎或全局动作失败，压缩终止"))?;
         }
         Ok(())
+    }
+    pub(crate) fn compaction_report_pending(&self, id: MaintenanceId) -> Result<bool, Error> {
+        match self.compaction.try_lock() {
+            Ok(runtime) => Ok(runtime
+                .job
+                .as_ref()
+                .is_some_and(|job| job.id == id && !job.reported)),
+            Err(TryLockError::WouldBlock) => Ok(true),
+            Err(_) => Err(Error::InvalidState("压缩任务锁中毒")),
+        }
+    }
+    /// 失败关闭先使工作线程停止一切发布，再关闭设备并回收保留槽。
+    pub(crate) fn stop_compaction_workers(&self, deadline: Deadline) -> Result<(), Error> {
+        loop {
+            let mut runtime = match self.compaction.try_lock() {
+                Ok(runtime) => runtime,
+                Err(TryLockError::WouldBlock) => {
+                    if deadline.expired() {
+                        return Err(Error::DeadlineExceeded);
+                    }
+                    std::thread::yield_now();
+                    continue;
+                }
+                Err(_) => return Err(Error::InvalidState("压缩任务锁中毒")),
+            };
+            let Some(job) = &mut runtime.job else {
+                return Ok(());
+            };
+            if let Some(workers) = &job.workers {
+                workers.abort();
+            }
+            if job.collect_workers(self)? {
+                return Ok(());
+            }
+            if deadline.expired() {
+                return Err(Error::DeadlineExceeded);
+            }
+            drop(runtime);
+            std::thread::yield_now();
+        }
     }
     /// 仅在设备关闭已经归还全部请求后清理异常任务，不能提前释放在途段租约。
     pub(crate) fn release_stopped_compaction(&self) -> Result<(), Error> {

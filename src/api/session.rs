@@ -217,6 +217,10 @@ impl<S: Schema> Session<S> {
                 if let Some(report) = ticket.try_report()? {
                     return Ok(report);
                 }
+                if self.engine.compaction_report_pending(ticket.id)? {
+                    std::thread::yield_now();
+                    continue;
+                }
                 return Err(error);
             }
             std::thread::yield_now();

@@ -152,6 +152,7 @@ impl<S: Schema> RasterKV<S> {
                 .shutdown_requested
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             drop(compaction);
+            self.inner.stop_compaction_workers(deadline)?;
             let failure = match self.inner.drain_storage(deadline) {
                 Ok(()) => scan_failure,
                 Err(Error::DeadlineExceeded) => return Err(Error::DeadlineExceeded),

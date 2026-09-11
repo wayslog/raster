@@ -1344,3 +1344,6 @@ mod power;
 
 #[path = "compaction_chain_tests.rs"]
 mod compaction_chain;
+
+#[path = "compaction_worker_tests.rs"]
+mod compaction_worker;

@@ -270,7 +270,7 @@ Config.cache.enabled 启用冷日志读缓存，capacity_bytes 限制缓存记�
 
 ## P7.1 压缩实施契约
 
-当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup 单工作者，半开范围为当前 begin 至 until。当前 `workers=1`；shift_begin/checkpoint 的可选后续动作已接通，多工作者与自动调度在 P7.3 继续实施。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
+当前实现为 `Maintenance::compact(CompactionOptions) -> Result<MaintenanceTicket<CompactionReport>, Error>`，支持 ScanDedup 和 Lookup，半开范围为当前 begin 至 until。workers 范围为 1 至 maintenance.max_compaction_workers；可选后续动作和多工作者已接通，自动调度在 P7.3 继续实施。维护等待、Session::poll 和 Maintenance::poll 都可以推进同一任务；票据超时不取消任务。
 
 成功报告的 copied 包含迁移的最新墓碑；未请求后续动作时 gc/checkpoint 为 None，begin 与会话序号不变。失败报告是 `Error::CompactionFailed { until, copied, checkpoint, gc, cause }`：until 是请求边界，copied 是已发布迁移数，checkpoint/gc 保留已经完整成功的子步骤（错误中使用 Box），cause 保留子步骤原始错误及部分效果。普通失败排空后释放动作并保留已发生效果；恐慌失败关闭。压缩不是原子批处理，也不单独声明持久化成功。
 
@@ -309,6 +309,15 @@ v1 检查点持有独立材料副本，工作段回收不会删除这些材料�
 
 每个步骤分别争取并释放全局动作，同一张 CompactionReport 票据在最后一步结束后终结。动作之间允许其他维护进入，普通 Busy 稍后重试；已接受子步骤失败不自动重放。GC 的 DeferredByRuntime 是该子步骤的终结报告，复合任务不无限等待读者释放。检查点材料继续默认保留，压缩不会隐式调用 release_checkpoint。
 
-维护等待超时保留原票据；无活跃会话时 Maintenance::poll 也可推进后续步骤。有活跃会话时仍须各自刷新检查点屏障。动作间隙仍计为未完成复合任务，shutdown 返回 Busy，不能越过间隙提前关闭。自动维护的排空、等待和停止将在 P7.3 后续接通。
+维护等待超时保留原票据；无活跃会话时 Maintenance::poll 也可推进后续步骤。有活跃会话时仍须各自刷新检查点屏障。动作间隙仍计为未完成复合任务，shutdown 返回 Busy，不能越过间隙提前关闭。失败关闭先停止所有复制发布再关闭设备；自动维护的排空、等待和停止将在 P7.3 后续接通。
 
 普通失败先排空对应子任务并保留原始错误。例如检查点已完成而 GC 删除失败，CompactionFailed.checkpoint 保留可恢复 token，cause 为带实际 begin 和删除计数的 GcFailed。业务 panic 导致失败关闭时也先收取子步骤的部分效果。进度与验证边界见 [P7.3 交付记录](acceptance/P7.3自动维护交付记录.md)。
+
+
+## 多工作者压缩
+
+`workers=1` 沿用调用者轮询推进；大于 1 时，每个任务创建指定数量的持久工作线程，任务结束前确认全部线程退出。物理扫描和 ScanDedup 候选表由一个协调驱动者推进，条件复制在工作线程中并行执行；不承诺吞吐随线程数线性增长。Schema 的 Send/Sync 布局与编码方法可以在工作线程执行，Session、业务 Operation 上下文和结果回调仍留在原会话线程。
+
+每个工作者最多保留一个拥有型复制请求，调度器额外保留一个待投递请求。普通错误停止投递并排空已有读取，再报告实际已发布计数；错误和 panic 均不自动重放。失败关闭的报告等待所有工作者停止发布，未确认的 I/O 与段租约继续保留到设备结束。shutdown 超时保留状态，后续可再次调用。
+
+`maintenance.max_compaction_workers` 默认 64，同时计入完成路由预算；每次压缩的 workers 超过此值会在接受前拒绝。`maintenance.workers` 是后续自动压缩的配置线程数，目前不启用自动调度。线程空闲时仅保存存储的 Weak 引用；一次任务的正常成功、普通失败以及失败关闭各有不同的排空路径，最终资源处理见 [P7.3 记录](acceptance/P7.3自动维护交付记录.md)。

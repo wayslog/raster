@@ -142,7 +142,7 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
             .compact(CompactionOptions {
                 algorithm,
                 until: prefix.end,
-                workers: 1,
+                workers: 4,
                 shift_begin: false,
                 checkpoint: false,
             })
