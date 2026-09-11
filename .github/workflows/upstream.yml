@@ -1,0 +1,69 @@
+name: P9 上游执行环境基线
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: upstream-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  upstream:
+    name: 固定上游构建及文件后端探测（非兼容性验收）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出 RasterKV
+        uses: actions/checkout@v6
+      - name: 检出固定上游
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/FASTER
+          ref: 321d872eabda6a0345c8bd76419f89723ed864ae
+          path: target/upstream-source
+          persist-credentials: false
+      - name: 安装固定 Rust 工具链
+        uses: dtolnay/rust-toolchain@1.98.1
+      - name: 安装上游基础构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++ libaio-dev libtbb-dev uuid-dev
+      - name: 记录原生环境
+        shell: bash
+        run: |
+          mkdir -p target/p9-upstream-evidence
+          {
+            git rev-parse HEAD
+            git -C target/upstream-source rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            g++ --version
+            uname -srm
+            cat /etc/os-release
+            stat -f -c '文件系统：%T' .
+          } > target/p9-upstream-evidence/environment.txt
+      - name: 构建原始上游核心和行为执行器
+        shell: bash
+        run: |
+          set -o pipefail
+          sh tools/upstream/build.sh target/upstream-source target/p9-build 2>&1 |
+            sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" |
+            tee target/p9-upstream-evidence/build.txt
+      - name: 验证运行环境并保存原始返回差异
+        shell: bash
+        run: |
+          set -o pipefail
+          export CARGO_TERM_COLOR=never
+          export RUST_BACKTRACE=0
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          python3 tools/upstream/probe.py --cpp target/p9-build/faster-replay --output target/p9-upstream-evidence |
+            tee target/p9-upstream-evidence/checks.txt
+      - name: 保存上游环境证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p9-upstream-environment
+          path: target/p9-upstream-evidence
+          if-no-files-found: warn
