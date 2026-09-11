@@ -81,3 +81,12 @@ python3 tools/acceptance/audit_cost_attribution.py docs/acceptance/data/p9-cost-
 ```
 
 诊断仅归因单线程驻留内存循环；验证真实最终值、接受进度和各组中位数，不把移除协议的变体当成功能验收。采样计时与普通计时分开。
+
+
+## 可变记录边界查询对照
+
+```sh
+python3 tools/acceptance/audit_mutable_boundary.py docs/acceptance/data/p9-mutable-boundary
+```
+
+复用同一矩阵格式审核全部 228 行，重新计算中位数；与旧 P3 的总体回退复核分开。

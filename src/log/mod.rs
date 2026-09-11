@@ -305,7 +305,15 @@ impl<V: ValueLayout> HybridLog<V> {
         mut head: Option<LogAddress>,
     ) -> Result<Option<RecordLease<V>>, Error> {
         while let Some(address) = head {
-            let frontiers = self.frontiers()?;
+            // 可变性仅依赖这三个边界；不为未使用的 tail 串行化页分配。
+            let frontiers = {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+                self.pool.ensure_healthy()?;
+                state.frontiers
+            };
             // 页内逻辑截断可以领先于只读边界，不能沿存活链头更新已失效的旧键。
             if address < frontiers.begin.max(frontiers.read_only).max(frontiers.head) {
                 return Ok(None);
@@ -968,6 +976,83 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 2);
         assert_eq!(destructors.load(Ordering::SeqCst), 1);
         log.release_page(PageId(0), Generation(0)).unwrap();
+    }
+    #[test]
+    fn 可变查找尊重页内截断和冻结且旧租约无法更新() {
+        let log = HybridLog::new(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+        )
+        .unwrap();
+        let first = log
+            .finish_initialization(log.reserve_record(b"a", None, 11).unwrap())
+            .unwrap();
+        let second = log
+            .finish_initialization(log.reserve_record(b"b", Some(first), 22).unwrap())
+            .unwrap();
+        let third = log
+            .finish_initialization(log.reserve_record(b"c", Some(second), 33).unwrap())
+            .unwrap();
+        assert_eq!(
+            log.find_mutable(b"a", Some(third))
+                .unwrap()
+                .unwrap()
+                .read(|v| v)
+                .unwrap(),
+            11
+        );
+        log.publish_begin(second).unwrap();
+        assert!(log.find_mutable(b"a", Some(third)).unwrap().is_none());
+        let lease = log.find_mutable(b"b", Some(third)).unwrap().unwrap();
+        assert_eq!(lease.read(|v| v).unwrap(), 22);
+        let tail = log.pad_tail().unwrap();
+        assert_eq!(tail, LogAddress(256));
+        log.advance_read_only(tail).unwrap();
+        assert!(log.find_mutable(b"c", Some(third)).unwrap().is_none());
+        assert!(lease.update(|_| Ok(())).is_err());
+        assert_eq!(lease.read(|v| v).unwrap(), 22);
+    }
+    #[test]
+    fn 可变查找区分冷历史与缺失记录() {
+        let log = HybridLog::from_checkpoint(
+            LogConfig {
+                page_bytes: 256,
+                memory_pages: 2,
+                mutable_fraction: 0.5,
+            },
+            Arc::new(AtomicU64Value),
+            LogAddress(128),
+            LogAddress(2048),
+        )
+        .unwrap();
+        assert!(
+            log.find_mutable(b"old", Some(LogAddress(256)))
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            log.find_mutable(b"missing", Some(LogAddress(2048))),
+            Err(Error::RangeTruncated)
+        ));
+        let first = log
+            .finish_initialization(
+                log.reserve_record(b"new", Some(LogAddress(256)), 17)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(log.find_mutable(b"old", Some(first)).unwrap().is_none());
+        assert_eq!(
+            log.find_mutable(b"new", Some(first))
+                .unwrap()
+                .unwrap()
+                .read(|v| v)
+                .unwrap(),
+            17
+        );
     }
     fn log() -> HybridLog<AtomicU64Value> {
         HybridLog::new(

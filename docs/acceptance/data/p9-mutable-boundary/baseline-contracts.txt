@@ -1,0 +1,11 @@
+   Compiling raster v0.1.0 (工作区/raster)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.84s
+     Running unittests src/lib.rs (target/debug/deps/raster-64698f1ee96cfe08)
+
+running 3 tests
+test log::tests::可变查找尊重页内截断和冻结且旧租约无法更新 ... ok
+test log::tests::可变查找区分冷历史与缺失记录 ... ok
+test log::page::mutable_poison_tests::可变查找拒绝已有的页池边界及记录表中毒 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 342 filtered out; finished in 0.00s
+

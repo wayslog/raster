@@ -167,6 +167,14 @@ impl PagePool {
             .map(|entry| entry.generation)
             .ok_or(Error::RangeTruncated)
     }
+    /// 只读取已发布记录时不访问分配器状态，仍拒绝已中毒的页池。
+    pub fn ensure_healthy(&self) -> Result<(), Error> {
+        if self.state.is_poisoned() {
+            Err(Error::InvalidState("页池锁中毒"))
+        } else {
+            Ok(())
+        }
+    }
     pub fn tail(&self) -> Result<LogAddress, Error> {
         let state = self
             .state
@@ -417,6 +425,49 @@ mod tests {
         let generation = range.generation();
         std::mem::forget(range);
         assert!(pool.release(id, generation).is_err());
+    }
+}
+
+#[cfg(test)]
+mod mutable_poison_tests {
+    use super::*;
+    use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
+
+    #[test]
+    fn 可变查找拒绝已有的页池边界及记录表中毒() {
+        for kind in 0..3 {
+            let log = HybridLog::new(
+                LogConfig {
+                    page_bytes: 256,
+                    memory_pages: 2,
+                    mutable_fraction: 0.5,
+                },
+                Arc::new(AtomicU64Value),
+            )
+            .unwrap();
+            let address = log
+                .finish_initialization(log.reserve_record(b"key", None, 7).unwrap())
+                .unwrap();
+            let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match kind {
+                0 => {
+                    let _guard = log.pool.state.lock().unwrap();
+                    panic!("页池测试中毒");
+                }
+                1 => {
+                    let _guard = log.state.lock().unwrap();
+                    panic!("边界测试中毒");
+                }
+                _ => {
+                    let _guard = log.records.lock().unwrap();
+                    panic!("记录表测试中毒");
+                }
+            }));
+            assert!(poison.is_err());
+            let expected = ["页池锁中毒", "日志边界锁中毒", "记录表锁中毒"][kind];
+            assert!(
+                matches!(log.find_mutable(b"key", Some(address)), Err(Error::InvalidState(reason)) if reason == expected)
+            );
+        }
     }
 }
 

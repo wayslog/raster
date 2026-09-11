@@ -1,0 +1,40 @@
+diff --git a/src/log/mod.rs b/src/log/mod.rs
+index a217c7e..189872e 100644
+--- a/src/log/mod.rs
++++ b/src/log/mod.rs
+@@ -305,7 +305,15 @@ impl<V: ValueLayout> HybridLog<V> {
+         mut head: Option<LogAddress>,
+     ) -> Result<Option<RecordLease<V>>, Error> {
+         while let Some(address) = head {
+-            let frontiers = self.frontiers()?;
++            // 可变性仅依赖这三个边界；不为未使用的 tail 串行化页分配。
++            let frontiers = {
++                let state = self
++                    .state
++                    .lock()
++                    .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
++                self.pool.ensure_healthy()?;
++                state.frontiers
++            };
+             // 页内逻辑截断可以领先于只读边界，不能沿存活链头更新已失效的旧键。
+             if address < frontiers.begin.max(frontiers.read_only).max(frontiers.head) {
+                 return Ok(None);
+diff --git a/src/log/page.rs b/src/log/page.rs
+index 4b3afab..368a21d 100644
+--- a/src/log/page.rs
++++ b/src/log/page.rs
+@@ -167,6 +167,14 @@ impl PagePool {
+             .map(|entry| entry.generation)
+             .ok_or(Error::RangeTruncated)
+     }
++    /// 只读取已发布记录时不访问分配器状态，仍拒绝已中毒的页池。
++    pub fn ensure_healthy(&self) -> Result<(), Error> {
++        if self.state.is_poisoned() {
++            Err(Error::InvalidState("页池锁中毒"))
++        } else {
++            Ok(())
++        }
++    }
+     pub fn tail(&self) -> Result<LogAddress, Error> {
+         let state = self
+             .state

@@ -1,0 +1,16 @@
+{
+  "采集时点": "成对计时结束后采集；计时无并行构建、测试或其他性能进程；未固定 CPU 亲和性",
+  "系统": "Darwin",
+  "内核": "25.5.0",
+  "架构": "arm64",
+  "macOS": "26.5.2",
+  "CPU及内存": [
+    "Apple M1 Pro",
+    "17179869184",
+    "10",
+    "10"
+  ],
+  "Rust": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: aarch64-apple-darwin\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+  "Cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)\n",
+  "文件系统": "File System Personality:   APFS"
+}
