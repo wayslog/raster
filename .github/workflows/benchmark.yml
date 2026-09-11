@@ -1,6 +1,12 @@
 name: P9 同主机删除性能配对复核
 on:
   workflow_dispatch:
+    inputs:
+      group:
+        description: 配对场景组
+        type: choice
+        options: [focus, remaining]
+        default: focus
 permissions:
   contents: read
 jobs:
@@ -51,11 +57,17 @@ jobs:
             cargo build --locked --release --all-features --example benchmark
             cargo build --locked --release --all-features --example benchmark --manifest-path target/paired-baseline/Cargo.toml
           } 2>&1 | sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" | tee target/paired-evidence/build.txt
-      - name: 固定三个场景各完成四对交替顺序测量
+      - name: 指定场景各完成四对交替顺序测量
         shell: bash
+        env:
+          PAIR_GROUP: ${{ inputs.group }}
         run: |
           set -o pipefail
-          python3 -B tools/acceptance/paired_benchmark.py --baseline target/paired-baseline/target/release/examples/benchmark --candidate target/release/examples/benchmark --output target/paired-evidence/results | tee target/paired-evidence/checks.txt
+          cases=()
+          if [ "$PAIR_GROUP" = remaining ]; then
+            cases=(--case u64-uniform-t1-memory-r1 --case u64-hot-t1-memory-r1 --case u64-hot-t1-disk-r1 --case bytes-uniform-t1-memory-r1 --case bytes-hot-t4-disk-r1)
+          fi
+          python3 -B tools/acceptance/paired_benchmark.py --baseline target/paired-baseline/target/release/examples/benchmark --candidate target/release/examples/benchmark --output target/paired-evidence/results "${cases[@]}" | tee target/paired-evidence/checks.txt
       - name: 保存全部原始配对证据
         if: always()
         uses: actions/upload-artifact@v4
