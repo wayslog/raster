@@ -1,0 +1,10 @@
+   Compiling raster v0.1.0 (工作树/target/p9-perf-current)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.25s
+     Running unittests src/lib.rs (target/p9-perf-current/target/debug/deps/raster-64698f1ee96cfe08)
+
+running 3 tests
+test engine::pending::result_budget_tests::放弃票据后完成端仍占用名额 ... ok
+test engine::pending::result_budget_tests::历史容量不能绕过降低后的结果限额 ... ok
+test engine::pending::result_budget_tests::结果名额等待票据和完成端都归还 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 339 filtered out; finished in 0.00s

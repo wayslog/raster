@@ -25,6 +25,7 @@ def main():
         ("缓存字节区", ["--lib", "cache::arena::tests::"], 1, ""),
         ("缓存读者及淘汰", ["--lib", "cache::tests::"], 5, ""),
         ("验收分配器", ["--test", "p9_allocator"], 1, ""),
+        ("结果预算所有权", ["--lib", "engine::pending::result_budget_tests::"], 3, ""),
         # 本例故意遗忘租约，验证只阻碍回收而非释放活跃范围；其余案例开启泄漏检测。
         ("故意遗忘范围", ["--lib", forgotten, "--", "--exact"], 1, "-Zmiri-ignore-leaks"),
     ]

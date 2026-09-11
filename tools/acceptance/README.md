@@ -31,7 +31,7 @@ python3 tools/acceptance/audit_resources.py --sha FULL_SHA --run-id RUN_ID targe
 python3 tools/acceptance/run_miri.py --output target/p9-miri
 ```
 
-脚本记录解释器版本、提交和工作区是否包含未提交改动；逐组运行并验证真实通过数量。页范围及预分配、内建值布局、记录生命周期、缓存和验收计数分配器共 33 项使用默认泄漏检测；另一个故意 `forget` 租约的用例单独以 `-Zmiri-ignore-leaks` 检查访问安全。不能把这个例外扩大到其他用例。此矩阵不解释原生文件后端，不代替双平台故障/恢复测试或并发交错证据。
+脚本记录解释器版本、提交和工作区是否包含未提交改动；逐组运行并验证真实通过数量。页范围及预分配、内建值布局、记录生命周期、缓存、验收计数分配器和结果预算所有权共 36 项使用默认泄漏检测；另一个故意 `forget` 租约的用例单独以 `-Zmiri-ignore-leaks` 检查访问安全。不能把这个例外扩大到其他用例。此矩阵不解释原生文件后端，不代替双平台故障/恢复测试或并发交错证据。
 
 ## 完整性能矩阵
 
@@ -53,4 +53,13 @@ python3 tools/acceptance/audit_benchmark.py target/p9-benchmark
 
 ```sh
 python3 tools/acceptance/audit_ready_comparison.py docs/acceptance/data/p9-ready-experiment
+```
+
+
+## 结果预算复用对照
+
+[结果预算复用记录](../../docs/acceptance/P9.2结果预算复用.md)分别保留完整短矩阵、同二进制校准及更长热点对照。审计不会合并这些样本或删除触发复核的结果。
+
+```sh
+python3 tools/acceptance/audit_result_pool.py docs/acceptance/data/p9-result-pool-experiment
 ```

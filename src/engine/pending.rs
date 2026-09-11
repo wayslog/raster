@@ -7,6 +7,7 @@ pub(crate) enum TaskStep {
     Retry,
     Failed(OperationError),
 }
+
 pub(crate) trait PendingTask: 'static {
     fn id(&self) -> RequestId;
     fn serial(&self) -> Serial;
@@ -26,7 +27,8 @@ pub(crate) struct SessionRuntime {
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
     pub poll_cursor: Option<u64>,
-    results: Vec<std::rc::Weak<()>>,
+    // 池只保留预算控制块；外部持有者全部退出后才能复用，不保留用户结果。
+    results: Vec<std::rc::Rc<()>>,
 }
 
 impl SessionRuntime {
@@ -93,7 +95,24 @@ impl SessionRuntime {
         })
     }
     pub fn reserve_result(&mut self, limit: usize) -> Result<std::rc::Rc<()>, Error> {
-        self.results.retain(|credit| credit.strong_count() != 0);
+        if let Some(credit) = self
+            .results
+            .iter()
+            .find(|credit| std::rc::Rc::strong_count(credit) == 1)
+        {
+            // 历史容量大于当前限额时，空闲槽不代表仍能接受一个请求。
+            if self.results.len() > limit
+                && self
+                    .results
+                    .iter()
+                    .filter(|credit| std::rc::Rc::strong_count(credit) > 1)
+                    .count()
+                    >= limit
+            {
+                return Err(Error::Busy);
+            }
+            return Ok(std::rc::Rc::clone(credit));
+        }
         if self.results.len() >= limit {
             return Err(Error::Busy);
         }
@@ -101,10 +120,97 @@ impl SessionRuntime {
             .try_reserve(1)
             .map_err(|_| Error::OutOfMemory)?;
         let credit = std::rc::Rc::new(());
-        self.results.push(std::rc::Rc::downgrade(&credit));
+        self.results.push(std::rc::Rc::clone(&credit));
         Ok(credit)
     }
     pub fn pending(&self) -> usize {
         self.current.tasks.len() + self.previous.as_ref().map_or(0, |old| old.tasks.len())
+    }
+}
+
+#[cfg(test)]
+mod result_budget_tests {
+    use super::*;
+    use crate::api::completion::{Outcome, Ticket, TicketState};
+
+    fn runtime() -> SessionRuntime {
+        SessionRuntime::new(SessionId([2; 16]), None, CheckpointVersion(0))
+    }
+
+    fn request_id() -> RequestId {
+        RequestId {
+            store: StoreId([1; 16]),
+            session: SessionId([2; 16]),
+            slot: 0,
+            generation: Generation(1),
+        }
+    }
+
+    #[test]
+    fn 结果名额等待票据和完成端都归还() {
+        for complete_first in [false, true] {
+            let mut runtime = runtime();
+            let credit = runtime.reserve_result(1).unwrap();
+            let (mut ticket, complete) = Ticket::pair_bounded(request_id(), credit);
+            complete
+                .finish(Ok(Outcome::Success(String::from("拥有型结果"))))
+                .unwrap();
+            assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+            let output = if complete_first {
+                drop(complete);
+                assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+                ticket.try_take().unwrap()
+            } else {
+                let output = ticket.try_take().unwrap();
+                assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+                drop(complete);
+                output
+            };
+            let next = runtime.reserve_result(1).unwrap();
+            // 已收取的旧票据不能归还后续请求正在使用的名额。
+            assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
+            drop(ticket);
+            assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+            drop(next);
+            assert!(runtime.reserve_result(1).is_ok());
+            assert!(
+                matches!(output, TicketState::Ready(Ok(Outcome::Success(value))) if value == "拥有型结果")
+            );
+        }
+    }
+
+    #[test]
+    fn 放弃票据后完成端仍占用名额() {
+        let mut runtime = runtime();
+        let (ticket, complete) =
+            Ticket::<u64>::pair_bounded(request_id(), runtime.reserve_result(1).unwrap());
+        drop(ticket);
+        assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+        complete.finish(Ok(Outcome::Success(7))).unwrap();
+        assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+        drop(complete);
+        assert!(runtime.reserve_result(1).is_ok());
+    }
+
+    #[test]
+    fn 历史容量不能绕过降低后的结果限额() {
+        let mut runtime = runtime();
+        let mut credits = (0..4)
+            .map(|_| runtime.reserve_result(4).unwrap())
+            .collect::<Vec<_>>();
+        credits.truncate(2);
+        assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+        assert!(matches!(runtime.reserve_result(2), Err(Error::Busy)));
+        credits.truncate(1);
+        assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+        let second = runtime.reserve_result(2).unwrap();
+        assert!(matches!(runtime.reserve_result(0), Err(Error::Busy)));
+        drop(second);
+        drop(credits);
+        assert!(matches!(runtime.reserve_result(0), Err(Error::Busy)));
+        let only = runtime.reserve_result(1).unwrap();
+        assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
+        drop(only);
+        assert!(runtime.reserve_result(1).is_ok());
     }
 }
