@@ -2,7 +2,10 @@
 use super::*;
 #[derive(Clone, Debug)]
 pub struct ThreadPoolDeviceFactory {
+    /// 执行文件请求的工作线程数，必须非零。
     pub workers: usize,
+    /// 已接受未收取请求的合计上限，同时也是独立的打开文件/锁句柄数上限。
+    /// 工作段绑定会占用句柄，直到回收或设备关闭；还需为检查点临时文件留出余量。
     pub queue_capacity: usize,
 }
 impl DeviceFactory for ThreadPoolDeviceFactory {

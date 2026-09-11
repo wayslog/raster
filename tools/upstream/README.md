@@ -28,6 +28,7 @@ Rust 执行端是 `cargo test --locked --test p9_upstream -- --nocapture`；默�
 | RASTER_UPSTREAM_SPLIT | 完成指定步数后进行检查点、关闭、恢复和会话续接 |
 | RASTER_UPSTREAM_CHECKPOINT | full 或 pair；后者使用 Index+Log 配对 |
 | RASTER_UPSTREAM_TIMEOUT | 单次检查点及边界关闭的等待秒数，默认 60，上限 600；不改变引擎默认恢复预算 |
+| RASTER_UPSTREAM_SEGMENT_BYTES | Rust 文件段大小，默认 1 MiB；大生命周期使用 32 MiB，页窗口仍是 4×32 KiB |
 
 上游相同业务轨迹、Rust 参考模型、并发历史和协议故障是不相互替代的证据层次。P9 完成前仍需补充原生结果、磁盘/恢复对照及故障交叉矩阵。
 

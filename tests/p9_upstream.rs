@@ -168,7 +168,8 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
     let mut config = Config::default();
     let native = if let Some(root) = std::env::var_os("RASTER_UPSTREAM_ROOT") {
         config.storage.root = root.into();
-        config.storage.segment_bytes = 1048576;
+        config.storage.segment_bytes = std::env::var("RASTER_UPSTREAM_SEGMENT_BYTES")
+            .map_or(1048576, |value| value.parse().unwrap());
         config.log.page_bytes = 32768;
         config.log.memory_pages = 4;
         config.index.buckets = 2048;

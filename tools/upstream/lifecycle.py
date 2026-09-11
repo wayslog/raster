@@ -81,6 +81,8 @@ def main():
         rust_result, cpp_result = output / (name + ".rust.results"), output / (name + ".cpp.results")
         root = Path(tempfile.mkdtemp(prefix="raster-lifecycle-"))
         try:
+            # 大轨迹保留同样的页窗口和业务输入；32 MiB 段避免 128 个句柄预算耗尽。
+            env["RASTER_UPSTREAM_SEGMENT_BYTES"] = str(33554432 if name == "large" else 1048576)
             env["RASTER_UPSTREAM_TRACE"] = str(source)
             env["RASTER_UPSTREAM_RESULT"] = str(rust_result)
             env["RASTER_UPSTREAM_ROOT"] = str(root / "rust")

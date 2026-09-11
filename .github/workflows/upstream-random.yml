@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [null, file]
+        backend: ["null", file]
     steps:
       - name: 检出 RasterKV
         uses: actions/checkout@v6
