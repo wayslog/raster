@@ -6,6 +6,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn advance_begin_for_scan_test(&self, begin: LogAddress) {
         let mut state = self.state.write().unwrap();
         assert!(state.frontiers.begin <= begin && begin <= state.frontiers.head);
+        self.publish_mutable_floor(begin);
         state.frontiers.begin = begin;
     }
 

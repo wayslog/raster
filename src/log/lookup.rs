@@ -18,7 +18,7 @@ pub(crate) enum LookupStep<V: ValueLayout> {
     Continue,
 }
 pub(crate) struct LogLookup {
-    owner: Arc<std::sync::RwLock<LogState>>,
+    owner: Arc<LogControl>,
     storage: Arc<()>,
     key: EncodedKey,
     next: Option<LogAddress>,

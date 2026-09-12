@@ -26,6 +26,31 @@ struct LogState {
     flush: Option<Arc<()>>,
     reclaim: Option<(PageId, Generation)>,
 }
+struct LogControl {
+    state: std::sync::RwLock<LogState>,
+    // Keep the derived restriction with the control allocation instead of
+    // shifting the page pool, record table, and enclosing engine fields.
+    mutable_floor: crate::sync::AtomicU64,
+}
+impl LogControl {
+    fn new(state: LogState) -> Self {
+        let floor = state
+            .frontiers
+            .begin
+            .max(state.frontiers.read_only)
+            .max(state.frontiers.head);
+        Self {
+            state: std::sync::RwLock::new(state),
+            mutable_floor: crate::sync::AtomicU64::new(floor.0),
+        }
+    }
+}
+impl std::ops::Deref for LogControl {
+    type Target = std::sync::RwLock<LogState>;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
 struct ReservationActivity<'a>(&'a std::sync::RwLock<LogState>);
 impl Drop for ReservationActivity<'_> {
     fn drop(&mut self) {
@@ -147,7 +172,7 @@ impl<V: ValueLayout> RecordLease<V> {
 pub(crate) struct HybridLog<V: ValueLayout> {
     pool: page::PagePool,
     page_bytes: usize,
-    state: Arc<std::sync::RwLock<LogState>>,
+    state: Arc<LogControl>,
     layout: Arc<V>,
     records: crate::sync::Mutex<BTreeMap<LogAddress, Arc<value::PageValue<V>>>>,
 }
@@ -156,7 +181,7 @@ impl<V: ValueLayout> HybridLog<V> {
         Ok(Self {
             pool: page::PagePool::new(config.page_bytes, config.memory_pages)?,
             page_bytes: config.page_bytes,
-            state: Arc::new(std::sync::RwLock::new(LogState::default())),
+            state: Arc::new(LogControl::new(LogState::default())),
             layout,
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
@@ -191,7 +216,7 @@ impl<V: ValueLayout> HybridLog<V> {
             pool,
             page_bytes: config.page_bytes,
             layout,
-            state: Arc::new(std::sync::RwLock::new(LogState {
+            state: Arc::new(LogControl::new(LogState {
                 frontiers: Frontiers {
                     begin,
                     head: end,
@@ -232,6 +257,7 @@ impl<V: ValueLayout> HybridLog<V> {
         if state.reservations != 0 {
             return Err(Error::Busy);
         }
+        self.publish_mutable_floor(begin);
         state.frontiers.begin = begin;
         Ok(())
     }
@@ -247,6 +273,7 @@ impl<V: ValueLayout> HybridLog<V> {
         if state.flush.is_some() {
             return Err(Error::Busy);
         }
+        self.publish_mutable_floor(floor);
         state.frontiers.read_only = state.frontiers.read_only.max(floor);
         state.frontiers.safe_read_only = state.frontiers.safe_read_only.max(floor);
         state.frontiers.flushed_until = state.frontiers.flushed_until.max(floor);
@@ -260,6 +287,13 @@ impl<V: ValueLayout> HybridLog<V> {
         let mut result = state.frontiers;
         result.tail = self.pool.tail()?;
         Ok(result)
+    }
+    /// Called under the control write lock after validating the transition.
+    /// Failed freezes keep their target restriction, just like read_only.
+    fn publish_mutable_floor(&self, frontier: LogAddress) {
+        self.state
+            .mutable_floor
+            .fetch_max(frontier.0, crate::sync::PUBLISH_ORDER);
     }
     #[cfg(test)]
     pub fn reserve(&self, value: V::Owned) -> Result<RecordReservation<'_, V>, Error> {
@@ -328,17 +362,13 @@ impl<V: ValueLayout> HybridLog<V> {
         mut head: Option<LogAddress>,
     ) -> Result<Option<RecordLease<V>>, Error> {
         while let Some(address) = head {
-            // Mutability relies only on these three boundaries;not for unused tail Serialized page allocation.
-            let frontiers = {
-                let state = self
-                    .state
-                    .read()
-                    .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
-                self.pool.ensure_healthy()?;
-                state.frontiers
-            };
+            if self.state.is_poisoned() {
+                return Err(Error::InvalidState("Log boundary lock poisoning"));
+            }
+            self.pool.ensure_healthy()?;
+            let floor = LogAddress(self.state.mutable_floor.load(crate::sync::PUBLISH_ORDER));
             // Intra-page logical truncation can lead to read-only boundaries,Cannot update expired old keys along the surviving chain head.
-            if address < frontiers.begin.max(frontiers.read_only).max(frontiers.head) {
+            if address < floor {
                 return Ok(None);
             }
             let lease = match self.lease(address) {
@@ -516,6 +546,7 @@ impl<V: ValueLayout> HybridLog<V> {
             .records
             .lock()
             .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
+        self.publish_mutable_floor(target);
         state.frontiers.read_only = target;
         for (_, value) in records.range(..target) {
             value.seal()?;
@@ -609,6 +640,9 @@ mod gate;
 mod page;
 pub(crate) mod scan;
 mod value;
+
+#[cfg(test)]
+mod mutable_tests;
 
 #[cfg(test)]
 mod tests {
