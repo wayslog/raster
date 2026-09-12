@@ -1,0 +1,13 @@
+{
+  "commit": "59def1aae2748efbac7854b3dfae6bfa0ce2e025",
+  "baseline_commit": "f19daa79a8f352ac69f2c55b12653ef670c6bb7f",
+  "run": "https://github.com/wayslog/raster/actions/runs/34694761433",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34694762370",
+  "archive": "cpp-parity-59def1a.tar.gz",
+  "sha256": "e17890e5f276e4c67b2d2dc8404331e8a81daf4438961cdc28dfe60542d98242",
+  "correctness": "All 18 integer cases and both resident append/scan cases passed independent output checks.",
+  "cpp_parity": "0 of 18 passed; incomplete.",
+  "rust_regression": "18 of 18 integer cases passed; one of two append/scan cases passed.",
+  "decision": "Retain the integer improvement as a candidate while investigating the 65536-record scan throughput regression. Do not mark performance acceptance complete.",
+  "ci": "All six native Linux/macOS feature jobs passed."
+}
