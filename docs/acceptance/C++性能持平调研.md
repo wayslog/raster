@@ -120,3 +120,11 @@ macOS ARM 原生单线程覆盖写的 5 秒采样中，工作线程有 3728 个�
 本地四轮交替样本中，单独缓存就绪状态使单线程均匀 Upsert 吞吐比为 1.025，四线程独立热点 RMW 为 1.219。分片在此基础上继续提高四线程 RMW 吞吐，但单线程及共享热点的 P99 样本不稳定，不能据此宣布分片已验收。初版重复检测 panic 状态的包装已替换为 Mutex 中毒通知。原始样本、中间源码及补丁见 [本地实验归档](data/cpp-parity-version-local.tar.gz) 与 [清单](data/cpp-parity-version-local.json)。
 
 比较工具新增 `--baseline-rust`，继续使用同一输入及独立结果模型。GitHub `cpp-parity` 工作流可通过 `baseline_ref` 指定完整旧提交，在同一 runner 构建并交替运行旧、新 Rust；即使 C++ 持平门槛失败也会执行这项对照。Rust 自身回归门槛为吞吐比至少 0.98、P99 至多 1.10；C++ 的最终 0.90/1.10 门槛保持不变。原生对照尚待完成。
+
+### 第四处候选：借用已持有的 Engine
+
+Session 在四操作和 poll 的整个调用期间均拥有 Engine；Upsert、RMW、Delete 任务也在 advance 期间持有 Engine。原先八处局部 Arc 克隆仅为借用这些字段，每次增加和减少同一个共享引用计数。改为字段借用后，Pending 任务仍独立拥有 Engine，Epoch guard 的存活范围不变。
+
+与 `321bc04` 的 macOS 同机四轮交替对照中，单线程均匀 Upsert 吞吐比为 0.989、P99 比为 1.001；四线程独立热点 RMW 为 1.209 / 0.635；四线程共享热点 Read 为 1.138 / 1.005。三组独立结果校验及局部回归门槛均通过，详见 [逐轮数据与源码哈希](data/cpp-parity-borrow-local.json)。这证明引用计数竞争是可测成本，但不是 C++ 持平证据。
+
+本地全特性单元、集成及 doctest 共 452 项通过，0 失败、0 忽略；全目标全特性 Clippy 通过。

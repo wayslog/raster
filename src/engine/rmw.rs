@@ -41,7 +41,7 @@ struct RmwTask<S: Schema, O: RmwOperation<S>> {
 }
 impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
     fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         if self.lookup.is_none() {
             let mut resolved = engine.resolve_index(self.hash, &self.key)?;
             if !resolved.entry.present {
