@@ -1,6 +1,16 @@
 name: P9 Complete Performance Matrix
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Benchmark suite
+        type: choice
+        options: [matrix, cpp-parity]
+        default: matrix
+      case:
+        description: Optional direct benchmark filter (operation/distribution/threads)
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -8,6 +18,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   benchmark:
+    if: inputs.mode != 'cpp-parity'
     name: Fixed matrix and recovery (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -65,4 +76,55 @@ jobs:
         with:
           name: p9-benchmark-${{ matrix.os }}
           path: target/p9-benchmark-evidence
+          if-no-files-found: error
+  cpp-parity:
+    if: inputs.mode == 'cpp-parity'
+    name: Direct C++ and Rust engine comparison
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out RasterKV
+        uses: actions/checkout@v6
+      - name: Check out pinned upstream
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/FASTER
+          ref: 321d872eabda6a0345c8bd76419f89723ed864ae
+          path: target/upstream-source
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.98.1
+      - name: Install native C++ dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++ libaio-dev libtbb-dev uuid-dev
+      - name: Build optimized engines and record environment
+        shell: bash
+        run: |
+          mkdir -p target/parity-evidence
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            g++ --version
+            uname -srm
+            lscpu
+            cat /etc/os-release
+            stat -f -c 'file_system:%T' .
+          } > target/parity-evidence/environment.txt
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
+          cargo build --locked --release --example parity
+          sh tools/performance/build.sh target/upstream-source target/parity-build
+      - name: Compare alternating native engine samples
+        env:
+          CASE_FILTER: ${{ inputs.case }}
+        run: |
+          python3 -u tools/performance/compare.py --rust target/release/examples/parity \
+            --cpp target/parity-build/faster-memory --output target/parity-evidence/memory \
+            --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/checks.txt
+      - name: Preserve results even when parity fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-rust-parity
+          path: target/parity-evidence
           if-no-files-found: error
