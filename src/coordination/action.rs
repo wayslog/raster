@@ -44,6 +44,14 @@ fn next_phase(action: Action, phase: Phase) -> Option<Phase> {
     }
 }
 impl Coordinator {
+    /// This is an observation hint, not admission authority. MAX always takes
+    /// the locked path, including when MAX is the actual checkpoint version.
+    #[inline]
+    pub fn is_rest_at(&self, version: CheckpointVersion) -> bool {
+        version.0 != u64::MAX
+            && self.observation().rest_version.load(Ordering::SeqCst) == version.0
+            && !self.registry.is_poisoned()
+    }
     pub fn snapshot(&self) -> Result<SystemState, Error> {
         Ok(self
             .registry
@@ -88,6 +96,11 @@ impl Coordinator {
                 old_pending: 0,
             })
             .collect();
+        // Invalidate before any action state becomes observable. Poisoning
+        // independently disables the hint if preparation unwinds.
+        self.observation()
+            .rest_version
+            .store(u64::MAX, Ordering::SeqCst);
         registry.action = Some(ActiveAction {
             id,
             participants,
@@ -221,6 +234,9 @@ impl Coordinator {
         registry.system.id = None;
         registry.system.action = None;
         registry.system.phase = Phase::Rest;
+        self.observation()
+            .rest_version
+            .store(registry.system.version.0, Ordering::SeqCst);
         Ok(())
     }
     pub fn fail_action(&self, id: MaintenanceId, cause: Error) -> Result<(), Error> {
