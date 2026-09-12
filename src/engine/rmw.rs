@@ -34,12 +34,40 @@ struct RmwTask<S: Schema, O: RmwOperation<S>> {
     effect: Effect,
     complete: Option<Completer<O::Output>>,
     ready: Option<OperationResult<O::Output>>,
-    id: RequestId,
+    mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
     permit: super::version_permit::VersionPermit,
 }
 impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
+    fn prepare_pending(&mut self) -> Result<bool, Error> {
+        let awaiting_route = self
+            .lookup
+            .as_ref()
+            .is_some_and(|(_, lookup)| lookup.awaiting_route());
+        self.engine.io.activate_operation(&mut self.mailbox)?;
+        if let Some((_, lookup)) = &mut self.lookup {
+            lookup.enable_io();
+        }
+        Ok(awaiting_route)
+    }
+    fn run_initial(&mut self, budget: PollBudget) -> TaskStep {
+        if matches!(self.run_locked(budget), TaskStep::Complete) {
+            return TaskStep::Complete;
+        }
+        match self.prepare_pending() {
+            // Resume only a lookup stopped before its first device submission.
+            Ok(true) => self.run_locked(budget),
+            Ok(false) => TaskStep::Retry,
+            Err(cause) => {
+                self.finish(Err(OperationError {
+                    cause,
+                    effect: self.effect,
+                }));
+                TaskStep::Complete
+            }
+        }
+    }
     fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = &self.engine;
         if self.lookup.is_none() {
@@ -54,12 +82,15 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                 resolved = engine.resolve_index(self.hash, &self.key)?;
             }
             let entry = resolved.entry;
-            let lookup = engine.log.lookup(
+            let mut lookup = engine.log.lookup_deferred(
                 &engine.storage,
                 self.key.clone(),
                 resolved.head,
-                super::io_hub::CompletionHub::route(self.id),
+                super::io_hub::CompletionHub::route(self.mailbox.id()),
             )?;
+            if self.mailbox.registered_id().is_some() {
+                lookup.enable_io();
+            }
             self.lookup = Some((entry, lookup));
         }
         let (snapshot, lookup) = self.lookup.as_mut().expect("query_created");
@@ -152,11 +183,15 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         if let Some(request) = self.request.take() {
             let result = self.engine.finish_request(request, result, self.effect);
             if let Some(complete) = &self.complete {
-                self.engine
-                    .complete_tracked(&mut self.monitor, self.id, complete, result);
+                self.engine.complete_tracked(
+                    &mut self.monitor,
+                    self.mailbox.registered_id(),
+                    complete,
+                    result,
+                );
             } else {
                 self.engine
-                    .record_ready(&mut self.monitor, self.id, &result);
+                    .record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
                 self.ready = Some(result);
             }
         }
@@ -209,7 +244,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
 }
 impl<S: Schema, O: RmwOperation<S>> PendingTask for RmwTask<S, O> {
     fn id(&self) -> RequestId {
-        self.id
+        self.mailbox.id()
     }
     fn serial(&self) -> Serial {
         self.serial
@@ -253,7 +288,7 @@ impl<S: Schema, O: RmwOperation<S>> Drop for RmwTask<S, O> {
                 effect: self.effect,
             });
         }
-        let _ = self.engine.io.release(self.id);
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -292,19 +327,20 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let id = match self.io.reserve(session.id) {
-            Ok(id) => id,
+        let mut mailbox = match self.io.reserve_operation(session.id) {
+            Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
+        let id = mailbox.id();
         let permit = match self.version_permits.reserve(hash, session.current.version) {
             Ok(permit) => permit,
             Err(reason) => {
-                let _ = self.io.release(id);
+                let _ = self.io.release_operation(&mut mailbox);
                 return Err(Rejected { request, reason });
             }
         };
         if let Err(reason) = self.admit(session, serial) {
-            let _ = self.io.release(id);
+            let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
         let mut task = RmwTask {
@@ -319,12 +355,12 @@ impl<S: Schema> Engine<S> {
             effect: Effect::NotApplied,
             complete: None,
             ready: None,
-            id,
+            mailbox,
             serial,
             version: session.current.version,
             permit,
         };
-        if matches!(task.run_locked(PollBudget::default()), TaskStep::Complete) {
+        if matches!(task.run_initial(PollBudget::default()), TaskStep::Complete) {
             Ok(Submission::Ready(
                 task.ready
                     .take()

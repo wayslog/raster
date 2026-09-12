@@ -37,7 +37,7 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     hash: KeyHash,
     effect: Effect,
     complete: Option<Completer<O::Output>>,
-    id: RequestId,
+    mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
     permit: super::version_permit::VersionPermit,
@@ -129,8 +129,12 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn finish(&mut self, result: OperationResult<O::Output>) {
         if let Some(result) = self.finalize(result) {
             if let Some(complete) = &self.complete {
-                self.engine
-                    .complete_tracked(&mut self.monitor, self.id, complete, result);
+                self.engine.complete_tracked(
+                    &mut self.monitor,
+                    self.mailbox.registered_id(),
+                    complete,
+                    result,
+                );
             } else {
                 // There is no ticket yet for the first simultaneous promotion;Exception expansion can only end and fail to close,Can't pretend to be informed.
                 self.engine.failed.store(true, Ordering::SeqCst);
@@ -182,7 +186,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
 }
 impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
     fn id(&self) -> RequestId {
-        self.id
+        self.mailbox.id()
     }
     fn serial(&self) -> Serial {
         self.serial
@@ -230,7 +234,7 @@ impl<S: Schema, O: UpsertOperation<S>> Drop for UpsertTask<S, O> {
                 effect: self.effect,
             });
         }
-        let _ = self.engine.io.release(self.id);
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -268,19 +272,20 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let id = match self.io.reserve(session.id) {
-            Ok(id) => id,
+        let mut mailbox = match self.io.reserve_operation(session.id) {
+            Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
+        let id = mailbox.id();
         let permit = match self.version_permits.reserve(hash, session.current.version) {
             Ok(permit) => permit,
             Err(reason) => {
-                let _ = self.io.release(id);
+                let _ = self.io.release_operation(&mut mailbox);
                 return Err(Rejected { request, reason });
             }
         };
         if let Err(reason) = self.admit(session, serial) {
-            let _ = self.io.release(id);
+            let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
         let mut task = UpsertTask {
@@ -292,7 +297,7 @@ impl<S: Schema> Engine<S> {
             hash,
             effect: Effect::NotApplied,
             complete: None,
-            id,
+            mailbox,
             serial,
             version: session.current.version,
             permit,
@@ -302,10 +307,20 @@ impl<S: Schema> Engine<S> {
                 let result = task
                     .finalize(result)
                     .expect("Synchronous requests are terminated only once");
-                self.record_ready(&mut task.monitor, id, &result);
+                self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
                 Ok(Submission::Ready(result))
             }
             UpsertStep::Retry => {
+                if let Err(cause) = self.io.activate_operation(&mut task.mailbox) {
+                    let result = task
+                        .finalize(Err(OperationError {
+                            cause,
+                            effect: task.effect,
+                        }))
+                        .expect("Rejected mailbox registration is finalized");
+                    self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
+                    return Ok(Submission::Ready(result));
+                }
                 let (ticket, complete) = Ticket::pair_bounded(id, credit);
                 task.complete = Some(complete);
                 task.monitor.pending();

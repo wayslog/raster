@@ -29,7 +29,7 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     hash: KeyHash,
     effect: Effect,
     complete: Completer<O::Output>,
-    id: RequestId,
+    mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
     permit: super::version_permit::VersionPermit,
@@ -113,8 +113,12 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             result
         };
         self.completed = true;
-        self.engine
-            .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
+        self.engine.complete_tracked(
+            &mut self.monitor,
+            self.mailbox.registered_id(),
+            &self.complete,
+            result,
+        );
     }
     fn run_locked(&mut self, budget: PollBudget) -> TaskStep {
         if self.completed {
@@ -164,7 +168,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
 }
 impl<S: Schema, O: DeleteOperation<S>> PendingTask for DeleteTask<S, O> {
     fn id(&self) -> RequestId {
-        self.id
+        self.mailbox.id()
     }
     fn serial(&self) -> Serial {
         self.serial
@@ -205,7 +209,7 @@ impl<S: Schema, O: DeleteOperation<S>> Drop for DeleteTask<S, O> {
                 effect: self.effect,
             });
         }
-        let _ = self.engine.io.release(self.id);
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -244,19 +248,20 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let id = match self.io.reserve(session.id) {
-            Ok(id) => id,
+        let mut mailbox = match self.io.reserve_operation(session.id) {
+            Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
+        let id = mailbox.id();
         let permit = match self.version_permits.reserve(hash, session.current.version) {
             Ok(permit) => permit,
             Err(reason) => {
-                let _ = self.io.release(id);
+                let _ = self.io.release_operation(&mut mailbox);
                 return Err(Rejected { request, reason });
             }
         };
         if let Err(reason) = self.admit(session, serial) {
-            let _ = self.io.release(id);
+            let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
@@ -270,12 +275,20 @@ impl<S: Schema> Engine<S> {
             hash,
             effect: Effect::NotApplied,
             complete,
-            id,
+            mailbox,
             serial,
             version: session.current.version,
             permit,
         };
-        if matches!(task.run_locked(PollBudget::default()), TaskStep::Complete) {
+        let mut completed = matches!(task.run_locked(PollBudget::default()), TaskStep::Complete);
+        if !completed && let Err(cause) = self.io.activate_operation(&mut task.mailbox) {
+            task.finish(Err(OperationError {
+                cause,
+                effect: task.effect,
+            }));
+            completed = true;
+        }
+        if completed {
             let TicketState::Ready(result) =
                 ticket.try_take().expect("Internal bills can be collected")
             else {
