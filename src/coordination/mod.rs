@@ -1,8 +1,21 @@
-//! session registration,Dual-version context and top-level action arbitration;and safe recycling epoch separate.
+//! Session registration, local admission, and global action/version barriers.
+//! Access epochs remain independent from checkpoint coordination.
 use crate::types::*;
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    ops::Deref,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 mod action;
+#[cfg(test)]
+mod admission_tests;
 use action::ActiveAction;
+mod session;
+use session::SessionSlot;
+pub(crate) use session::{RegisteredSession, RegistrationHandle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -48,8 +61,13 @@ pub(crate) struct SessionCut {
 }
 struct Registration {
     active: bool,
-    last_accepted: Option<Serial>,
+    slot: Arc<SessionSlot>,
     recovered: Option<(Serial, CheckpointVersion)>,
+}
+impl Registration {
+    fn last(&self, failed: &AtomicBool) -> Result<Option<Serial>, Error> {
+        self.slot.with_state(failed, |slot| Ok(slot.last_accepted))
+    }
 }
 struct Registry {
     system: SystemState,
@@ -58,16 +76,43 @@ struct Registry {
     sessions: BTreeMap<SessionId, Registration>,
     closed: bool,
 }
-pub(crate) struct Coordinator {
+// Handles retain weak ownership of this allocation to prevent address reuse.
+// The registry remains the authority for action arbitration and active sets.
+pub(crate) struct Control {
     registry: crate::sync::Mutex<Registry>,
     max_sessions: usize,
+    failed: AtomicBool,
+    publishing: AtomicBool,
+}
+pub(crate) struct Coordinator {
+    control: Arc<Control>,
+}
+impl Deref for Coordinator {
+    type Target = Control;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.control
+    }
 }
 impl Coordinator {
-    pub fn active_session_ids(&self) -> Result<Vec<SessionId>, Error> {
+    #[inline]
+    fn healthy(&self) -> Result<(), Error> {
+        if self.failed.load(Ordering::SeqCst) || self.registry.is_poisoned() {
+            return Err(Error::InvalidState("coordinator failed closed"));
+        }
+        Ok(())
+    }
+    fn lock(&self) -> Result<crate::sync::MutexGuard<'_, Registry>, Error> {
+        self.healthy()?;
         let registry = self
             .registry
             .lock()
             .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        self.healthy()?;
+        Ok(registry)
+    }
+    pub fn active_session_ids(&self) -> Result<Vec<SessionId>, Error> {
+        let registry = self.lock()?;
         let mut ids = Vec::new();
         ids.try_reserve_exact(
             registry
@@ -93,19 +138,23 @@ impl Coordinator {
             });
         }
         Ok(Self {
-            registry: crate::sync::Mutex::new(Registry {
-                system: SystemState {
-                    id: None,
+            control: Arc::new(Control {
+                registry: crate::sync::Mutex::new(Registry {
+                    system: SystemState {
+                        id: None,
+                        action: None,
+                        phase: Phase::Rest,
+                        version: CheckpointVersion(0),
+                    },
                     action: None,
-                    phase: Phase::Rest,
-                    version: CheckpointVersion(0),
-                },
-                action: None,
-                next_action: 0,
-                sessions: BTreeMap::new(),
-                closed: false,
+                    next_action: 0,
+                    sessions: BTreeMap::new(),
+                    closed: false,
+                }),
+                max_sessions,
+                failed: AtomicBool::new(false),
+                publishing: AtomicBool::new(false),
             }),
-            max_sessions,
         })
     }
     pub fn from_checkpoint(
@@ -114,7 +163,8 @@ impl Coordinator {
         sessions: &[(SessionId, Serial)],
     ) -> Result<Self, Error> {
         let mut coordinator = Self::new(max_sessions)?;
-        let registry = coordinator
+        let registry = Arc::get_mut(&mut coordinator.control)
+            .expect("new coordinator has no handles")
             .registry
             .get_mut()
             .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
@@ -128,7 +178,7 @@ impl Coordinator {
                     id,
                     Registration {
                         active: false,
-                        last_accepted: Some(serial),
+                        slot: SessionSlot::new(id, false, registry.system, Some(serial)),
                         recovered: Some((serial, version)),
                     },
                 )
@@ -139,14 +189,11 @@ impl Coordinator {
         }
         Ok(coordinator)
     }
-    pub fn resume(
+    pub fn resume_registered(
         &self,
         session: SessionId,
-    ) -> Result<(CheckpointVersion, Serial, CheckpointVersion), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+    ) -> Result<(RegisteredSession, Serial, CheckpointVersion), Error> {
+        let mut registry = self.lock()?;
         if registry.closed || registry.system.phase == Phase::Failed {
             return Err(Error::InvalidState("storage_closed_or_failed"));
         }
@@ -162,7 +209,7 @@ impl Coordinator {
         {
             return Err(Error::CapacityExceeded);
         }
-        let version = registry.system.version;
+        let system = registry.system;
         let entry = registry
             .sessions
             .get_mut(&session)
@@ -175,59 +222,45 @@ impl Coordinator {
         let (serial, durable_version) = entry.recovered.ok_or(Error::InvalidState(
             "The session does not belong to this recovery set",
         ))?;
+        let last = entry.last(&self.failed)?;
+        // Each activation has a fresh allocation. Retained handles keep the old,
+        // inactive allocation and can never act for a resumed session.
+        let slot = SessionSlot::new(session, true, system, last);
+        let registered = self.registered(&slot, system.version, last);
+        entry.slot = slot;
         entry.active = true;
-        Ok((version, serial, durable_version))
+        Ok((registered, serial, durable_version))
     }
+    #[cfg(test)]
+    pub fn resume(
+        &self,
+        session: SessionId,
+    ) -> Result<(CheckpointVersion, Serial, CheckpointVersion), Error> {
+        let (registered, serial, durable) = self.resume_registered(session)?;
+        Ok((registered.version, serial, durable))
+    }
+    #[cfg(test)]
     pub fn last_accepted(&self, id: SessionId) -> Result<Option<Serial>, Error> {
-        let registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
-        let entry = registry
+        let registry = self.lock()?;
+        registry
             .sessions
             .get(&id)
-            .filter(|e| e.active)
-            .ok_or(Error::InvalidState("session_not_registered"))?;
-        Ok(entry.last_accepted)
+            .filter(|entry| entry.active)
+            .ok_or(Error::InvalidState("session_not_registered"))?
+            .last(&self.failed)
     }
-    /// Only called after other rejection conditions have been checked;Refuse to keep the original serial number.
+    #[cfg(test)]
     pub fn accept_serial(
         &self,
         id: SessionId,
         serial: Serial,
         version: CheckpointVersion,
     ) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
-        if registry.closed || registry.system.phase == Phase::Failed {
-            return Err(Error::InvalidState(
-                "Storage is closed or coordination action failed",
-            ));
-        }
-        if version != registry.system.version {
-            return Err(Error::Busy);
-        }
-        let entry = registry
-            .sessions
-            .get_mut(&id)
-            .filter(|e| e.active)
-            .ok_or(Error::InvalidState("session_not_registered"))?;
-        if entry.last_accepted.is_some_and(|last| serial <= last) {
-            return Err(Error::InvalidState(
-                "operation_serial_must_increase_strictly",
-            ));
-        }
-        entry.last_accepted = Some(serial);
-        Ok(())
+        self.accept_registered(&self.registration(id)?, id, serial, version)
     }
     pub fn shutdown(&self) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
-        if registry.sessions.values().any(|e| e.active) {
+        let mut registry = self.lock()?;
+        if registry.sessions.values().any(|entry| entry.active) {
             return Err(Error::Busy);
         }
         if registry.action.is_some() && registry.system.phase != Phase::Failed {
@@ -236,13 +269,9 @@ impl Coordinator {
         registry.closed = true;
         Ok(())
     }
-
-    pub fn enroll(&self, session: SessionId) -> Result<CheckpointVersion, Error> {
+    pub fn enroll_registered(&self, session: SessionId) -> Result<RegisteredSession, Error> {
         session.validate()?;
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         if registry.closed || registry.system.phase == Phase::Failed {
             return Err(Error::InvalidState(
                 "Storage is closed or coordination action failed",
@@ -258,7 +287,13 @@ impl Coordinator {
         {
             return Err(Error::Busy);
         }
-        if registry.sessions.values().filter(|e| e.active).count() >= self.max_sessions {
+        if registry
+            .sessions
+            .values()
+            .filter(|entry| entry.active)
+            .count()
+            >= self.max_sessions
+        {
             return Err(Error::CapacityExceeded);
         }
         if registry
@@ -270,35 +305,50 @@ impl Coordinator {
                 "Persistent sessions must pass continue_session restore",
             ));
         }
-        registry
+        let last = registry
             .sessions
-            .entry(session)
-            .and_modify(|entry| entry.active = true)
-            .or_insert(Registration {
+            .get(&session)
+            .map(|entry| entry.last(&self.failed))
+            .transpose()?
+            .flatten();
+        let slot = SessionSlot::new(session, true, registry.system, last);
+        let registered = self.registered(&slot, registry.system.version, last);
+        registry.sessions.insert(
+            session,
+            Registration {
                 active: true,
-                last_accepted: None,
+                slot,
                 recovered: None,
-            });
-        Ok(registry.system.version)
+            },
+        );
+        Ok(registered)
+    }
+    #[cfg(test)]
+    pub fn enroll(&self, session: SessionId) -> Result<CheckpointVersion, Error> {
+        self.enroll_registered(session)
+            .map(|registered| registered.version)
     }
     pub fn leave(&self, session: SessionId) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         let entry = registry
             .sessions
             .get_mut(&session)
-            .filter(|e| e.active)
+            .filter(|entry| entry.active)
             .ok_or(Error::InvalidState("session_not_registered"))?;
+        entry.slot.with_state(&self.failed, |slot| {
+            slot.active = false;
+            Ok(())
+        })?;
         entry.active = false;
         if let Some(action) = &mut registry.action
             && action.participants.contains_key(&session)
         {
             action
                 .failure
-                .get_or_insert_with(|| std::sync::Arc::new(Error::SessionAbandoned));
-            registry.system.phase = Phase::Failed;
+                .get_or_insert_with(|| Arc::new(Error::SessionAbandoned));
+            let mut system = registry.system;
+            system.phase = Phase::Failed;
+            self.publish_system(&mut registry, system)?;
         }
         Ok(())
     }

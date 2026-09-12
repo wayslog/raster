@@ -63,7 +63,7 @@ impl<S: Schema> RasterKV<S> {
             Some(id) => id,
             None => SessionId::generate()?,
         };
-        let version = self.inner.coordinator.enroll(id)?;
+        let registered = self.inner.coordinator.enroll_registered(id)?;
         let participant = match self.inner.epoch.register() {
             Ok(id) => id,
             Err(error) => {
@@ -71,13 +71,12 @@ impl<S: Schema> RasterKV<S> {
                 return Err(error);
             }
         };
-        let last_accepted = self.inner.coordinator.last_accepted(id)?;
         Ok(Session {
             thread_session: Some(thread_session),
             engine: self.inner.clone(),
             id,
             participant: Some(participant),
-            runtime: crate::engine::SessionRuntime::new(id, last_accepted, version),
+            runtime: crate::engine::SessionRuntime::new(id, registered),
             local: std::marker::PhantomData,
         })
     }
@@ -88,7 +87,7 @@ impl<S: Schema> RasterKV<S> {
             return Err(Error::InvalidState("engine_failed_closed"));
         }
         let thread_session = self.inner.thread_sessions.enter()?;
-        let (version, serial, durable_version) = self.inner.coordinator.resume(id)?;
+        let (registered, serial, durable_version) = self.inner.coordinator.resume_registered(id)?;
         let participant = match self.inner.epoch.register() {
             Ok(participant) => participant,
             Err(error) => {
@@ -96,14 +95,13 @@ impl<S: Schema> RasterKV<S> {
                 return Err(error);
             }
         };
-        let last = self.inner.coordinator.last_accepted(id)?;
         Ok(ResumedSession {
             session: Session {
                 thread_session: Some(thread_session),
                 engine: self.inner.clone(),
                 id,
                 participant: Some(participant),
-                runtime: crate::engine::SessionRuntime::new(id, last, version),
+                runtime: crate::engine::SessionRuntime::new(id, registered),
                 local: std::marker::PhantomData,
             },
             progress: super::maintenance::DurableProgress {

@@ -70,8 +70,8 @@ impl<S: Schema> Engine<S> {
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::InvalidState("Session closed or engine failed"));
         }
-        // Active identities can only be submitted by the current session;create/Continue to read registration progress,admit Synchronize local value after success.
-        // Only illegal serial numbers are rejected in advance here;Final acceptance still checks global identity,Version and serial number.
+        // Reject invalid serials before calling user key code. Live registration
+        // still authorizes identity, version, and monotonic progress at admission.
         if session
             .current
             .last_accepted
@@ -118,8 +118,12 @@ impl<S: Schema> Engine<S> {
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::InvalidState("Session closed or engine failed"));
         }
-        self.coordinator
-            .accept_serial(session.id, serial, session.current.version)?;
+        self.coordinator.accept_registered(
+            &session.registration,
+            session.id,
+            serial,
+            session.current.version,
+        )?;
         session.current.last_accepted = Some(serial);
         Ok(())
     }

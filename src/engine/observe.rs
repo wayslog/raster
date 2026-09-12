@@ -1,4 +1,5 @@
-//! Sessions only acknowledge their own context;Material I/O and stage advancement are still the responsibility of the action driver.
+//! Session threads observe their registration and acknowledge context cuts.
+//! Maintenance drivers remain responsible for material I/O and phase advancement.
 use super::{Engine, SessionRuntime};
 use crate::{
     coordination::{Phase, SystemState},
@@ -12,7 +13,9 @@ impl<S: Schema> Engine<S> {
         let mut changed = false;
         // Each observation has a fixed upper limit;When concurrent actions continue to change, let the caller continue in the next round.
         for _ in 0..8 {
-            let state = self.coordinator.snapshot()?;
+            let state = self
+                .coordinator
+                .session_state(&session.registration, session.id)?;
             if self.failed.load(Ordering::SeqCst) {
                 if state.id.is_none() {
                     return Ok(changed);
@@ -33,7 +36,11 @@ impl<S: Schema> Engine<S> {
             match result {
                 Ok(()) => return Ok(changed),
                 Err(error) => {
-                    if self.coordinator.snapshot()? != state {
+                    if self
+                        .coordinator
+                        .session_state(&session.registration, session.id)?
+                        != state
+                    {
                         continue;
                     }
                     if matches!(error, Error::Busy) {

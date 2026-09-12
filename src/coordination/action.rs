@@ -1,4 +1,5 @@
-//! Action state and session registration share the same lock;Stage confirmation is not equivalent to material persistence.
+//! Global action phases and participant barriers are serialized by the registry.
+//! Stable session views are published before a phase transition returns.
 use super::*;
 use std::sync::Arc;
 #[derive(Default)]
@@ -45,17 +46,10 @@ fn next_phase(action: Action, phase: Phase) -> Option<Phase> {
 }
 impl Coordinator {
     pub fn snapshot(&self) -> Result<SystemState, Error> {
-        Ok(self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?
-            .system)
+        Ok(self.lock()?.system)
     }
     pub fn start_action(&self, kind: Action) -> Result<MaintenanceId, Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         if registry.closed || registry.system.phase == Phase::Failed {
             return Err(Error::InvalidState(
                 "Storage is closed or coordination action failed",
@@ -82,12 +76,14 @@ impl Coordinator {
             .sessions
             .iter()
             .filter(|(_, s)| !s.active)
-            .map(|(id, s)| SessionCut {
-                session: *id,
-                last_accepted: s.last_accepted,
-                old_pending: 0,
+            .map(|(id, s)| {
+                Ok(SessionCut {
+                    session: *id,
+                    last_accepted: s.last(&self.failed)?,
+                    old_pending: 0,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, Error>>()?;
         registry.action = Some(ActiveAction {
             id,
             participants,
@@ -95,9 +91,10 @@ impl Coordinator {
             completed,
         });
         registry.next_action = next;
-        registry.system.id = Some(id);
-        registry.system.action = Some(kind);
-        registry.system.phase = match kind {
+        let mut system = registry.system;
+        system.id = Some(id);
+        system.action = Some(kind);
+        system.phase = match kind {
             Action::CheckpointFull | Action::CheckpointIndex => Phase::PrepareIndex,
             Action::CheckpointLog => Phase::Prepare,
             Action::Recover => Phase::WaitFlush,
@@ -106,6 +103,7 @@ impl Coordinator {
             Action::Compact => Phase::Compacting,
             Action::ReleaseCheckpoint => Phase::ReclaimCheckpoint,
         };
+        self.publish_system(&mut registry, system)?;
         Ok(id)
     }
     /// stages and actions ID must all match;Repeated confirmation can only maintain the same split,The old serial number cannot be tampered with.
@@ -115,10 +113,7 @@ impl Coordinator {
         cut: SessionCut,
         phase: Phase,
     ) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         if registry.system.phase != phase || !barrier(phase) {
             return Err(Error::InvalidState("Confirm phase mismatch"));
         }
@@ -127,7 +122,7 @@ impl Coordinator {
             .get(&cut.session)
             .filter(|s| s.active)
             .ok_or(Error::InvalidState("session_not_registered"))?;
-        if cut.last_accepted > registered.last_accepted {
+        if cut.last_accepted > registered.last(&self.failed)? {
             return Err(Error::InvalidState(
                 "Session split exceeds accepted sequence number",
             ));
@@ -163,10 +158,7 @@ impl Coordinator {
     }
     /// Called after the driver has completed the actual work in this phase;This method only verifies status and participant barriers.
     pub fn advance(&self, id: MaintenanceId, expected: Phase) -> Result<SystemState, Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         if registry.system.phase != expected {
             return Err(Error::InvalidState("Advance phase mismatch"));
         }
@@ -191,25 +183,23 @@ impl Coordinator {
             expected,
         )
         .ok_or(Error::InvalidState("Stages cannot be advanced directly"))?;
+        let mut system = registry.system;
         if next == Phase::InProgress {
-            registry.system.version = CheckpointVersion(
-                registry
-                    .system
+            system.version = CheckpointVersion(
+                system
                     .version
                     .0
                     .checked_add(1)
                     .ok_or(Error::CapacityExceeded)?,
             );
         }
-        registry.system.phase = next;
-        Ok(registry.system)
+        system.phase = next;
+        self.publish_system(&mut registry, system)?;
+        Ok(system)
     }
     /// Publish After the persistence results are confirmed by the actual maintenance driver,to release the action occupation.
     pub fn finish_action(&self, id: MaintenanceId) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         if registry.system.phase != Phase::Publish
             || registry.action.as_ref().is_none_or(|a| a.id != id)
         {
@@ -218,31 +208,27 @@ impl Coordinator {
             ));
         }
         registry.action = None;
-        registry.system.id = None;
-        registry.system.action = None;
-        registry.system.phase = Phase::Rest;
-        Ok(())
+        let mut system = registry.system;
+        system.id = None;
+        system.action = None;
+        system.phase = Phase::Rest;
+        self.publish_system(&mut registry, system)
     }
     pub fn fail_action(&self, id: MaintenanceId, cause: Error) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         let action = registry
             .action
             .as_mut()
             .filter(|a| a.id == id)
             .ok_or(Error::InvalidState("maintenance_action_mismatch"))?;
         action.failure.get_or_insert_with(|| Arc::new(cause));
-        registry.system.phase = Phase::Failed;
-        Ok(())
+        let mut system = registry.system;
+        system.phase = Phase::Failed;
+        self.publish_system(&mut registry, system)
     }
     #[cfg(test)]
     pub fn action_failure(&self, id: MaintenanceId) -> Result<Option<Arc<Error>>, Error> {
-        let registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let registry = self.lock()?;
         Ok(registry
             .action
             .as_ref()
@@ -257,37 +243,37 @@ impl Coordinator {
         current: (CheckpointVersion, SessionCut),
         previous: Option<(CheckpointVersion, SessionCut)>,
     ) -> Result<(), Error> {
-        let mut registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let mut registry = self.lock()?;
         let session = current.1.session;
         if current.1.old_pending != 0
             || previous.is_some_and(|(_, cut)| cut.old_pending != 0 || cut.session != session)
         {
             return Err(Error::Busy);
         }
-        let registered = registry
+        let slot = registry
             .sessions
             .get(&session)
-            .filter(|s| s.active)
-            .ok_or(Error::InvalidState("session_not_registered"))?;
-        if current.1.last_accepted != registered.last_accepted {
-            return Err(Error::InvalidState(
-                "Accepted sequence number mismatch for closed session",
-            ));
-        }
-        let system = registry.system;
-        if let Some(action) = &mut registry.action {
-            let participant = action
-                .participants
-                .get_mut(&session)
-                .ok_or(Error::InvalidState(
-                    "Session does not belong to action participation set",
-                ))?;
-            if action.failure.is_none() {
-                let version =
-                    if matches!(
+            .filter(|entry| entry.active)
+            .ok_or(Error::InvalidState("session_not_registered"))?
+            .slot
+            .clone();
+        slot.with_state(&self.failed, |registered| {
+            if current.1.last_accepted != registered.last_accepted {
+                return Err(Error::InvalidState(
+                    "Accepted sequence number mismatch for closed session",
+                ));
+            }
+            let system = registry.system;
+            if let Some(action) = &mut registry.action {
+                let participant =
+                    action
+                        .participants
+                        .get_mut(&session)
+                        .ok_or(Error::InvalidState(
+                            "Session does not belong to action participation set",
+                        ))?;
+                if action.failure.is_none() {
+                    let version = if matches!(
                         system.action,
                         Some(Action::CheckpointFull | Action::CheckpointLog)
                     ) && matches!(
@@ -302,38 +288,37 @@ impl Coordinator {
                     } else {
                         system.version
                     };
-                let cut = if current.0 == version {
-                    current.1
-                } else {
-                    previous
-                        .filter(|(v, _)| *v == version)
-                        .ok_or(Error::InvalidState(
-                            "Closing session is missing old version sharding",
-                        ))?
-                        .1
-                };
-                if participant
-                    .cut
-                    .is_some_and(|old| old.last_accepted != cut.last_accepted)
-                {
-                    return Err(Error::InvalidState("Close session changes fixed sharding"));
+                    let cut = if current.0 == version {
+                        current.1
+                    } else {
+                        previous
+                            .filter(|(v, _)| *v == version)
+                            .ok_or(Error::InvalidState(
+                                "Closing session is missing old version sharding",
+                            ))?
+                            .1
+                    };
+                    if participant
+                        .cut
+                        .is_some_and(|old| old.last_accepted != cut.last_accepted)
+                    {
+                        return Err(Error::InvalidState("Close session changes fixed sharding"));
+                    }
+                    participant.cut = Some(cut);
                 }
-                participant.cut = Some(cut);
+                participant.departed = true;
             }
-            participant.departed = true;
-        }
-        registry
-            .sessions
-            .get_mut(&session)
-            .expect("Verified session exists")
-            .active = false;
-        Ok(())
+            registered.active = false;
+            registry
+                .sessions
+                .get_mut(&session)
+                .expect("Verified session exists")
+                .active = false;
+            Ok(())
+        })
     }
     pub fn cuts(&self, id: MaintenanceId) -> Result<Vec<SessionCut>, Error> {
-        let registry = self
-            .registry
-            .lock()
-            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
+        let registry = self.lock()?;
         let action = registry
             .action
             .as_ref()
