@@ -11,7 +11,65 @@ struct Mailbox {
 }
 struct State {
     next: u64,
-    mailboxes: BTreeMap<u64, Mailbox>,
+    mailboxes: Mailboxes,
+}
+/// Reuse a few slots for synchronous requests without moving tree leaf payloads.
+/// Overflow retains exact routing and is bounded by the hub's existing capacity.
+struct Mailboxes {
+    inline: [Option<Mailbox>; 4],
+    overflow: BTreeMap<u64, Mailbox>,
+    len: usize,
+}
+impl Mailboxes {
+    fn new() -> Self {
+        Self {
+            inline: std::array::from_fn(|_| None),
+            overflow: BTreeMap::new(),
+            len: 0,
+        }
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn get(&self, route: &u64) -> Option<&Mailbox> {
+        self.inline
+            .iter()
+            .flatten()
+            .find(|mailbox| mailbox.id.slot == *route)
+            .or_else(|| self.overflow.get(route))
+    }
+    fn get_mut(&mut self, route: &u64) -> Option<&mut Mailbox> {
+        self.inline
+            .iter_mut()
+            .flatten()
+            .find(|mailbox| mailbox.id.slot == *route)
+            .or_else(|| self.overflow.get_mut(route))
+    }
+    fn insert(&mut self, route: u64, mailbox: Mailbox) {
+        if let Some(slot) = self.inline.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(mailbox);
+        } else {
+            self.overflow.insert(route, mailbox);
+        }
+        self.len += 1;
+    }
+    fn remove(&mut self, route: &u64) {
+        if let Some(slot) = self.inline.iter_mut().find(|slot| {
+            slot.as_ref()
+                .is_some_and(|mailbox| mailbox.id.slot == *route)
+        }) {
+            *slot = None;
+            self.len -= 1;
+        } else if self.overflow.remove(route).is_some() {
+            self.len -= 1;
+        }
+    }
+    fn values_mut(&mut self) -> impl Iterator<Item = &mut Mailbox> {
+        self.inline
+            .iter_mut()
+            .flatten()
+            .chain(self.overflow.values_mut())
+    }
 }
 pub(crate) struct CompletionHub {
     store: StoreId,
@@ -30,7 +88,7 @@ impl CompletionHub {
             capacity,
             state: Mutex::new(State {
                 next: 0,
-                mailboxes: BTreeMap::new(),
+                mailboxes: Mailboxes::new(),
             }),
             polling: Mutex::new(()),
         })
@@ -183,6 +241,44 @@ impl CompletionHub {
 mod tests {
     use super::*;
     use crate::device::{IoOperation, IoRequest, memory::MemoryDevice};
+    #[test]
+    fn released_inline_routes_cannot_consume_late_completions_or_displace_overflow() {
+        let hub = CompletionHub::new(StoreId([1; 16]), 7).unwrap();
+        let device = MemoryDevice::new(16, 64).unwrap();
+        let session = SessionId([2; 16]);
+        let original: Vec<_> = (0..7).map(|_| hub.reserve(session).unwrap()).collect();
+        assert!(matches!(hub.reserve(session), Err(Error::Busy)));
+        for id in &original {
+            device
+                .submit(IoRequest {
+                    route: CompletionHub::route(*id),
+                    operation: IoOperation::CreateDirectory(format!("route-{}", id.slot).into()),
+                })
+                .unwrap();
+        }
+        hub.release(original[0]).unwrap();
+        hub.release(original[3]).unwrap();
+        let first = hub.reserve(session).unwrap();
+        let second = hub.reserve(session).unwrap();
+        assert!(first.slot > original[6].slot && second.slot > first.slot);
+        assert!(matches!(hub.reserve(session), Err(Error::Busy)));
+        assert_eq!(hub.poll(&device, PollBudget::default()).unwrap(), 7);
+        for id in [first, second] {
+            assert!(hub.take(id).unwrap().is_none());
+            assert_eq!(hub.completion_count(id).unwrap(), 0);
+        }
+        for index in [1, 2, 4, 5, 6] {
+            let id = original[index];
+            assert!(hub.take(id).unwrap().unwrap().result.is_ok());
+            assert_eq!(hub.completion_count(id).unwrap(), 1);
+            hub.release(id).unwrap();
+        }
+        for id in [first, second] {
+            hub.release(id).unwrap();
+        }
+        assert!(hub.release(original[0]).is_err());
+        assert_eq!(hub.state.lock().unwrap().mailboxes.len(), 0);
+    }
     #[test]
     fn after_other_session_polling_the_results_will_remain_in_the_original_mailbox_and_cannot_be_collected_if_the_identity_is_wrong()
      {
