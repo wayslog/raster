@@ -1,0 +1,11 @@
+{
+  "run": "https://github.com/wayslog/raster/actions/runs/34682140751",
+  "commit": "951ba1436f24675eb35a4544f0707e90ac2a3a9d",
+  "artifact": "cpp-parity-951ba14.tar.gz",
+  "sha256": "a6d97ba46ca010bad447cb246e0ca4e0df544c538d3d7f97f2412d4622d17a88",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34682140619",
+  "cases": 18,
+  "rounds": 4,
+  "operations_per_run": 2000000,
+  "status": "All result checks and six native engineering jobs passed; all parity gates failed."
+}
