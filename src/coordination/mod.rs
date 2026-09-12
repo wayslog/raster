@@ -1,11 +1,8 @@
 //! session registration,Dual-version context and top-level action arbitration;and safe recycling epoch separate.
 use crate::types::*;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 mod action;
 use action::ActiveAction;
-#[cfg(test)]
-mod observation_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -61,25 +58,11 @@ struct Registry {
     sessions: BTreeMap<SessionId, Registration>,
     closed: bool,
 }
-// A separate allocation avoids sharing the observed 128-byte host cache line
-// with the registry's frequently modified lock and session state.
-#[repr(align(128))]
-struct Observation {
-    rest_version: AtomicU64,
-    max_sessions: usize,
-}
 pub(crate) struct Coordinator {
     registry: crate::sync::Mutex<Registry>,
-    // Always present after construction. The optional pointer has the same
-    // scalar shape as the former capacity field, without raising engine alignment.
-    observation: Option<Box<Observation>>,
+    max_sessions: usize,
 }
 impl Coordinator {
-    fn observation(&self) -> &Observation {
-        self.observation
-            .as_deref()
-            .expect("coordinator observation is initialized")
-    }
     pub fn active_session_ids(&self) -> Result<Vec<SessionId>, Error> {
         let registry = self
             .registry
@@ -122,10 +105,7 @@ impl Coordinator {
                 sessions: BTreeMap::new(),
                 closed: false,
             }),
-            observation: Some(Box::new(Observation {
-                rest_version: AtomicU64::new(0),
-                max_sessions,
-            })),
+            max_sessions,
         })
     }
     pub fn from_checkpoint(
@@ -140,7 +120,6 @@ impl Coordinator {
             .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         registry.system.version =
             CheckpointVersion(version.0.checked_add(1).ok_or(Error::CapacityExceeded)?);
-        let restored_version = registry.system.version;
         for &(id, serial) in sessions {
             id.validate()?;
             if registry
@@ -158,10 +137,6 @@ impl Coordinator {
                 return Err(Error::InvalidFormat("Resume session duplication"));
             }
         }
-        coordinator
-            .observation()
-            .rest_version
-            .store(restored_version.0, Ordering::SeqCst);
         Ok(coordinator)
     }
     pub fn resume(
@@ -183,7 +158,7 @@ impl Coordinator {
             .values()
             .filter(|entry| entry.active)
             .count()
-            >= self.observation().max_sessions
+            >= self.max_sessions
         {
             return Err(Error::CapacityExceeded);
         }
@@ -283,9 +258,7 @@ impl Coordinator {
         {
             return Err(Error::Busy);
         }
-        if registry.sessions.values().filter(|e| e.active).count()
-            >= self.observation().max_sessions
-        {
+        if registry.sessions.values().filter(|e| e.active).count() >= self.max_sessions {
             return Err(Error::CapacityExceeded);
         }
         if registry

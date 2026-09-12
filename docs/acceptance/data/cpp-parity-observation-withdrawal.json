@@ -1,0 +1,24 @@
+{
+  "scope": "Withdrawal of isolated REST observation and the inline-accessor follow-up",
+  "source_matches_commit": "890c138e1064e233c2b9e2e2480b66df6aeecf28",
+  "restored_runtime_commit": "15353362897f21e20d6be73180a1a44f8a6f8a1d",
+  "withdrawn_candidate_commit": "c1559774f63dfda16d74cdd3702796162f64f940",
+  "checks": {
+    "tests_passed": 477,
+    "tests_failed": 0,
+    "tests_ignored": 0,
+    "format": true,
+    "clippy": true,
+    "examples": true,
+    "rustdoc": true
+  },
+  "binary_sha256": {
+    "parity": "daf6c9c661baba28da39dff1770aec751aecc139260983bab413bd341d8800ee",
+    "parity_scan": "7ba8e77c8653e856f0829c7883815ed8923e74818da4e3c03606c8bca01d0011",
+    "benchmark": "4b221c5e6063b97e81f289651e8353b130dc21f3c003f095376d54e157a4ffa5"
+  },
+  "binaries_identical_to_preserved_baseline": true,
+  "archive": "cpp-parity-observation-withdrawal.tar.gz",
+  "sha256": "c06be88a493dd3b38d95feec4a6f1c12aaaee7335678d43b1700808caba811b3",
+  "full_cpp_parity": "Incomplete. The earlier accepted baseline is restored; failed experiments and native evidence remain available."
+}
