@@ -1,0 +1,47 @@
+{
+  "scope": "Diagnostic cost ceiling only; epoch participation bypass is invalid for general concurrent reclamation and is not a production candidate",
+  "base": "f3d81d7c89198c9a8be1298e29cea93b095cb50d",
+  "source_sha256": "0bde9a13efdb6a1153e0fb505aeedd36c6b5e13f7b88c622453a6edc7050b55e",
+  "binary_sha256": "9ae32590e8d2f21cd631d46ab5e5a1a7980fb5f8792568dfc99f383cf76b97c0",
+  "baseline_binary_sha256": "be5f115fa9b7f275c224c007813ab0ac553c35570d0a76928ead7de299803cae",
+  "comparisons": [
+    {
+      "case": "read/uniform/1",
+      "throughput_ratio": 1.0554091815084183,
+      "p99_ratio": 0.8893333333333333,
+      "passed": false
+    },
+    {
+      "case": "read/uniform/4",
+      "throughput_ratio": 1.2468332136841556,
+      "p99_ratio": 0.7734920285063551,
+      "passed": true
+    },
+    {
+      "case": "rmw/uniform/1",
+      "throughput_ratio": 1.0485844029126783,
+      "p99_ratio": 0.9050343249427918,
+      "passed": false
+    },
+    {
+      "case": "rmw/worker-hot/4",
+      "throughput_ratio": 0.8364354225561899,
+      "p99_ratio": 1.7739588171543583,
+      "passed": false
+    },
+    {
+      "case": "upsert/uniform/1",
+      "throughput_ratio": 1.0798865405198168,
+      "p99_ratio": 0.9370314842578711,
+      "passed": false
+    },
+    {
+      "case": "upsert/worker-hot/4",
+      "throughput_ratio": 0.8615783958722851,
+      "p99_ratio": 2.8152480839048004,
+      "passed": false
+    }
+  ],
+  "archive": "cpp-parity-epoch-cost.tar.gz",
+  "sha256": "f085ea4b5d352f0623deb6f177fc54354c4f1c6b56f4f8d8eb695bb132252b25"
+}
