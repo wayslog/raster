@@ -1,0 +1,15 @@
+{
+  "commit": "c1559774f63dfda16d74cdd3702796162f64f940",
+  "baseline_commit": "890c138e1064e233c2b9e2e2480b66df6aeecf28",
+  "additional_memory_baseline_commit": "59def1aae2748efbac7854b3dfae6bfa0ce2e025",
+  "additional_scan_baseline_commit": "f19daa79a8f352ac69f2c55b12653ef670c6bb7f",
+  "run": "https://github.com/wayslog/raster/actions/runs/34700318026",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34700320015",
+  "archive": "cpp-parity-c155977.tar.gz",
+  "sha256": "f47823015008a250f228c935e687920f48efaa4749c4bae0a204147dd3c20f20",
+  "correctness": "All native integer and scan comparisons passed independent output checks.",
+  "cpp_parity": "0 of 18 passed; incomplete.",
+  "rust_regression": "13 of 18 memory cases and one of two scan cases passed against the immediate baseline; all 18 memory and both scan cases passed against the older baselines.",
+  "decision": "Not accepted as a regression-free optimization. Preserve the local and native failures and investigate before retaining or withdrawing the candidate. Older-baseline gains do not close immediate-baseline failures.",
+  "ci": "All six native Linux/macOS feature jobs passed."
+}
