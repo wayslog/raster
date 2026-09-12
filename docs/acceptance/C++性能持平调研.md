@@ -133,7 +133,7 @@ Session 在四操作和 poll 的整个调用期间均拥有 Engine；Upsert、RM
 
 本地全特性单元、集成及 doctest 共 452 项通过，0 失败、0 忽略；全目标全特性 Clippy 通过。
 
-### 第五处候选：REST 版本观察
+### 已撤回的第五处候选：REST 版本观察
 
 协调器在未执行维护动作时用原子值发布 REST 版本；动作启动在更改状态前使该值失效，只有正常结束才重新发布。Session 版本与此值一致时，observe_session 可省去一次全局登记锁读取。登记锁中毒及 u64::MAX 版本始终回退到原观察路径。所有原子访问使用 SeqCst，缓存不与频繁修改的登记锁共享缓存行。
 
@@ -142,3 +142,9 @@ Session 在四操作和 poll 的整个调用期间均拥有 Engine；Upsert、RM
 本地相对 `1f86894` 的四轮交替测量，单线程 Upsert 为 1.031 / 1.000、四线程独立热点 RMW 为 0.892 / 1.131、四线程共享热点 Upsert 为 1.141 / 0.981。格式为吞吐比 / P99 比。RMW 有回退，不能宣称该候选通过验收；需要原生 Linux 同机对照决定后续处理。详见 [原始逐轮数据和哈希](data/cpp-parity-rest-local.json)。
 
 本地全特性单元、集成及 doctest 共 454 项通过，0 失败、0 忽略；全目标全特性 Clippy 通过。
+
+`33c98d4` 的 [Linux 同机对照](https://github.com/wayslog/raster/actions/runs/34686000572) 与 `1f86894` 比较，有 7/18 组未通过自身回归门槛：单线程 Upsert 吞吐比为 0.964–0.974；四线程 Read 的均匀/独立热点 P99 比为 1.235/1.210，四线程 Upsert 的均匀/独立热点为 1.155/1.551。业务结果全部正确，[六组工程 CI](https://github.com/wayslog/raster/actions/runs/34686000955) 全部通过，C++ 持平门槛仍全部失败。该优化撤回，恢复原有状态观察；源码保留在实验提交中，不将单场景收益作为保留依据。原始结果见 [归档](data/cpp-parity-33c98d4.tar.gz) 和 [清单](data/cpp-parity-33c98d4.json)。
+
+### 编译配置的独立实验
+
+在 `33c98d4` 相同源码上，以 `CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` 独立构建，与默认 release 二进制进行四轮交替对照。单线程 Upsert 吞吐比 / P99 比为 1.051 / 0.945，四线程独立热点 RMW 为 1.217 / 0.911，四线程共享热点 Upsert 为 1.030 / 1.099。三组结果及局部回归门槛通过，详见 [逐轮结果](data/cpp-parity-lto-local.json)。这仍是 macOS 编译实验，尚未改动 Cargo 配置，不能用来推断 Linux 收益或替代存储路径优化。
