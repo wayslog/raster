@@ -1,0 +1,1266 @@
+{
+  "scope": "macOS ARM64 diagnostics; Epoch-slot and bounded-admission experiments kept separate",
+  "baseline_commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+  "combined_candidate_source_sha256": {
+    "src/epoch/mod.rs": "67e0d50821b302a148168d3bd085e9f4bf3651d94d7aa618e5ae9cceae766a59",
+    "src/api/session.rs": "6a43a4a9bee64fc58d0b6c38c3ffc91d74465b3fe28422451aa4725314c592e7",
+    "src/engine/operation_gate.rs": "f9e43c53dd432de3b195b879d5a074209c27d83909ee06fface2f162d3f3427c",
+    "src/engine/mod.rs": "f74d9b0c8a18ac13233c3b9abdec59ad85b382c43e10238b52324e9f93d0c3cc",
+    "src/engine/read.rs": "53b135fde686836c68afc7cedfa6e68798e0d712fe052e9ccd784fea7e7659d1",
+    "src/engine/upsert.rs": "caaaa9f4b1959c95b3a4b6fe5c0ed6be2a921cac55ea52020f7725e9b5c51125",
+    "src/engine/rmw.rs": "5f511f31afb18ff2bfc97eb73788d0a1be7ca8b4fe5f0665828d5dc047479470",
+    "src/engine/delete.rs": "e38d2aaf69f07eb763be17a7e7353fa94e8428aacf0b21d009237e598e1a3b2f"
+  },
+  "experiments": {
+    "epoch-slots": {
+      "baseline": "329d4d4",
+      "cases": {
+        "upsert": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789206955.4801679,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "f523c55cc79bb8a193d2aa994ad244884670a60ab8f808d88227a72ec3874a9d",
+              "rust": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "upsert/uniform/1",
+              "throughput_ratio": 1.014282121701214,
+              "p99_ratio": 0.9484412470023981,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 506851875,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 521098125,
+                    "p99_ns": 417,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 515923458,
+                    "p99_ns": 417,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 512257541,
+                    "p99_ns": 417,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 510071000,
+                    "p99_ns": 416,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 503632167,
+                    "p99_ns": 416,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 510857417,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 495027041,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "rmw-four": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789206961.864104,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "f523c55cc79bb8a193d2aa994ad244884670a60ab8f808d88227a72ec3874a9d",
+              "rust": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "rmw/worker-hot/4",
+              "throughput_ratio": 1.1415452178317729,
+              "p99_ratio": 0.7226349558589416,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1250248417,
+                    "p99_ns": 20625,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1211977584,
+                    "p99_ns": 27250,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1075143125,
+                    "p99_ns": 20833,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 907076125,
+                    "p99_ns": 13584,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1163089083,
+                    "p99_ns": 21084,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 994612000,
+                    "p99_ns": 13917,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 881874166,
+                    "p99_ns": 14792,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1008918542,
+                    "p99_ns": 15167,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "upsert-shared": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789206973.1255271,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "f523c55cc79bb8a193d2aa994ad244884670a60ab8f808d88227a72ec3874a9d",
+              "rust": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "upsert/shared-hot/4",
+              "throughput_ratio": 0.9198680256057176,
+              "p99_ratio": 1.381651400789707,
+              "passed": false,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1457705916,
+                    "p99_ns": 38791,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1561571,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1088666750,
+                    "p99_ns": 40875,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1092623,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1440143500,
+                    "p99_ns": 35667,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1671847,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1434195792,
+                    "p99_ns": 34667,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1716961,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1554716750,
+                    "p99_ns": 46792,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 2188604,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1542678542,
+                    "p99_ns": 51917,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 2025821,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1606549333,
+                    "p99_ns": 51208,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 2207803,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1570013333,
+                    "p99_ns": 51667,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 2073469,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "read-four": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789206987.947446,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "f523c55cc79bb8a193d2aa994ad244884670a60ab8f808d88227a72ec3874a9d",
+              "rust": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "read/uniform/4",
+              "throughput_ratio": 1.1107814566567902,
+              "p99_ratio": 0.7649175703934251,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1306627708,
+                    "p99_ns": 23542,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 248231,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1320112458,
+                    "p99_ns": 20167,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 202626,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1345577541,
+                    "p99_ns": 20959,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 205508,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1295235167,
+                    "p99_ns": 19791,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 202102,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1220300250,
+                    "p99_ns": 17375,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 247089,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1165960625,
+                    "p99_ns": 15500,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 246037,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 944118583,
+                    "p99_ns": 12750,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 389751,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "uniform",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1198807125,
+                    "p99_ns": 15958,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 251482,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "operation-gate": {
+      "baseline": "Preserved Epoch-slot candidate binary; see binary_sha256 in environment",
+      "cases": {
+        "upsert-shared": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789207288.546839,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502",
+              "rust": "6c1878049c0fcfe926076e633e5ed619c5ed060ad04e2fbc764052a40b3ceaa2"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "upsert/shared-hot/4",
+              "throughput_ratio": 1.2022115650636704,
+              "p99_ratio": 0.2869584295171414,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1544508834,
+                    "p99_ns": 55792,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1894144,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1502408250,
+                    "p99_ns": 49042,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 2041076,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1528513375,
+                    "p99_ns": 63209,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1689911,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1475554792,
+                    "p99_ns": 47417,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 1980407,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1276942333,
+                    "p99_ns": 15250,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 3089880,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1264824500,
+                    "p99_ns": 18625,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 2867998,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1256297167,
+                    "p99_ns": 14833,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 3091741,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1169845333,
+                    "p99_ns": 10750,
+                    "samples": 31252,
+                    "checksum": 84000000,
+                    "digest": 3335599334192373512,
+                    "verified_keys": 1024,
+                    "retries": 3032688,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "read-shared": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789207303.6267881,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502",
+              "rust": "6c1878049c0fcfe926076e633e5ed619c5ed060ad04e2fbc764052a40b3ceaa2"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "read/shared-hot/4",
+              "throughput_ratio": 1.0270330050435663,
+              "p99_ratio": 0.5957993722309054,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1649327958,
+                    "p99_ns": 50333,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 2220496,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1155191916,
+                    "p99_ns": 13208,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 11612317,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1374942625,
+                    "p99_ns": 28500,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 9487829,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1663518875,
+                    "p99_ns": 48917,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 2333114,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1554265833,
+                    "p99_ns": 30667,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 2634659,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1422298750,
+                    "p99_ns": 21125,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 3105487,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1522368625,
+                    "p99_ns": 25000,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 2872399,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "read",
+                    "distribution": "shared-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1413380417,
+                    "p99_ns": 17042,
+                    "samples": 31252,
+                    "checksum": 14000000,
+                    "digest": 11881612521032259365,
+                    "verified_keys": 1024,
+                    "retries": 3001115,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "upsert": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789207318.910917,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502",
+              "rust": "6c1878049c0fcfe926076e633e5ed619c5ed060ad04e2fbc764052a40b3ceaa2"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "upsert/uniform/1",
+              "throughput_ratio": 1.0144259110904639,
+              "p99_ratio": 0.9481668773704172,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 494101917,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 504090292,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 516719375,
+                    "p99_ns": 417,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 504256333,
+                    "p99_ns": 416,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 490483375,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 503523791,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 490259542,
+                    "p99_ns": 375,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "upsert",
+                    "distribution": "uniform",
+                    "threads": 1,
+                    "count": 2000000,
+                    "elapsed_ns": 508397750,
+                    "p99_ns": 416,
+                    "samples": 31250,
+                    "checksum": 84000000,
+                    "digest": 6052792147875683109,
+                    "verified_keys": 256,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "rmw-four": {
+          "environment": {
+            "protocol": 1,
+            "created_unix": 1789207324.319215,
+            "platform": "macOS-26.5.2-arm64-arm-64bit",
+            "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+            "dirty": true,
+            "cpu_count": 10,
+            "cpu_affinity": null,
+            "binary_sha256": {
+              "baseline": "023241b123400c8a6b42b361c51d9454c6dad56ac094d0f4561ad3b976d27502",
+              "rust": "6c1878049c0fcfe926076e633e5ed619c5ed060ad04e2fbc764052a40b3ceaa2"
+            },
+            "count": 2000000,
+            "rounds": 4,
+            "sample_stride": 64,
+            "reference": "baseline",
+            "min_throughput_ratio": 0.98,
+            "max_p99_ratio": 1.1
+          },
+          "comparison": [
+            {
+              "case": "rmw/worker-hot/4",
+              "throughput_ratio": 1.175972453387476,
+              "p99_ratio": 0.9502403166525304,
+              "passed": true,
+              "rows": {
+                "baseline": [
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1014894208,
+                    "p99_ns": 15958,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1022729334,
+                    "p99_ns": 15875,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1003484583,
+                    "p99_ns": 14458,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1091401083,
+                    "p99_ns": 16917,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ],
+                "rust": [
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 794929750,
+                    "p99_ns": 10709,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 1110082291,
+                    "p99_ns": 21208,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 937783917,
+                    "p99_ns": 19291,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  },
+                  {
+                    "engine": "rust",
+                    "operation": "rmw",
+                    "distribution": "worker-hot",
+                    "threads": 4,
+                    "count": 2000000,
+                    "elapsed_ns": 778133375,
+                    "p99_ns": 10958,
+                    "samples": 31252,
+                    "checksum": 500015000000,
+                    "digest": 10829553030840701733,
+                    "verified_keys": 1024,
+                    "retries": 0,
+                    "pending": 0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

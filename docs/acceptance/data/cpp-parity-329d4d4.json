@@ -1,0 +1,12 @@
+{
+  "run": "https://github.com/wayslog/raster/actions/runs/34686593383",
+  "commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+  "baseline_commit": "1f86894a99c569687be406503130a13d5814d166",
+  "artifact": "cpp-parity-329d4d4.tar.gz",
+  "sha256": "51ab0cfc1389fda318c490020cc939334a412d25be75ac7bbf76f7318f45428f",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34686594000",
+  "cases_per_comparison": 18,
+  "rounds": 4,
+  "operations_per_run": 2000000,
+  "status": "All result checks and six native engineering jobs passed; all C++ parity gates failed. Inline-key candidate passed 16 of 18 Rust regression gates, with two single-thread hot Upsert throughput regressions; acceptance remains incomplete."
+}

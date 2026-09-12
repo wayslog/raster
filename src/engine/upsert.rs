@@ -247,7 +247,9 @@ impl<S: Schema> Engine<S> {
             Ok(value) => value,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let _gate = match self.operations[hash.0 as usize % self.operations.len()].try_lock() {
+        let _gate = match super::operation_gate::try_lock(
+            &self.operations[hash.0 as usize % self.operations.len()],
+        ) {
             Ok(guard) => guard,
             Err(_) => {
                 return Err(Rejected {
