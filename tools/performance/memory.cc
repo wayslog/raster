@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     require(store.Upsert(context, callback, key) == Status::Ok);
   }
   store.StopSession();
-  struct Result { uint64_t elapsed = 0, checksum = 0; std::vector<uint64_t> samples; };
+  struct alignas(64) Result { uint64_t elapsed = 0, checksum = 0; std::vector<uint64_t> samples; };
   std::vector<Result> results(threads);
   std::vector<std::thread> workers;
   std::atomic<size_t> enrolled{0};
@@ -82,6 +82,7 @@ int main(int argc, char** argv) {
     workers.emplace_back([&, worker]() {
       store.StartSession();
       auto& result = results[worker];
+      uint64_t checksum = 0;
       result.samples.reserve(count / threads / stride + 1);
       enrolled.fetch_add(1);
       while (enrolled.load() != threads) std::this_thread::yield();
@@ -96,10 +97,11 @@ int main(int argc, char** argv) {
         else status = store.Rmw(context, callback, i);
         require(status == Status::Ok);
         if (sampled) result.samples.push_back(nanoseconds(Clock::now() - clock));
-        result.checksum += context.output;
+        checksum += context.output;
         if ((i & 255) == 255) store.Refresh();
       }
       result.elapsed = nanoseconds(Clock::now() - started);
+      result.checksum = checksum;
       store.StopSession();
     });
   }
