@@ -1,0 +1,13 @@
+{
+  "commit": "ee42a375be63a660ea193f03ea3f76afa3c5ea46",
+  "baseline_commit": "31ae0c86368b03cbd216d6b4eed658c2e9dcfd0e",
+  "run": "https://github.com/wayslog/raster/actions/runs/34690497519",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34690498965",
+  "archive": "cpp-parity-ee42a37.tar.gz",
+  "sha256": "9b630fef25ad28182f2a8a33fda9af35cb145bf231f6eb5d6e6f3d81fa302016",
+  "correctness": "All 18 integer cases and both resident append/scan cases passed independent output checks.",
+  "cpp_parity": "0 of 18 passed; incomplete.",
+  "rust_regression": "12 of 18 integer cases passed; both append/scan cases passed.",
+  "decision": "Withdraw the resident directory implementation because six integer cases regressed. Preserve the scan driver and evidence.",
+  "ci": "All six native Linux/macOS feature jobs passed."
+}
