@@ -150,11 +150,11 @@ impl<S: Schema> Engine<S> {
     fn record_ready<T: 'static>(
         &self,
         monitor: &mut metrics::Monitor,
-        id: RequestId,
+        id: Option<RequestId>,
         result: &crate::api::completion::OperationResult<T>,
     ) {
         let io = if monitor.sampled() {
-            self.io.completion_count(id).ok()
+            id.map_or(Some(0), |id| self.io.completion_count(id).ok())
         } else {
             Some(0)
         };
@@ -163,13 +163,13 @@ impl<S: Schema> Engine<S> {
     fn complete_tracked<T: 'static>(
         &self,
         monitor: &mut metrics::Monitor,
-        id: RequestId,
+        id: Option<RequestId>,
         complete: &crate::api::completion::Completer<T>,
         result: crate::api::completion::OperationResult<T>,
     ) {
         let summary = metrics::Completed::result(&result);
         let io = if monitor.sampled() {
-            self.io.completion_count(id).ok()
+            id.map_or(Some(0), |id| self.io.completion_count(id).ok())
         } else {
             Some(0)
         };

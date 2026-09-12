@@ -28,6 +28,8 @@ pub(crate) struct LogLookup {
     ended: bool,
     matched: Option<LogAddress>,
     needs_value: bool,
+    io_enabled: bool,
+    awaiting_route: bool,
 }
 impl<V: ValueLayout> HybridLog<V> {
     pub fn lookup_metadata(
@@ -63,10 +65,31 @@ impl<V: ValueLayout> HybridLog<V> {
             ended: false,
             matched: None,
             needs_value: true,
+            io_enabled: true,
+            awaiting_route: false,
         })
+    }
+    pub fn lookup_deferred(
+        &self,
+        storage: &SegmentedStorage,
+        key: impl Into<EncodedKey>,
+        head: Option<LogAddress>,
+        route: CompletionRoute,
+    ) -> Result<LogLookup, Error> {
+        let mut lookup = self.lookup(storage, key, head, route)?;
+        lookup.io_enabled = false;
+        Ok(lookup)
     }
 }
 impl LogLookup {
+    pub fn awaiting_route(&self) -> bool {
+        self.awaiting_route
+    }
+    /// Called only after the owning operation has registered its completion route.
+    pub fn enable_io(&mut self) {
+        self.io_enabled = true;
+        self.awaiting_route = false;
+    }
     pub fn has_inflight(&self) -> bool {
         self.reading
             .as_ref()
@@ -249,6 +272,10 @@ impl LogLookup {
                     }
                     self.next = record.header.previous;
                 } else {
+                    if !self.io_enabled {
+                        self.awaiting_route = true;
+                        return Ok(LookupStep::Continue);
+                    }
                     self.cached = None;
                     let mut reading = PageRead::new(page, log.page_bytes, self.route)?;
                     let submitted = reading.submit_next(storage);

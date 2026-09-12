@@ -3,15 +3,36 @@ use crate::{
     device::{CompletionRoute, Device, IoCompletion},
     types::*,
 };
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+};
 struct Mailbox {
     id: RequestId,
     completion: Option<IoCompletion>,
     completions: u64,
 }
 struct State {
-    next: u64,
     mailboxes: Mailboxes,
+}
+/// A capacity credit and unique identity, owned by one operation task.
+/// The engine must register it before exposing a pending ticket or submitting I/O.
+#[must_use = "Operation routes must be released by their owning task"]
+pub(crate) struct OperationRoute {
+    id: RequestId,
+    registered: bool,
+    released: bool,
+}
+impl OperationRoute {
+    pub fn id(&self) -> RequestId {
+        self.id
+    }
+    pub fn registered_id(&self) -> Option<RequestId> {
+        self.registered.then_some(self.id)
+    }
 }
 /// Reuse a few slots for synchronous requests without moving tree leaf payloads.
 /// Overflow retains exact routing and is bounded by the hub's existing capacity.
@@ -28,6 +49,7 @@ impl Mailboxes {
             len: 0,
         }
     }
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.len
     }
@@ -74,6 +96,8 @@ impl Mailboxes {
 pub(crate) struct CompletionHub {
     store: StoreId,
     capacity: usize,
+    occupied: AtomicUsize,
+    next: AtomicU64,
     state: Mutex<State>,
     polling: Mutex<()>,
 }
@@ -86,29 +110,72 @@ impl CompletionHub {
         Ok(Self {
             store,
             capacity,
+            occupied: AtomicUsize::new(0),
+            next: AtomicU64::new(0),
             state: Mutex::new(State {
-                next: 0,
                 mailboxes: Mailboxes::new(),
             }),
             polling: Mutex::new(()),
         })
     }
     pub fn reserve(&self, session: SessionId) -> Result<RequestId, Error> {
+        let mut route = self.reserve_operation(session)?;
+        if let Err(error) = self.activate_operation(&mut route) {
+            self.release_operation(&mut route)?;
+            return Err(error);
+        }
+        Ok(route.id)
+    }
+    pub fn reserve_operation(&self, session: SessionId) -> Result<OperationRoute, Error> {
         session.validate()?;
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("completion_mailbox_lock_poisoned"));
+        }
+        self.occupied
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                (count < self.capacity).then(|| count + 1)
+            })
+            .map_err(|_| Error::Busy)?;
+        let slot = match self
+            .next
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |next| {
+                next.checked_add(1)
+            }) {
+            Ok(slot) => slot,
+            Err(_) => {
+                self.occupied.fetch_sub(1, Ordering::Release);
+                return Err(Error::CapacityExceeded);
+            }
+        };
+        let id = RequestId {
+            store: self.store,
+            session,
+            slot,
+            generation: Generation(0),
+        };
+        Ok(OperationRoute {
+            id,
+            registered: false,
+            released: false,
+        })
+    }
+    pub fn activate_operation(&self, route: &mut OperationRoute) -> Result<(), Error> {
+        if route.id.store != self.store || route.released {
+            return Err(Error::InvalidState(
+                "operation route ownership does not match",
+            ));
+        }
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("completion_mailbox_lock_poisoned"));
+        }
+        if route.registered {
+            return Ok(());
+        }
         let mut state = self
             .state
             .lock()
             .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
-        if state.mailboxes.len() >= self.capacity {
-            return Err(Error::Busy);
-        }
-        let next = state.next.checked_add(1).ok_or(Error::CapacityExceeded)?;
-        let id = RequestId {
-            store: self.store,
-            session,
-            slot: state.next,
-            generation: Generation(0),
-        };
+        let id = route.id;
         state.mailboxes.insert(
             id.slot,
             Mailbox {
@@ -117,8 +184,24 @@ impl CompletionHub {
                 completions: 0,
             },
         );
-        state.next = next;
-        Ok(id)
+        route.registered = true;
+        Ok(())
+    }
+    pub fn release_operation(&self, route: &mut OperationRoute) -> Result<(), Error> {
+        if route.id.store != self.store || route.released {
+            return Err(Error::InvalidState(
+                "operation route ownership does not match",
+            ));
+        }
+        if route.registered {
+            self.release(route.id)?;
+        } else {
+            // No mailbox or I/O buffer exists; this credit can also be returned
+            // during failed shutdown without entering a poisoned mailbox table.
+            self.occupied.fetch_sub(1, Ordering::Release);
+        }
+        route.released = true;
+        Ok(())
     }
     /// Route numbers are assigned monotonically within the engine to which the device belongs.,Do not reuse slot numbers,Reject when exhausted.
     pub fn route(id: RequestId) -> CompletionRoute {
@@ -168,6 +251,7 @@ impl CompletionHub {
             ));
         }
         state.mailboxes.remove(&id.slot);
+        self.occupied.fetch_sub(1, Ordering::Release);
         Ok(())
     }
     /// Only if the device has shutdown,Called after all publishing threads have exited;The final state only discards possession completion,No more delivering tasks.
@@ -223,7 +307,7 @@ impl CompletionHub {
                 } else {
                     mailbox.completion = Some(completion);
                 }
-            } else if completion.route.0 >= state.next {
+            } else if completion.route.0 >= self.next.load(Ordering::Acquire) {
                 error.get_or_insert(Error::InvalidState(
                     "Device returns unassigned completion route",
                 ));
@@ -238,130 +322,4 @@ impl CompletionHub {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::device::{IoOperation, IoRequest, memory::MemoryDevice};
-    #[test]
-    fn released_inline_routes_cannot_consume_late_completions_or_displace_overflow() {
-        let hub = CompletionHub::new(StoreId([1; 16]), 7).unwrap();
-        let device = MemoryDevice::new(16, 64).unwrap();
-        let session = SessionId([2; 16]);
-        let original: Vec<_> = (0..7).map(|_| hub.reserve(session).unwrap()).collect();
-        assert!(matches!(hub.reserve(session), Err(Error::Busy)));
-        for id in &original {
-            device
-                .submit(IoRequest {
-                    route: CompletionHub::route(*id),
-                    operation: IoOperation::CreateDirectory(format!("route-{}", id.slot).into()),
-                })
-                .unwrap();
-        }
-        hub.release(original[0]).unwrap();
-        hub.release(original[3]).unwrap();
-        let first = hub.reserve(session).unwrap();
-        let second = hub.reserve(session).unwrap();
-        assert!(first.slot > original[6].slot && second.slot > first.slot);
-        assert!(matches!(hub.reserve(session), Err(Error::Busy)));
-        assert_eq!(hub.poll(&device, PollBudget::default()).unwrap(), 7);
-        for id in [first, second] {
-            assert!(hub.take(id).unwrap().is_none());
-            assert_eq!(hub.completion_count(id).unwrap(), 0);
-        }
-        for index in [1, 2, 4, 5, 6] {
-            let id = original[index];
-            assert!(hub.take(id).unwrap().unwrap().result.is_ok());
-            assert_eq!(hub.completion_count(id).unwrap(), 1);
-            hub.release(id).unwrap();
-        }
-        for id in [first, second] {
-            hub.release(id).unwrap();
-        }
-        assert!(hub.release(original[0]).is_err());
-        assert_eq!(hub.state.lock().unwrap().mailboxes.len(), 0);
-    }
-    #[test]
-    fn after_other_session_polling_the_results_will_remain_in_the_original_mailbox_and_cannot_be_collected_if_the_identity_is_wrong()
-     {
-        let hub = CompletionHub::new(StoreId([1; 16]), 2).unwrap();
-        let device = MemoryDevice::new(4, 64).unwrap();
-        let first = hub.reserve(SessionId([1; 16])).unwrap();
-        let second = hub.reserve(SessionId([2; 16])).unwrap();
-        assert!(matches!(hub.reserve(SessionId([3; 16])), Err(Error::Busy)));
-        for id in [first, second] {
-            device
-                .submit(IoRequest {
-                    route: CompletionHub::route(id),
-                    operation: IoOperation::CreateDirectory(format!("directory{}", id.slot).into()),
-                })
-                .unwrap();
-        }
-        assert_eq!(hub.poll(&device, PollBudget::default()).unwrap(), 2);
-        let mut wrong = first;
-        wrong.session = second.session;
-        assert!(hub.take(wrong).is_err());
-        assert!(hub.release(wrong).is_err());
-        assert!(hub.take(second).unwrap().unwrap().result.is_ok());
-        assert!(hub.take(first).unwrap().unwrap().result.is_ok());
-        assert!(hub.take(first).unwrap().is_none());
-        hub.release(first).unwrap();
-        let next = hub.reserve(first.session).unwrap();
-        assert!(next.slot > second.slot);
-    }
-    #[test]
-    fn late_completion_after_logging_out_only_recycles_the_buffer_and_does_not_accidentally_throw_new_requests()
-     {
-        let hub = CompletionHub::new(StoreId([1; 16]), 1).unwrap();
-        let device = MemoryDevice::new(4, 64).unwrap();
-        let old = hub.reserve(SessionId([1; 16])).unwrap();
-        device
-            .submit(IoRequest {
-                route: CompletionHub::route(old),
-                operation: IoOperation::Read {
-                    file: crate::device::FileId {
-                        slot: 999,
-                        generation: Generation(0),
-                    },
-                    offset: 0,
-                    buffer: crate::device::AlignedBuffer::new_zeroed(8, 8).unwrap(),
-                },
-            })
-            .unwrap();
-        hub.release(old).unwrap();
-        let new = hub.reserve(old.session).unwrap();
-        hub.poll(&device, PollBudget::default()).unwrap();
-        assert!(hub.take(new).unwrap().is_none());
-    }
-    #[test]
-    fn repeated_uncollected_completion_and_unknown_routing_errors_are_reported_but_other_mailboxes_are_not_covered_or_lost()
-     {
-        let hub = CompletionHub::new(StoreId([1; 16]), 4).unwrap();
-        let device = MemoryDevice::new(4, 64).unwrap();
-        let first = hub.reserve(SessionId([1; 16])).unwrap();
-        let second = hub.reserve(SessionId([2; 16])).unwrap();
-        let submit = |route, name: &str| {
-            device
-                .submit(IoRequest {
-                    route,
-                    operation: IoOperation::CreateDirectory(name.into()),
-                })
-                .unwrap()
-        };
-        let first_io = submit(CompletionHub::route(first), "first time");
-        submit(CompletionHub::route(first), "Repeat");
-        let second_io = submit(CompletionHub::route(second), "another session");
-        assert!(matches!(
-            hub.poll(&device, PollBudget::default()),
-            Err(Error::InvalidState(_))
-        ));
-        assert_eq!(hub.take(first).unwrap().unwrap().id, first_io);
-        assert!(hub.take(first).unwrap().is_none());
-        assert_eq!(hub.take(second).unwrap().unwrap().id, second_io);
-        submit(CompletionRoute(999), "unknown route");
-        assert!(matches!(
-            hub.poll(&device, PollBudget::default()),
-            Err(Error::InvalidState(_))
-        ));
-        assert!(hub.take(first).unwrap().is_none());
-        assert!(hub.take(second).unwrap().is_none());
-    }
-}
+mod tests;
