@@ -1,0 +1,19 @@
+{
+  "base": "b2e4a47724488f5ba8b124d9b7ea5d32d31b4509",
+  "source_sha256": {
+    "src/log/mod.rs": "052be6e7b92893038edf24542df6ce84456a2894298f921a928fbab783f91eb1",
+    "src/log/evict.rs": "e755e8b9fc992d91d9d5c97629a244cccd3f45cb19176ce1e8449fd8ab2ef573",
+    "src/log/scan.rs": "2c93dfa9212ec94051c3938eaffeffed5ec4d1a2ab7d7ae3a253b73009140c22",
+    "src/log/page.rs": "38c015350ea31d205127d7499ab8502c8f68e564bc07f953f3b1e1ffffa9e0d0",
+    "src/log/lease_tests.rs": "944d4dd9bbfa7fb62e3416ffb2f5f7f4a78775079860d7a04a928d9b28217b33"
+  },
+  "binary_sha256": {
+    "parity": "0d205833f46a3a202e4ca53b3bfd3ee28f8b1dea748b1cc6a14ca11e53961db3",
+    "parity_scan": "1ab8ad424c22122eae6135c012a0a80ab7659cbc6a33ff1beaed78ce23e7af01"
+  },
+  "scope": "Withdrawn macOS shared record-directory lock experiment; no native acceptance",
+  "archive": "cpp-parity-shared-record-metadata.tar.gz",
+  "sha256": "7884e5a8b8a08f8caca396b6797eff5da32374cb9e70ee73a4af01dd3f266aca",
+  "memory_passed": 10,
+  "scan_passed": 1
+}
