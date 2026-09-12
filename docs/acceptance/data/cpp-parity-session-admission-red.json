@@ -1,0 +1,20 @@
+{
+  "scope": "Characterization fixture for complete resident Session read and upsert through observation and admission",
+  "base_commit": "3001190dee86a9fac3ebc760e32f57f2635dc15c",
+  "runtime_commit": "15353362897f21e20d6be73180a1a44f8a6f8a1d",
+  "command": "cargo test --locked --all-features --lib coordination::admission_tests::resident_operations_do_not_wait_for_unchanged_registration_metadata -- --nocapture",
+  "result": "Expected characterization failure: timeout while unchanged coordinator registration metadata is held. After releasing the stall, both public operations and accepted serial verification complete correctly.",
+  "limits": "The deliberate lock stall isolates a shared critical section; its two-second timeout is not a normal latency sample or a C++ parity result.",
+  "fixture_state": "Archived for the next per-session metadata experiment; not enabled in the restored production checkout.",
+  "files_sha256": {
+    "src/coordination/admission_tests.rs": "f24015b7f87cb67f646ab90a144c0b57bf6fe4684f22e5ed654d912e3618c70d",
+    "test-registration.patch": "b7903d59f345cb43ea195da23aeac93da3beb32129e4a429fc1f022fec54a1d3",
+    "verified-red.log": "02eb0eb1de6014577251b6183425c6c052911e2c4126dcfa95ddb656f99b5d4a",
+    "initial-red.log": "3788f4a1630665e508aa9d707d336f7b320e85b572d9c69ca3c91e38a20cb0ee",
+    "initial-fixture.rs": "fa85dc04660a6ef72f3025ba8661b1cce634d3c200e8f7eeb6664100b04242d2"
+  },
+  "archive": "cpp-parity-session-admission-red.tar.gz",
+  "sha256": "83ccce36ba4c135ca9ae90ebe23d1a2423968aa5f9b92c0ff6864cfb2c2c6e41",
+  "characterization_runs": 2,
+  "fixture_refinement": "The second run explicitly collects and verifies the late operation result and accepted serial after releasing the lock, before reaching the expected timeout assertion. The initial fixture and failure remain archived."
+}
