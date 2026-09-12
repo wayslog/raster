@@ -114,7 +114,7 @@ fn main() -> Result<()> {
     let config = raster::config::Config {
         log: raster::config::LogConfig {
             memory_pages: 8,
-            ..Default::default()
+            ..raster::config::Config::default().log
         },
         ..Default::default()
     };
