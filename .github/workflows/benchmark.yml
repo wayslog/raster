@@ -11,6 +11,10 @@ on:
         description: Optional direct benchmark filter (operation/distribution/threads)
         type: string
         default: ''
+      baseline_ref:
+        description: Optional full Rust commit SHA for a paired regression comparison
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -99,7 +103,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends g++ libaio-dev libtbb-dev uuid-dev
       - name: Build optimized engines and record environment
+        id: build
         shell: bash
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
         run: |
           mkdir -p target/parity-evidence
           {
@@ -114,6 +121,14 @@ jobs:
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           cargo build --locked --release --example parity
           sh tools/performance/build.sh target/upstream-source target/parity-build
+          if [ -n "$BASELINE_REF" ]; then
+            [[ "$BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$BASELINE_REF"
+            git worktree add --detach target/parity-baseline "$BASELINE_REF"
+            cargo build --manifest-path target/parity-baseline/Cargo.toml \
+              --target-dir target/parity-baseline-build --locked --release --example parity
+            echo "rust_baseline:$BASELINE_REF" >> target/parity-evidence/environment.txt
+          fi
       - name: Compare alternating native engine samples
         shell: bash
         env:
@@ -123,6 +138,17 @@ jobs:
           python3 -u tools/performance/compare.py --rust target/release/examples/parity \
             --cpp target/parity-build/faster-memory --output target/parity-evidence/memory \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/checks.txt
+      - name: Compare the preserved Rust baseline on the same runner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        shell: bash
+        env:
+          CASE_FILTER: ${{ inputs.case }}
+        run: |
+          set -o pipefail
+          python3 -u tools/performance/compare.py --rust target/release/examples/parity \
+            --baseline-rust target/parity-baseline-build/release/examples/parity \
+            --output target/parity-evidence/rust-baseline --min-throughput 0.98 --max-p99 1.10 \
+            --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-checks.txt
       - name: Preserve results even when parity fails
         if: always()
         uses: actions/upload-artifact@v4
