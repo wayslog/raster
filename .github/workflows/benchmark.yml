@@ -115,9 +115,11 @@ jobs:
           cargo build --locked --release --example parity
           sh tools/performance/build.sh target/upstream-source target/parity-build
       - name: Compare alternating native engine samples
+        shell: bash
         env:
           CASE_FILTER: ${{ inputs.case }}
         run: |
+          set -o pipefail
           python3 -u tools/performance/compare.py --rust target/release/examples/parity \
             --cpp target/parity-build/faster-memory --output target/parity-evidence/memory \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/checks.txt

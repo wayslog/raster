@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
   require(operation == "read" || operation == "upsert" || operation == "rmw");
   require(distribution == "uniform" || distribution == "worker-hot" || distribution == "shared-hot");
   require((threads == 1 || threads == 4) && count && count % threads == 0 && stride && !(stride & (stride - 1)));
-  Store store{1024, 128ULL << 20, "", 0.9};
+  Store store{1024, 256ULL << 20, "", 0.9};
   store.StartSession();
   for (size_t key = 0; key < threads * 256; ++key) {
     Request context{key, 7};

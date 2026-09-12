@@ -111,7 +111,15 @@ fn main() -> Result<()> {
     {
         return Err("invalid benchmark arguments".into());
     }
+    let config = raster::config::Config {
+        log: raster::config::LogConfig {
+            memory_pages: 8,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
         .device(Box::new(raster::device::null::NullDeviceFactory))
         .create()?;
     let mut setup = store.start_session(SessionOptions::default())?;
