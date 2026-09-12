@@ -57,6 +57,7 @@ impl<S: Schema> Session<S> {
         let engine = &self.engine;
         let _guard = match self
             .participant
+            .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
@@ -73,6 +74,7 @@ impl<S: Schema> Session<S> {
         let engine = &self.engine;
         let _guard = match self
             .participant
+            .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
@@ -90,6 +92,7 @@ impl<S: Schema> Session<S> {
         let engine = &self.engine;
         let _guard = match self
             .participant
+            .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
@@ -107,6 +110,7 @@ impl<S: Schema> Session<S> {
         let engine = &self.engine;
         let _guard = match self
             .participant
+            .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
@@ -131,9 +135,11 @@ impl<S: Schema> Session<S> {
             return Ok(Progress::default());
         }
         let engine = &self.engine;
-        let _guard = engine
-            .epoch
-            .enter(self.participant.expect("Confirmed participant exists"))?;
+        let _guard = engine.epoch.enter(
+            self.participant
+                .as_ref()
+                .expect("Confirmed participant exists"),
+        )?;
         engine.poll_session(&mut self.runtime, budget)
     }
     pub fn try_take<T: 'static>(
@@ -266,7 +272,7 @@ impl<S: Schema> Session<S> {
         if self.participant.is_some() {
             self.runtime.closing = true;
             self.complete_pending(WaitMode::Until(deadline))?;
-            let participant = self.participant.expect("Participants exist");
+            let participant = self.participant.as_ref().expect("Participants exist");
             let current = (
                 self.runtime.current.version,
                 self.runtime.cut(self.runtime.current.version)?,
@@ -296,7 +302,7 @@ impl<S: Schema> Drop for Session<S> {
             previous.tasks.clear();
         }
         if let Some(participant) = self.participant.take() {
-            let _ = self.engine.epoch.unregister(participant);
+            let _ = self.engine.epoch.unregister(&participant);
             let _ = self.engine.coordinator.leave(self.id);
             if self
                 .engine

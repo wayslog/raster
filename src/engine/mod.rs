@@ -12,6 +12,7 @@ pub(crate) mod io_hub;
 mod maintenance;
 pub(crate) mod metrics;
 mod observe;
+mod operation_gate;
 mod pending;
 mod progress;
 mod read;

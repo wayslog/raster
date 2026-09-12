@@ -30,7 +30,7 @@ fn public_expansion_waiting_for_old_tables_epoch_release_and_capacity_reporting_
         put(&mut session, key, key);
     }
     let participant = store.inner.epoch.register().unwrap();
-    let guard = store.inner.epoch.enter(participant).unwrap();
+    let guard = store.inner.epoch.enter(&participant).unwrap();
     let ticket = store.maintenance().grow_index().unwrap();
     assert!(matches!(store.maintenance().grow_index(), Err(Error::Busy)));
     assert!(
@@ -48,7 +48,7 @@ fn public_expansion_waiting_for_old_tables_epoch_release_and_capacity_reporting_
     }
     assert!(ticket.try_report().unwrap().is_none());
     drop(guard);
-    store.inner.epoch.unregister(participant).unwrap();
+    store.inner.epoch.unregister(&participant).unwrap();
     let report = finish_growth(&store, &ticket);
     let report = report.as_ref().as_ref().unwrap();
     assert_eq!(

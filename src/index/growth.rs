@@ -409,7 +409,7 @@ mod tests {
         let old = Arc::downgrade(&index.state.read().unwrap().active);
         let epoch = EpochManager::new().unwrap();
         let participant = epoch.register().unwrap();
-        let guard = epoch.enter(participant).unwrap();
+        let guard = epoch.enter(&participant).unwrap();
         index.begin_growth().unwrap();
         assert!(index.grow_step(one()).unwrap().complete);
         epoch
@@ -424,7 +424,7 @@ mod tests {
             index.release_retired(generation).unwrap();
         }
         assert!(old.upgrade().is_none());
-        epoch.unregister(participant).unwrap();
+        epoch.unregister(&participant).unwrap();
     }
     #[test]
     fn concurrent_conditional_release_traverses_bucket_by_bucket_migration_without_losing_the_last_link_head()
