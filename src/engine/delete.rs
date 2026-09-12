@@ -29,7 +29,7 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     hash: KeyHash,
     effect: Effect,
     complete: Completer<O::Output>,
-    mailbox: super::io_hub::SessionRoute,
+    mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
     permit: Option<super::version_permit::VersionPermit>,
@@ -213,7 +213,7 @@ impl<S: Schema, O: DeleteOperation<S>> Drop for DeleteTask<S, O> {
                 effect: self.effect,
             });
         }
-        let _ = self.mailbox.release(&self.engine.io);
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -252,7 +252,7 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let mut mailbox = match session.reserve_route() {
+        let mut mailbox = match self.io.reserve_operation(session.id) {
             Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
@@ -263,12 +263,12 @@ impl<S: Schema> Engine<S> {
         {
             Ok(permit) => permit,
             Err(reason) => {
-                let _ = mailbox.release(&self.io);
+                let _ = self.io.release_operation(&mut mailbox);
                 return Err(Rejected { request, reason });
             }
         };
         if let Err(reason) = self.admit(session, serial) {
-            let _ = mailbox.release(&self.io);
+            let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
@@ -292,7 +292,7 @@ impl<S: Schema> Engine<S> {
             && let Err(cause) = self
                 .version_permits
                 .activate(hash, task.version, &mut task.permit)
-                .and_then(|()| task.mailbox.activate(&self.io))
+                .and_then(|()| self.io.activate_operation(&mut task.mailbox))
         {
             task.finish(Err(OperationError {
                 cause,
