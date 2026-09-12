@@ -1,0 +1,14 @@
+{
+  "commit": "a49df16b6f7b54810b173c993907836c1cb54862",
+  "baseline_commit": "59def1aae2748efbac7854b3dfae6bfa0ce2e025",
+  "additional_scan_baseline_commit": "f19daa79a8f352ac69f2c55b12653ef670c6bb7f",
+  "run": "https://github.com/wayslog/raster/actions/runs/34695897837",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34695899495",
+  "archive": "cpp-parity-a49df16.tar.gz",
+  "sha256": "d497d96d2d638de2e02f2aad857a3d004d42dd0b92b83d76fc8753553dd1c69c",
+  "correctness": "All 18 integer cases and both resident append/scan sizes against both baselines passed independent output checks.",
+  "cpp_parity": "0 of 18 passed; incomplete.",
+  "rust_regression": "14 of 18 integer cases passed; all four append/scan baseline comparisons passed.",
+  "decision": "Retain as an incomplete optimization candidate. The older scan regression is closed in this native comparison; four Upsert regressions must be fixed before acceptance.",
+  "ci": "All six native Linux/macOS feature jobs passed."
+}
