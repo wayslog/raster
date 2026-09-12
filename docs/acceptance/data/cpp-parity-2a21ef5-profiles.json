@@ -1,0 +1,63 @@
+{
+  "scope": "macOS stack sampling; timing excluded from performance acceptance",
+  "profiles": {
+    "read-uniform-4": {
+      "commit": "2a21ef5590cde2b113762b731078f128ba27c23a",
+      "scope": "Diagnostic sampling only; timing excluded from performance acceptance",
+      "binary_sha256": "5eacc054baa7d68cad0e485a3e208236a5e62a5ab69e0e9eda2dee90e8cc68c4",
+      "sample_exit_code": 0,
+      "workload": {
+        "engine": "rust",
+        "operation": "read",
+        "distribution": "uniform",
+        "threads": 4,
+        "count": 80000000,
+        "elapsed_ns": 28092153667,
+        "p99_ns": 11709,
+        "samples": 1250000,
+        "checksum": 560000000,
+        "digest": 11881612521032259365,
+        "verified_keys": 1024,
+        "retries": 3294561,
+        "pending": 0
+      },
+      "attribution": {
+        "worker_samples": 14172,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 3833
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    },
+    "upsert-worker-hot-4": {
+      "commit": "2a21ef5590cde2b113762b731078f128ba27c23a",
+      "scope": "Diagnostic sampling only; timing excluded from performance acceptance",
+      "binary_sha256": "5eacc054baa7d68cad0e485a3e208236a5e62a5ab69e0e9eda2dee90e8cc68c4",
+      "sample_exit_code": 0,
+      "workload": {
+        "engine": "rust",
+        "operation": "upsert",
+        "distribution": "worker-hot",
+        "threads": 4,
+        "count": 80000000,
+        "elapsed_ns": 18198967709,
+        "p99_ns": 2250,
+        "samples": 1250000,
+        "checksum": 3360000000,
+        "digest": 8784911483345271589,
+        "verified_keys": 1024,
+        "retries": 0,
+        "pending": 0
+      },
+      "attribution": {
+        "worker_samples": 14256,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 1180
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    }
+  },
+  "archive": "cpp-parity-2a21ef5-profiles.tar.gz",
+  "sha256": "b59340fada11689f48f59375394f7ee1646d6660ca6f8b8b448dda9997f1a80d"
+}
