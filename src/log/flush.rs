@@ -5,7 +5,7 @@ use crate::{
     storage::{SegmentedStorage, transfer::SegmentTransfer},
 };
 pub(crate) struct PageFlush {
-    control: Arc<crate::sync::Mutex<LogState>>,
+    control: Arc<std::sync::RwLock<LogState>>,
     token: Arc<()>,
     storage: Arc<()>,
     route: CompletionRoute,
@@ -66,7 +66,7 @@ impl PageFlush {
     pub(crate) fn discard_after_device_shutdown(&mut self) -> Result<(), Error> {
         let mut state = self
             .control
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if state
             .flush
@@ -123,7 +123,7 @@ impl Drop for PageFlush {
                 .opening
                 .as_ref()
                 .is_none_or(|opening| !opening.has_resources())
-            && let Ok(mut state) = self.control.lock()
+            && let Ok(mut state) = self.control.write()
             && state
                 .flush
                 .as_ref()
@@ -143,7 +143,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let page = {
             let state = self
                 .state
-                .lock()
+                .read()
                 .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             if state.flush.is_some() {
                 return Err(Error::Busy);
@@ -160,7 +160,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let token = Arc::new(());
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if state.flush.is_some()
             || state
@@ -209,7 +209,7 @@ impl<V: ValueLayout> HybridLog<V> {
         };
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if !state
             .flush

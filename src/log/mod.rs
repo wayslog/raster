@@ -26,12 +26,12 @@ struct LogState {
     flush: Option<Arc<()>>,
     reclaim: Option<(PageId, Generation)>,
 }
-struct ReservationActivity<'a>(&'a crate::sync::Mutex<LogState>);
+struct ReservationActivity<'a>(&'a std::sync::RwLock<LogState>);
 impl Drop for ReservationActivity<'_> {
     fn drop(&mut self) {
         let mut state = self
             .0
-            .lock()
+            .write()
             .expect("The reservation count lock is not poisoned");
         state.reservations -= 1;
     }
@@ -147,7 +147,7 @@ impl<V: ValueLayout> RecordLease<V> {
 pub(crate) struct HybridLog<V: ValueLayout> {
     pool: page::PagePool,
     page_bytes: usize,
-    state: Arc<crate::sync::Mutex<LogState>>,
+    state: Arc<std::sync::RwLock<LogState>>,
     layout: Arc<V>,
     records: crate::sync::Mutex<BTreeMap<LogAddress, Arc<value::PageValue<V>>>>,
 }
@@ -156,7 +156,7 @@ impl<V: ValueLayout> HybridLog<V> {
         Ok(Self {
             pool: page::PagePool::new(config.page_bytes, config.memory_pages)?,
             page_bytes: config.page_bytes,
-            state: Arc::new(crate::sync::Mutex::new(LogState::default())),
+            state: Arc::new(std::sync::RwLock::new(LogState::default())),
             layout,
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
@@ -191,7 +191,7 @@ impl<V: ValueLayout> HybridLog<V> {
             pool,
             page_bytes: config.page_bytes,
             layout,
-            state: Arc::new(crate::sync::Mutex::new(LogState {
+            state: Arc::new(std::sync::RwLock::new(LogState {
                 frontiers: Frontiers {
                     begin,
                     head: end,
@@ -209,7 +209,7 @@ impl<V: ValueLayout> HybridLog<V> {
     fn enter_reservation(&self) -> Result<ReservationActivity<'_>, Error> {
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         state.reservations = state
             .reservations
@@ -222,7 +222,7 @@ impl<V: ValueLayout> HybridLog<V> {
         begin.validate()?;
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if begin < state.frontiers.begin || begin > self.pool.tail()? {
             return Err(Error::InvalidFormat(
@@ -240,7 +240,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn discard_prefix(&self) -> Result<(), Error> {
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let floor =
             LogAddress(state.frontiers.begin.0 / self.page_bytes as u64 * self.page_bytes as u64);
@@ -255,7 +255,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn frontiers(&self) -> Result<Frontiers, Error> {
         let state = self
             .state
-            .lock()
+            .read()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let mut result = state.frontiers;
         result.tail = self.pool.tail()?;
@@ -332,7 +332,7 @@ impl<V: ValueLayout> HybridLog<V> {
             let frontiers = {
                 let state = self
                     .state
-                    .lock()
+                    .read()
                     .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
                 self.pool.ensure_healthy()?;
                 state.frontiers
@@ -485,7 +485,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn pad_tail(&self) -> Result<LogAddress, Error> {
         let state = self
             .state
-            .lock()
+            .read()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if state.reservations != 0 {
             return Err(Error::Busy);
@@ -501,7 +501,7 @@ impl<V: ValueLayout> HybridLog<V> {
         }
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if target < state.frontiers.read_only || target > self.pool.tail()? {
             return Err(Error::InvalidState(
@@ -558,7 +558,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let (generation, values) = {
             let state = self
                 .state
-                .lock()
+                .read()
                 .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             if end <= state.frontiers.begin {
                 return Err(Error::RangeTruncated);

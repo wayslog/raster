@@ -35,6 +35,9 @@ python3 tools/performance/compare_scan.py \
 
 The `cpp-parity` workflow runs these additional regression checks when given
 `baseline_ref`, using the current scan driver with each version of the engine.
+An optional `scan_baseline_ref` adds a second full-commit scan baseline on the
+same runner. Use it to verify that a later change also closes an older scan
+regression, while retaining the immediate baseline comparison and all results.
 The full performance objective also includes delete, variable values,
 over-memory I/O, checkpoint/recovery, compaction, and automatic maintenance.
 Passing these resident cases alone does not complete that objective.

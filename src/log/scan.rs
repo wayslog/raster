@@ -4,7 +4,7 @@ impl<V: ValueLayout> HybridLog<V> {
     /// For testing only:Simulation P7 The logic of publishing the flushed range begin,No physical deletion is performed.
     #[cfg(test)]
     pub fn advance_begin_for_scan_test(&self, begin: LogAddress) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.write().unwrap();
         assert!(state.frontiers.begin <= begin && begin <= state.frontiers.head);
         state.frontiers.begin = begin;
     }
@@ -19,7 +19,7 @@ impl<V: ValueLayout> HybridLog<V> {
         end.validate()?;
         let state = self
             .state
-            .lock()
+            .read()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let mut frontiers = state.frontiers;
         frontiers.tail = self.pool.tail()?;
@@ -63,7 +63,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let selected = {
             let state = self
                 .state
-                .lock()
+                .read()
                 .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             if begin > end || end > self.pool.tail()? {
                 return Err(Error::InvalidFormat("Scan range is invalid"));

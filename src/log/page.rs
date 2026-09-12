@@ -1,5 +1,10 @@
 //! Page allocator only allocates exclusive ranges;initialization,Publishing and persistence are the responsibility of the record owner.
-use crate::{sync::Mutex, types::*};
+#[cfg(test)]
+mod tail_tests;
+use crate::{
+    sync::{AtomicU64, Mutex, PUBLISH_ORDER},
+    types::*,
+};
 use std::{
     alloc::{Layout, alloc_zeroed, dealloc},
     ptr::NonNull,
@@ -44,6 +49,9 @@ pub(crate) struct PagePool {
     bytes: usize,
     max_pages: usize,
     state: Mutex<State>,
+    // Writers publish a validated allocation frontier while holding state.
+    // This is an allocation bound, not a record-publication or durability fence.
+    published_tail: AtomicU64,
 }
 /// Unclonable exclusive scope;Move without changing address,Forgetting only prevents full page release.
 pub(crate) struct PageRange {
@@ -99,16 +107,18 @@ impl PagePool {
                 preallocated: false,
                 spare: Vec::new(),
             }),
+            published_tail: AtomicU64::new(0),
         })
     }
     /// During recovery, all old pages are provided by disk,The first memory page starts with the given logical page number.
     pub fn new_at(bytes: usize, max_pages: usize, first: PageId) -> Result<Self, Error> {
         let mut pool = Self::new(bytes, max_pages)?;
-        LogAddress::from_page_offset(first, 0, bytes as u64)?;
+        let tail = LogAddress::from_page_offset(first, 0, bytes as u64)?;
         pool.state
             .get_mut()
             .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?
             .next_id = first.0;
+        *pool.published_tail.get_mut() = tail.0;
         Ok(pool)
     }
     /// Preallocate all memory pages before creating or restoring a release;Do not create logical pages,log or disk file.
@@ -178,27 +188,8 @@ impl PagePool {
         }
     }
     pub fn tail(&self) -> Result<LogAddress, Error> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
-        if state.entries.is_empty() {
-            return LogAddress::from_page_offset(PageId(state.next_id), 0, self.bytes as u64);
-        }
-        let id = state.next_id.checked_sub(1).ok_or(Error::InvalidState(
-            "The allocated page is missing a logical number",
-        ))?;
-        let entry =
-            state
-                .entries
-                .iter()
-                .find(|entry| entry.id.0 == id)
-                .ok_or(Error::InvalidState(
-                    "The latest logical page does not exist",
-                ))?;
-        // The end of the full page is the starting point of the next page,Transformations that require an intra-page offset smaller than the page length cannot be used.
-        LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
-            .checked_add(entry.next as u64)
+        self.ensure_healthy()?;
+        Ok(LogAddress(self.published_tail.load(PUBLISH_ORDER)))
     }
     /// Close the remaining allocated space of the latest page;No record created,Nor does it change ownership of existing ranges.
     pub fn pad_tail(&self) -> Result<LogAddress, Error> {
@@ -222,6 +213,7 @@ impl PagePool {
         let end = LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
             .checked_add(self.bytes as u64)?;
         entry.next = self.bytes;
+        self.published_tail.store(end.0, PUBLISH_ORDER);
         Ok(end)
     }
     pub fn reserve(&self, len: usize, alignment: usize) -> Result<PageRange, Error> {
@@ -245,7 +237,10 @@ impl PagePool {
                     .ok_or(Error::CapacityExceeded)?
                     & !(alignment - 1);
                 if start.checked_add(len).is_some_and(|end| end <= self.bytes) {
+                    let tail = LogAddress::from_page_offset(entry.id, 0, self.bytes as u64)?
+                        .checked_add((start + len) as u64)?;
                     entry.next = start + len;
+                    self.published_tail.store(tail.0, PUBLISH_ORDER);
                     return Ok(PageRange {
                         page: page.clone(),
                         id: entry.id,
@@ -265,6 +260,8 @@ impl PagePool {
         }
         let id = PageId(state.next_id);
         LogAddress::from_page_offset(id, (self.bytes - 1) as u64, self.bytes as u64)?;
+        let tail =
+            LogAddress::from_page_offset(id, 0, self.bytes as u64)?.checked_add(len as u64)?;
         let next_id = state
             .next_id
             .checked_add(1)
@@ -295,6 +292,7 @@ impl PagePool {
             state.entries.push(entry);
         }
         state.next_id = next_id;
+        self.published_tail.store(tail.0, PUBLISH_ORDER);
         Ok(PageRange {
             page,
             id,
@@ -463,7 +461,7 @@ mod mutable_poison_tests {
                     panic!("Page pool test poisoning");
                 }
                 1 => {
-                    let _guard = log.state.lock().unwrap();
+                    let _guard = log.state.write().unwrap();
                     panic!("Boundary test poisoning");
                 }
                 _ => {

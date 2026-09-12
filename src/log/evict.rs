@@ -5,7 +5,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let retired = {
             let mut state = self
                 .state
-                .lock()
+                .write()
                 .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             let mut retired = Vec::new();
             if state.reclaim.is_none() {
@@ -45,7 +45,7 @@ impl<V: ValueLayout> HybridLog<V> {
         drop(retired);
         let mut state = self
             .state
-            .lock()
+            .write()
             .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let Some((page, generation)) = state.reclaim else {
             return Ok(Progress::default());
