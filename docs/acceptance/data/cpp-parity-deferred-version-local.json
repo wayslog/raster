@@ -1,0 +1,32 @@
+{
+  "base_runtime": "b2e4a47724488f5ba8b124d9b7ea5d32d31b4509",
+  "scope": "Deferred operation version registration; local candidate",
+  "source_sha256": {
+    "src/engine/read.rs": "d3be77f69140198bcdd89470a0d6ed03421ceb810d13b4900d8f46d8140e3770",
+    "src/engine/rmw.rs": "2d21bad8cbf8c447438717a7c31e501b9c8295bda0f2773339a05c107eaa9c72",
+    "src/engine/upsert.rs": "2274b9c346d9a3ea8a682daadf41ea8d68b949773d376d98ffd1d1ef27c7ad65",
+    "src/engine/delete.rs": "327ebf19ec087ed5d38a2c1a244402e99fb9213a70a643945afb1fc59c71a2f8",
+    "src/engine/version_permit.rs": "7e6345f1d637b86c0b306baae1e8c9aa94dbc7b5ebf25b8e52a8465ecc34cdaf",
+    "src/engine/version_permit/initial_tests.rs": "438e539396fd38c1dc8541caab2a42d3f22593694b7244ede5ec6c22bfc79115",
+    "src/engine/checkpoint_tests.rs": "b899b0bde5900b1fd00918dfccf8e2378eb0994628c9c1bd8932c371bffea9f0",
+    "src/engine/checkpoint_tests/version_registration.rs": "0c505a2a2d8f6158b13fde6672f1b3817414db45cf2f9d6d4e92a2cf7a16149d"
+  },
+  "binary_sha256": {
+    "parity": "5eacc054baa7d68cad0e485a3e208236a5e62a5ab69e0e9eda2dee90e8cc68c4",
+    "parity_scan": "8f14ef766ec294648d5726efb9f177c4637f85d09bae7b54b3e125e5e503b910",
+    "benchmark": "9e89ddfa493d09fa34b92d58ca83cfb13273b9e99c1cdd86618ba42bd83ddfd2"
+  },
+  "tests": {
+    "passed": 489,
+    "failed": 0,
+    "ignored": 0
+  },
+  "archive": "cpp-parity-deferred-version-local.tar.gz",
+  "sha256": "66444ee2162368f3f19f357fe27adc8a84e1057143fca1bc7aa889379efc28ee",
+  "memory_passed": 14,
+  "scan_passed": 2,
+  "strict_lifecycle_passed": 3,
+  "trace_files": 24,
+  "unique_traces": 3,
+  "native_status": "Not run yet; four local multithreaded regressions remain open"
+}

@@ -33,11 +33,14 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
-    permit: super::version_permit::VersionPermit,
+    permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
     fn prepare_pending(&mut self) -> Result<bool, Error> {
         let awaiting_route = self.lookup.as_ref().is_some_and(LogLookup::awaiting_route);
+        self.engine
+            .version_permits
+            .activate(self.hash, self.version, &mut self.permit)?;
         self.engine.io.activate_operation(&mut self.mailbox)?;
         if let Some(lookup) = &mut self.lookup {
             lookup.enable_io();
@@ -110,7 +113,11 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
             });
             return TaskStep::Complete;
         }
-        match self.permit.ready() {
+        match self
+            .engine
+            .version_permits
+            .ready_initial(self.hash, self.permit.as_ref())
+        {
             Ok(true) => {}
             Ok(false) => return TaskStep::Retry,
             Err(cause) => {
@@ -304,7 +311,10 @@ impl<S: Schema> Engine<S> {
             Err(reason) => return Err(Rejected { request, reason }),
         };
         let id = mailbox.id();
-        let permit = match self.version_permits.reserve(hash, session.current.version) {
+        let permit = match self
+            .version_permits
+            .reserve_initial(hash, session.current.version)
+        {
             Ok(permit) => permit,
             Err(reason) => {
                 let _ = self.io.release_operation(&mut mailbox);

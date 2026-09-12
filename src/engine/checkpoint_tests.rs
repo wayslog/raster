@@ -20,6 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 type Schema = SchemaPair<U64Key, AtomicU64Value>;
+#[path = "checkpoint_tests/version_registration.rs"]
+mod version_registration;
 struct Directory(PathBuf);
 impl Drop for Directory {
     fn drop(&mut self) {

@@ -8,6 +8,9 @@ use std::{
     },
 };
 const SHARD_COUNT: usize = 64;
+#[cfg(test)]
+#[path = "version_permit/initial_tests.rs"]
+mod initial_tests;
 type Registrations = BTreeMap<(u64, u64), usize>;
 #[repr(align(64))]
 #[derive(Default)]
@@ -16,6 +19,7 @@ struct FailureFlag(AtomicBool);
 struct Shard {
     active: Mutex<Registrations>,
     failed: Arc<FailureFlag>,
+    has_registrations: AtomicBool,
 }
 struct PoisonNotification<'a> {
     active: &'a Mutex<Registrations>,
@@ -33,6 +37,17 @@ impl Drop for PoisonNotification<'_> {
 impl Shard {
     fn is_poisoned(&self) -> bool {
         self.failed.0.load(Ordering::Acquire)
+    }
+    fn ensure_healthy(&self) -> Result<(), Error> {
+        if self.active.is_poisoned() {
+            self.failed.0.store(true, Ordering::Release);
+        }
+        if self.is_poisoned() {
+            return Err(Error::InvalidState(
+                "Request version registration lock poisoning",
+            ));
+        }
+        Ok(())
     }
     fn with_state<R>(
         &self,
@@ -57,7 +72,12 @@ impl Shard {
                 "Request version registration lock poisoning",
             ));
         }
-        use_state(&mut guard)
+        let result = use_state(&mut guard);
+        // Publish while still holding the registry lock. A submitting operation
+        // also holds its hash stripe until any suspended registration is visible.
+        self.has_registrations
+            .store(!guard.is_empty(), Ordering::Release);
+        result
     }
 }
 pub(crate) struct VersionPermits {
@@ -71,6 +91,7 @@ impl Default for VersionPermits {
                 Arc::new(Shard {
                     active: Mutex::new(BTreeMap::new()),
                     failed: failed.clone(),
+                    has_registrations: AtomicBool::new(false),
                 })
             }),
         }
@@ -84,6 +105,60 @@ pub(crate) struct VersionPermit {
 impl VersionPermits {
     fn shard(&self, hash: KeyHash) -> &Arc<Shard> {
         &self.shards[hash.0 as usize % SHARD_COUNT]
+    }
+    /// Only for an initial operation attempt under its hash stripe. Another
+    /// initial attempt for this hash cannot publish a suspended registration
+    /// until that stripe is released. Compaction copies keep eager registration;
+    /// the action barrier prevents a newer copy version overtaking this attempt.
+    pub fn reserve_initial(
+        &self,
+        hash: KeyHash,
+        version: CheckpointVersion,
+    ) -> Result<Option<VersionPermit>, Error> {
+        let shard = self.shard(hash);
+        if shard.has_registrations.load(Ordering::Acquire) {
+            return self.reserve(hash, version).map(Some);
+        }
+        // Check failure after the empty hint; poisoning must never authorize
+        // an unregistered request through a stale hint.
+        shard.ensure_healthy()?;
+        Ok(None)
+    }
+    pub fn ready_initial(
+        &self,
+        hash: KeyHash,
+        permit: Option<&VersionPermit>,
+    ) -> Result<bool, Error> {
+        match permit {
+            Some(permit) => {
+                if permit.key.0 != hash.0 || !Arc::ptr_eq(&permit.active, self.shard(hash)) {
+                    return Err(Error::InvalidState("operation version owner mismatch"));
+                }
+                permit.ready()
+            }
+            None => {
+                self.shard(hash).ensure_healthy()?;
+                Ok(true)
+            }
+        }
+    }
+    /// Must run before the first I/O submission or before storing a pending task,
+    /// with the initial hash stripe still held. An existing permit is retained.
+    pub fn activate(
+        &self,
+        hash: KeyHash,
+        version: CheckpointVersion,
+        permit: &mut Option<VersionPermit>,
+    ) -> Result<(), Error> {
+        if let Some(permit) = permit {
+            if permit.key != (hash.0, version.0) || !Arc::ptr_eq(&permit.active, self.shard(hash)) {
+                return Err(Error::InvalidState("operation version owner mismatch"));
+            }
+            permit.active.ensure_healthy()?;
+        } else {
+            *permit = Some(self.reserve(hash, version)?);
+        }
+        Ok(())
     }
     pub fn reserve(
         &self,

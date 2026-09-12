@@ -32,7 +32,7 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
-    permit: super::version_permit::VersionPermit,
+    permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
     fn advance(&mut self, _budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
@@ -131,7 +131,11 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             });
             return TaskStep::Complete;
         }
-        match self.permit.ready() {
+        match self
+            .engine
+            .version_permits
+            .ready_initial(self.hash, self.permit.as_ref())
+        {
             Ok(true) => {}
             Ok(false) => return TaskStep::Retry,
             Err(cause) => {
@@ -253,7 +257,10 @@ impl<S: Schema> Engine<S> {
             Err(reason) => return Err(Rejected { request, reason }),
         };
         let id = mailbox.id();
-        let permit = match self.version_permits.reserve(hash, session.current.version) {
+        let permit = match self
+            .version_permits
+            .reserve_initial(hash, session.current.version)
+        {
             Ok(permit) => permit,
             Err(reason) => {
                 let _ = self.io.release_operation(&mut mailbox);
@@ -281,7 +288,12 @@ impl<S: Schema> Engine<S> {
             permit,
         };
         let mut completed = matches!(task.run_locked(PollBudget::default()), TaskStep::Complete);
-        if !completed && let Err(cause) = self.io.activate_operation(&mut task.mailbox) {
+        if !completed
+            && let Err(cause) = self
+                .version_permits
+                .activate(hash, task.version, &mut task.permit)
+                .and_then(|()| self.io.activate_operation(&mut task.mailbox))
+        {
             task.finish(Err(OperationError {
                 cause,
                 effect: task.effect,
