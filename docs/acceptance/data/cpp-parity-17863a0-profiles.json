@@ -1,0 +1,41 @@
+{
+  "commit": "17863a0f87f6f686b8ce0cce5c510764d845a0b6",
+  "scope": "Diagnostic sampling only; not timing acceptance",
+  "archive": "cpp-parity-17863a0-profiles.tar.gz",
+  "sha256": "107582a00f6145d90fbba2dee04116d55450312aa450a323457e48190e804241",
+  "archive_bytes": 51442,
+  "profiles": {
+    "read-uniform-1": {
+      "binary_sha256": "b78c724a5f69c62a569fbcf7f6e15348a3d1065417ee8da77c6f99d10f41c8c0",
+      "attribution": {
+        "worker_samples": 3784,
+        "mutex_wait_samples_by_nearest_engine_frame": {},
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      },
+      "independently_verified_operations": 80000000
+    },
+    "read-uniform-4": {
+      "binary_sha256": "b78c724a5f69c62a569fbcf7f6e15348a3d1065417ee8da77c6f99d10f41c8c0",
+      "attribution": {
+        "worker_samples": 14232,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 2229
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      },
+      "independently_verified_operations": 80000000
+    },
+    "upsert-worker-hot-4": {
+      "binary_sha256": "b78c724a5f69c62a569fbcf7f6e15348a3d1065417ee8da77c6f99d10f41c8c0",
+      "attribution": {
+        "worker_samples": 14200,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 1056
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      },
+      "independently_verified_operations": 80000000
+    }
+  },
+  "parser_correction": "Exact kernel symbol matching excludes two DYLD dispatch-stub samples; the independent collapsed-total assertion remains enabled."
+}

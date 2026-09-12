@@ -16,13 +16,13 @@ pub(crate) struct WrittenMaterial {
 }
 /// Only successful writes,File credentials obtained from material tasks only after synchronization and closing.
 pub(crate) struct SyncedFile {
-    pub(super) owner: Arc<crate::sync::InstanceId>,
+    pub(super) owner: Arc<()>,
     pub(super) token: CheckpointToken,
     pub(super) name: String,
     pub(super) digest: WrittenMaterial,
 }
 pub(crate) struct MaterialWrite {
-    owner: Arc<crate::sync::InstanceId>,
+    owner: Arc<()>,
     path: PathBuf,
     token: CheckpointToken,
     name: String,

@@ -1,0 +1,12 @@
+{
+  "restored_runtime": "2a21ef5590cde2b113762b731078f128ba27c23a",
+  "source_and_build_inputs_equal": true,
+  "binary_sha256": {
+    "parity": "5eacc054baa7d68cad0e485a3e208236a5e62a5ab69e0e9eda2dee90e8cc68c4",
+    "parity_scan": "8f14ef766ec294648d5726efb9f177c4637f85d09bae7b54b3e125e5e503b910",
+    "benchmark": "9e89ddfa493d09fa34b92d58ca83cfb13273b9e99c1cdd86618ba42bd83ddfd2"
+  },
+  "scope": "Restoration verification only; not a new C++ performance acceptance",
+  "archive": "cpp-parity-lookup-identity-withdrawal.tar.gz",
+  "sha256": "0b9e3d3fe77a2f9fe1c4b4fdb0efe127cbc23ddb65294c655ec253fe561e1d4c"
+}

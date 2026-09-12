@@ -17,7 +17,7 @@ pub(crate) struct ReadSpec<'a> {
     pub route: CompletionRoute,
 }
 pub(crate) struct MaterialRead {
-    owner: Arc<crate::sync::InstanceId>,
+    owner: Arc<()>,
     path: PathBuf,
     expected: usize,
     chunk: usize,

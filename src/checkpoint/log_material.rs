@@ -27,7 +27,7 @@ enum Stage {
     Done,
 }
 pub(crate) struct LogMaterialWrite {
-    owner: Arc<crate::sync::InstanceId>,
+    owner: Arc<()>,
     spec: LogMaterialSpec,
     descriptor: Material,
     stage: Stage,
