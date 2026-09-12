@@ -9,6 +9,9 @@ use std::sync::atomic::Ordering;
 impl<S: Schema> Engine<S> {
     pub(crate) fn observe_session(&self, session: &mut SessionRuntime) -> Result<bool, Error> {
         let _timer = self.metrics.timer(false);
+        if self.coordinator.is_rest_at(session.current.version) {
+            return Ok(false);
+        }
         let mut changed = false;
         // Each observation has a fixed upper limit;When concurrent actions continue to change, let the caller continue in the next round.
         for _ in 0..8 {
