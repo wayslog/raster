@@ -1,0 +1,15 @@
+{
+  "commit": "15353362897f21e20d6be73180a1a44f8a6f8a1d",
+  "baseline_commit": "f12de7458e96bdfb8de7902bbfc5866547c13793",
+  "additional_memory_baseline_commit": "59def1aae2748efbac7854b3dfae6bfa0ce2e025",
+  "additional_scan_baseline_commit": "f19daa79a8f352ac69f2c55b12653ef670c6bb7f",
+  "run": "https://github.com/wayslog/raster/actions/runs/34698220992",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34698221354",
+  "archive": "cpp-parity-1535336.tar.gz",
+  "sha256": "5b304d90d982e22b2206bac11fb4aee7d1064c40793dc9999875a7f8c5683e37",
+  "correctness": "All native integer and scan comparisons passed independent output checks.",
+  "cpp_parity": "0 of 18 passed; incomplete.",
+  "rust_regression": "18 of 18 passed against each of the two memory baselines; both scan sizes passed against both scan baselines.",
+  "decision": "Keep the mutable-boundary optimization. Earlier Upsert and scan regressions pass the same-runner baselines in this run. Local negative diagnostic samples remain preserved; the full C++ parity objective is not complete.",
+  "ci": "All six native Linux/macOS feature jobs passed."
+}
