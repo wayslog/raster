@@ -1,4 +1,4 @@
-# RasterKV 的完整默认配置。使用文件后端前，为 storage.root 指定数据目录。
+# Complete RasterKV default configuration. Set storage.root to a data directory before using the file backend.
 [storage]
 root = ""
 segment_bytes = 1073741824
