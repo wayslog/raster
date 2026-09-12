@@ -24,6 +24,7 @@ pub(crate) struct ExecutionContext {
 pub(crate) struct SessionRuntime {
     pub id: SessionId,
     pub registration: crate::coordination::RegistrationHandle,
+    pub tracker: std::sync::Arc<super::metrics::Tracker>,
     pub current: ExecutionContext,
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
@@ -33,7 +34,11 @@ pub(crate) struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    pub fn new(id: SessionId, registered: crate::coordination::RegisteredSession) -> Self {
+    pub fn new(
+        id: SessionId,
+        registered: crate::coordination::RegisteredSession,
+        tracker: std::sync::Arc<super::metrics::Tracker>,
+    ) -> Self {
         let crate::coordination::RegisteredSession {
             handle,
             version,
@@ -42,6 +47,7 @@ impl SessionRuntime {
         Self {
             id,
             registration: handle,
+            tracker,
             current: ExecutionContext {
                 version,
                 last_accepted,
@@ -149,7 +155,13 @@ mod result_budget_tests {
     fn runtime() -> SessionRuntime {
         let coordinator = crate::coordination::Coordinator::new(1).unwrap();
         let id = SessionId([2; 16]);
-        SessionRuntime::new(id, coordinator.enroll_registered(id).unwrap())
+        SessionRuntime::new(
+            id,
+            coordinator.enroll_registered(id).unwrap(),
+            super::super::metrics::Metrics::new(false)
+                .register()
+                .unwrap(),
+        )
     }
 
     fn request_id() -> RequestId {

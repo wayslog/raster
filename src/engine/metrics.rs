@@ -5,7 +5,7 @@ use crate::{
     types::Effect,
 };
 use std::sync::{
-    Arc, Mutex,
+    Arc, Mutex, Weak,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Instant;
@@ -43,11 +43,22 @@ struct State {
     saturated: bool,
     complete: bool,
 }
-pub(crate) struct Metrics {
+struct Core {
     enabled: AtomicBool,
+    state: Mutex<State>,
+}
+pub(crate) struct Metrics {
+    core: Arc<Core>,
+    background: Arc<Tracker>,
+    trackers: Mutex<Vec<Weak<Tracker>>>,
+}
+/// Each session and its accepted requests retain one independent tracker.
+/// Separate allocations keep different sessions' counter writes apart.
+#[repr(align(128))]
+pub(crate) struct Tracker {
+    core: Arc<Core>,
     active: AtomicUsize,
     pending: AtomicUsize,
-    state: Mutex<State>,
 }
 fn add(target: &mut u64, value: u64, saturated: &mut bool) {
     if let Some(next) = target.checked_add(value) {
@@ -65,10 +76,8 @@ fn nanos(value: u128, saturated: &mut bool) -> u64 {
 }
 impl Metrics {
     pub fn new(enabled: bool) -> Self {
-        Self {
+        let core = Arc::new(Core {
             enabled: enabled.into(),
-            active: 0.into(),
-            pending: 0.into(),
             state: Mutex::new(State {
                 operations: std::array::from_fn(|_| Default::default()),
                 cache: Default::default(),
@@ -78,15 +87,33 @@ impl Metrics {
                 saturated: false,
                 complete: true,
             }),
+        });
+        Self {
+            background: Arc::new(Tracker::new(core.clone())),
+            core,
+            trackers: Mutex::new(Vec::new()),
         }
     }
+    pub fn register(&self) -> Result<Arc<Tracker>, crate::types::Error> {
+        let tracker = Arc::new(Tracker::new(self.core.clone()));
+        let mut trackers = self.trackers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(expired) = trackers.iter_mut().find(|entry| entry.strong_count() == 0) {
+            *expired = Arc::downgrade(&tracker);
+        } else {
+            trackers
+                .try_reserve(1)
+                .map_err(|_| crate::types::Error::OutOfMemory)?;
+            trackers.push(Arc::downgrade(&tracker));
+        }
+        Ok(tracker)
+    }
     pub fn enable(&self, enabled: bool) {
-        self.enabled.store(enabled, Ordering::SeqCst);
+        self.core.enabled.store(enabled, Ordering::SeqCst);
     }
     pub fn snapshot(&self) -> Statistics {
-        let s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let s = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         Statistics {
-            enabled: self.enabled.load(Ordering::SeqCst),
+            enabled: self.core.enabled.load(Ordering::SeqCst),
             reads: s.operations[0].clone(),
             upserts: s.operations[1].clone(),
             rmw: s.operations[2].clone(),
@@ -101,44 +128,27 @@ impl Metrics {
         }
     }
     pub fn activity(&self) -> Result<(usize, usize), crate::types::Error> {
-        for _ in 0..8 {
-            let pending = self.pending.load(Ordering::SeqCst);
-            let active = self.active.load(Ordering::SeqCst);
-            if pending <= active {
-                return Ok((active, pending));
-            }
+        let trackers = self.trackers.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut active, mut pending) = self.background.activity()?;
+        for tracker in trackers.iter().filter_map(Weak::upgrade) {
+            let counts = tracker.activity()?;
+            active = active
+                .checked_add(counts.0)
+                .ok_or(crate::types::Error::CapacityExceeded)?;
+            pending = pending
+                .checked_add(counts.1)
+                .ok_or(crate::types::Error::CapacityExceeded)?;
         }
-        Err(crate::types::Error::Busy)
+        Ok((active, pending))
     }
     pub fn accept(self: &Arc<Self>, kind: Kind) -> Monitor {
-        if !matches!(kind, Kind::Copy) {
-            self.active.fetch_add(1, Ordering::SeqCst);
-        }
-        let sampled = self.enabled.load(Ordering::SeqCst);
-        if sampled {
-            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            let State {
-                operations,
-                saturated,
-                ..
-            } = &mut *s;
-            add(&mut operations[kind as usize].accepted, 1, saturated);
-        }
-        Monitor {
-            metrics: self.clone(),
-            kind,
-            sampled,
-            pending: None,
-            finished: false,
-            invalidations: 0,
-            saturated: false,
-        }
+        self.background.accept(kind)
     }
     pub fn cache(&self, event: CacheEvent) {
-        if !self.enabled.load(Ordering::SeqCst) {
+        if !self.core.enabled.load(Ordering::SeqCst) {
             return;
         }
-        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         let State {
             cache, saturated, ..
         } = &mut *s;
@@ -152,10 +162,10 @@ impl Metrics {
         add(counter, 1, saturated);
     }
     pub fn index(&self, event: IndexEvent) {
-        if !self.enabled.load(Ordering::SeqCst) {
+        if !self.core.enabled.load(Ordering::SeqCst) {
             return;
         }
-        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
         let State {
             index, saturated, ..
         } = &mut *s;
@@ -169,8 +179,51 @@ impl Metrics {
     pub fn timer(&self, maintenance: bool) -> Timer<'_> {
         Timer {
             metrics: self,
-            start: self.enabled.load(Ordering::SeqCst).then(Instant::now),
+            start: self.core.enabled.load(Ordering::SeqCst).then(Instant::now),
             maintenance,
+        }
+    }
+}
+impl Tracker {
+    fn new(core: Arc<Core>) -> Self {
+        Self {
+            core,
+            active: AtomicUsize::new(0),
+            pending: AtomicUsize::new(0),
+        }
+    }
+    fn activity(&self) -> Result<(usize, usize), crate::types::Error> {
+        for _ in 0..8 {
+            let pending = self.pending.load(Ordering::SeqCst);
+            let active = self.active.load(Ordering::SeqCst);
+            if pending <= active {
+                return Ok((active, pending));
+            }
+        }
+        Err(crate::types::Error::Busy)
+    }
+    pub fn accept(self: &Arc<Self>, kind: Kind) -> Monitor {
+        if !matches!(kind, Kind::Copy) {
+            self.active.fetch_add(1, Ordering::SeqCst);
+        }
+        let sampled = self.core.enabled.load(Ordering::SeqCst);
+        if sampled {
+            let mut s = self.core.state.lock().unwrap_or_else(|e| e.into_inner());
+            let State {
+                operations,
+                saturated,
+                ..
+            } = &mut *s;
+            add(&mut operations[kind as usize].accepted, 1, saturated);
+        }
+        Monitor {
+            tracker: self.clone(),
+            kind,
+            sampled,
+            pending: None,
+            finished: false,
+            invalidations: 0,
+            saturated: false,
         }
     }
 }
@@ -194,7 +247,12 @@ pub(crate) struct Timer<'a> {
 impl Drop for Timer<'_> {
     fn drop(&mut self) {
         if let Some(start) = self.start {
-            let mut s = self.metrics.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut s = self
+                .metrics
+                .core
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let State {
                 refresh,
                 maintenance,
@@ -215,7 +273,7 @@ impl Drop for Timer<'_> {
     }
 }
 pub(crate) struct Monitor {
-    metrics: Arc<Metrics>,
+    tracker: Arc<Tracker>,
     kind: Kind,
     sampled: bool,
     pending: Option<Instant>,
@@ -233,7 +291,7 @@ impl Monitor {
             // provides a bounded lifetime.
             self.pending = Some(Instant::now());
             if !matches!(self.kind, Kind::Copy) {
-                self.metrics.pending.fetch_add(1, Ordering::SeqCst);
+                self.tracker.pending.fetch_add(1, Ordering::SeqCst);
             }
         }
     }
@@ -247,14 +305,19 @@ impl Monitor {
         self.finished = true;
         if !matches!(self.kind, Kind::Copy) {
             if self.pending.is_some() {
-                self.metrics.pending.fetch_sub(1, Ordering::SeqCst);
+                self.tracker.pending.fetch_sub(1, Ordering::SeqCst);
             }
-            self.metrics.active.fetch_sub(1, Ordering::SeqCst);
+            self.tracker.active.fetch_sub(1, Ordering::SeqCst);
         }
         if !self.sampled {
             return;
         }
-        let mut s = self.metrics.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = self
+            .tracker
+            .core
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let State {
             operations,
             saturated,
@@ -359,3 +422,9 @@ mod tests {
         assert!(saturated);
     }
 }
+
+#[cfg(test)]
+mod session_tests;
+
+#[cfg(test)]
+mod tracker_tests;

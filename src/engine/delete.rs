@@ -273,7 +273,7 @@ impl<S: Schema> Engine<S> {
         }
         let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = DeleteTask {
-            monitor: self.metrics.accept(super::metrics::Kind::Delete),
+            monitor: session.tracker.accept(super::metrics::Kind::Delete),
             engine: self.clone(),
             request: Some(request),
             options,
