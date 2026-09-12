@@ -1,0 +1,12 @@
+{
+  "run": "https://github.com/wayslog/raster/actions/runs/34686000572",
+  "commit": "33c98d47ba059aa9bb1bcbb54280e83f259441fa",
+  "baseline_commit": "1f86894a99c569687be406503130a13d5814d166",
+  "artifact": "cpp-parity-33c98d4.tar.gz",
+  "sha256": "cc57b0cac0b0348c13a821d6a77876062701be09a9694857f05fd101e46cddb2",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34686000955",
+  "cases_per_comparison": 18,
+  "rounds": 4,
+  "operations_per_run": 2000000,
+  "status": "All result checks and six native engineering jobs passed; all C++ parity gates failed. REST observation candidate failed 7 of 18 Rust regression gates and is withdrawn."
+}

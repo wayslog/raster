@@ -44,14 +44,6 @@ fn next_phase(action: Action, phase: Phase) -> Option<Phase> {
     }
 }
 impl Coordinator {
-    /// A REST observation at the caller's current version needs no session data.
-    /// An action can start immediately afterward, just as after snapshot();
-    /// admission still validates the version and identity under the registry lock.
-    pub fn is_rest_at(&self, version: CheckpointVersion) -> bool {
-        version.0 != u64::MAX
-            && self.rest_version.0.load(Ordering::SeqCst) == version.0
-            && !self.registry.is_poisoned()
-    }
     pub fn snapshot(&self) -> Result<SystemState, Error> {
         Ok(self
             .registry
@@ -96,9 +88,6 @@ impl Coordinator {
                 old_pending: 0,
             })
             .collect();
-        // Invalidate before exposing any action state. If preparation above
-        // panics, registry poisoning independently disables the fast observation.
-        self.rest_version.0.store(u64::MAX, Ordering::SeqCst);
         registry.action = Some(ActiveAction {
             id,
             participants,
@@ -232,9 +221,6 @@ impl Coordinator {
         registry.system.id = None;
         registry.system.action = None;
         registry.system.phase = Phase::Rest;
-        self.rest_version
-            .0
-            .store(registry.system.version.0, Ordering::SeqCst);
         Ok(())
     }
     pub fn fail_action(&self, id: MaintenanceId, cause: Error) -> Result<(), Error> {
