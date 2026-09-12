@@ -3,7 +3,7 @@ use raster::{
     RasterKV, Submission,
     api::{completion::Outcome, operation::*, session::SessionOptions},
     schema::{
-        ValueRead, ValueUpdate,
+        KeyCodec, ValueRead, ValueUpdate,
         builtin::{AtomicU64Value, SchemaPair, U64Key},
     },
     types::*,
@@ -224,7 +224,15 @@ fn errors_that_may_be_modified_fail_to_close_and_are_not_repeated() {
 }
 #[test]
 fn different_keys_of_the_same_tag_are_read_separately_through_the_public_interface() {
-    let store = store();
+    // The equal tags must also select the same bucket to exercise chain traversal.
+    assert_eq!(U64Key.hash(&8969).tag(), U64Key.hash(&9239).tag());
+    let mut config = raster::config::Config::default();
+    config.index.buckets = 1;
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(raster::device::null::NullDeviceFactory))
+        .create()
+        .unwrap();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     s.upsert(Serial(1), put(8969, 17))
         .map_err(|r| r.reason)
