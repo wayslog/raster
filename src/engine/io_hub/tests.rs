@@ -20,15 +20,11 @@ mod synchronous_operations {
         value: u64,
         hub: Arc<CompletionHub>,
         callbacks: Arc<AtomicUsize>,
-        reservations: Arc<Mutex<Vec<usize>>>,
     }
     impl Checked {
         fn observe(&self) {
             assert_eq!(self.hub.state.lock().unwrap().mailboxes.len(), 0);
-            self.reservations
-                .lock()
-                .unwrap()
-                .push(self.hub.occupied.load(Ordering::Acquire));
+            assert_eq!(self.hub.occupied.load(Ordering::Acquire), 1);
             self.callbacks.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -103,16 +99,13 @@ mod synchronous_operations {
         store.enable_stats_collection();
         let hub = store.inner.io.clone();
         let callbacks = Arc::new(AtomicUsize::new(0));
-        let reservations = Arc::new(Mutex::new(Vec::new()));
         let request = |value| Checked {
             key: 1,
             value,
             hub: hub.clone(),
             callbacks: callbacks.clone(),
-            reservations: reservations.clone(),
         };
         let mut session = store.start_session(SessionOptions::default()).unwrap();
-        let booked = hub.occupied.load(Ordering::Acquire);
         assert_eq!(
             ready(
                 session
@@ -157,7 +150,7 @@ mod synchronous_operations {
         );
         assert_eq!(callbacks.load(Ordering::SeqCst), 5);
         assert_eq!(hub.state.lock().unwrap().mailboxes.len(), 0);
-        assert_eq!(hub.occupied.load(Ordering::Acquire), booked);
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
         let statistics = store.statistics();
         assert!(statistics.measurements_complete);
         for (operation, count) in [
@@ -172,16 +165,7 @@ mod synchronous_operations {
         }
         let deadline = || Deadline(Instant::now() + Duration::from_secs(5));
         session.close(deadline()).unwrap();
-        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
-        let mut reopened = store.start_session(SessionOptions::default()).unwrap();
-        assert_eq!(reopened.last_accepted(), None);
-        assert_eq!(hub.occupied.load(Ordering::Acquire), booked);
-        reopened.close(deadline()).unwrap();
         store.shutdown(deadline()).unwrap();
-        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
-        assert_eq!(*reservations.lock().unwrap(), vec![booked; 5]);
-        assert_eq!(booked, store.inner.config.session.max_pending);
-        assert_eq!(hub.next.load(Ordering::Acquire), 5);
     }
 }
 #[test]

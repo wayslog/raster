@@ -34,7 +34,7 @@ struct RmwTask<S: Schema, O: RmwOperation<S>> {
     effect: Effect,
     complete: Option<Completer<O::Output>>,
     ready: Option<OperationResult<O::Output>>,
-    mailbox: super::io_hub::SessionRoute,
+    mailbox: super::io_hub::OperationRoute,
     serial: Serial,
     version: CheckpointVersion,
     permit: Option<super::version_permit::VersionPermit>,
@@ -48,7 +48,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         self.engine
             .version_permits
             .activate(self.hash, self.version, &mut self.permit)?;
-        self.mailbox.activate(&self.engine.io)?;
+        self.engine.io.activate_operation(&mut self.mailbox)?;
         if let Some((_, lookup)) = &mut self.lookup {
             lookup.enable_io();
         }
@@ -295,7 +295,7 @@ impl<S: Schema, O: RmwOperation<S>> Drop for RmwTask<S, O> {
                 effect: self.effect,
             });
         }
-        let _ = self.mailbox.release(&self.engine.io);
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -334,7 +334,7 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let mut mailbox = match session.reserve_route() {
+        let mut mailbox = match self.io.reserve_operation(session.id) {
             Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
@@ -345,12 +345,12 @@ impl<S: Schema> Engine<S> {
         {
             Ok(permit) => permit,
             Err(reason) => {
-                let _ = mailbox.release(&self.io);
+                let _ = self.io.release_operation(&mut mailbox);
                 return Err(Rejected { request, reason });
             }
         };
         if let Err(reason) = self.admit(session, serial) {
-            let _ = mailbox.release(&self.io);
+            let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
         let mut task = RmwTask {
