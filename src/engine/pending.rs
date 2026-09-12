@@ -31,6 +31,7 @@ pub(crate) struct SessionRuntime {
     pub poll_cursor: Option<u64>,
     // The pool only retains budget control blocks;It can only be reused after all external holders exit.,User results are not retained.
     results: Vec<std::rc::Rc<()>>,
+    pub routes: Option<super::io_hub::SessionRoutes>,
 }
 
 impl SessionRuntime {
@@ -38,6 +39,7 @@ impl SessionRuntime {
         id: SessionId,
         registered: crate::coordination::RegisteredSession,
         tracker: std::sync::Arc<super::metrics::Tracker>,
+        routes: super::io_hub::SessionRoutes,
     ) -> Self {
         let crate::coordination::RegisteredSession {
             handle,
@@ -57,7 +59,14 @@ impl SessionRuntime {
             closing: false,
             poll_cursor: None,
             results: Vec::new(),
+            routes: Some(routes),
         }
+    }
+    pub fn reserve_route(&self) -> Result<super::io_hub::SessionRoute, Error> {
+        self.routes
+            .as_ref()
+            .ok_or(Error::InvalidState("session_routes_closed"))?
+            .reserve()
     }
     /// Preserve the identity of old tasks,Version and fixed serial number;The new context will only accept subsequent accepted requests..
     pub fn switch_version(&mut self, version: CheckpointVersion) -> Result<bool, Error> {
@@ -161,6 +170,11 @@ mod result_budget_tests {
             super::super::metrics::Metrics::new(false)
                 .register()
                 .unwrap(),
+            std::sync::Arc::new(
+                super::super::io_hub::CompletionHub::new(StoreId([1; 16]), 1).unwrap(),
+            )
+            .session_routes(id, 1)
+            .unwrap(),
         )
     }
 

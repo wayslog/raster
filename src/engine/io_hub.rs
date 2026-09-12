@@ -1,8 +1,12 @@
 //! Device completion only passes owned buffers across threads;Mailbox does not hold user requests or callbacks.
+mod session;
 use crate::{
     device::{CompletionRoute, Device, IoCompletion},
     types::*,
 };
+pub(crate) use session::{SessionRoute, SessionRoutes};
+#[cfg(test)]
+mod session_tests;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -14,6 +18,7 @@ struct Mailbox {
     id: RequestId,
     completion: Option<IoCompletion>,
     completions: u64,
+    capacity: Option<std::sync::Arc<session::SessionCapacity>>,
 }
 struct State {
     mailboxes: Mailboxes,
@@ -25,6 +30,7 @@ pub(crate) struct OperationRoute {
     id: RequestId,
     registered: bool,
     released: bool,
+    session_capacity: bool,
 }
 impl OperationRoute {
     pub fn id(&self) -> RequestId {
@@ -157,9 +163,17 @@ impl CompletionHub {
             id,
             registered: false,
             released: false,
+            session_capacity: false,
         })
     }
     pub fn activate_operation(&self, route: &mut OperationRoute) -> Result<(), Error> {
+        self.activate_with_capacity(route, None)
+    }
+    fn activate_with_capacity(
+        &self,
+        route: &mut OperationRoute,
+        capacity: Option<std::sync::Arc<session::SessionCapacity>>,
+    ) -> Result<(), Error> {
         if route.id.store != self.store || route.released {
             return Err(Error::InvalidState(
                 "operation route ownership does not match",
@@ -170,6 +184,11 @@ impl CompletionHub {
         }
         if route.registered {
             return Ok(());
+        }
+        if route.session_capacity != capacity.is_some() {
+            return Err(Error::InvalidState(
+                "operation capacity ownership does not match",
+            ));
         }
         let mut state = self
             .state
@@ -182,6 +201,7 @@ impl CompletionHub {
                 id,
                 completion: None,
                 completions: 0,
+                capacity,
             },
         );
         route.registered = true;
@@ -195,7 +215,7 @@ impl CompletionHub {
         }
         if route.registered {
             self.release(route.id)?;
-        } else {
+        } else if !route.session_capacity {
             // No mailbox or I/O buffer exists; this credit can also be returned
             // during failed shutdown without entering a poisoned mailbox table.
             self.occupied.fetch_sub(1, Ordering::Release);
@@ -250,8 +270,16 @@ impl CompletionHub {
                 "request mailbox ownership does not match",
             ));
         }
+        let global = state
+            .mailboxes
+            .get(&id.slot)
+            .expect("mailbox validated")
+            .capacity
+            .is_none();
         state.mailboxes.remove(&id.slot);
-        self.occupied.fetch_sub(1, Ordering::Release);
+        if global {
+            self.occupied.fetch_sub(1, Ordering::Release);
+        }
         Ok(())
     }
     /// Only if the device has shutdown,Called after all publishing threads have exited;The final state only discards possession completion,No more delivering tasks.

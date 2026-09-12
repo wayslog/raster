@@ -1,0 +1,10 @@
+{
+  "source_sha256": "991ce669c02085b2b1b1ccfc0e96f86e361e2db276abd93800bf25eaf573cdbb",
+  "binary_sha256": "ff345b36155d52712e43ec2a4e59ad7612c5864155c61566ecbc43c0b035f53f",
+  "valid_for_production": false,
+  "base_commit": "8b84661d3465715e17dc73d7f2aff26b785f0feb",
+  "status": "Invalid as a production optimization. Source restored after diagnostic measurements; no I/O or pending results were permitted or observed.",
+  "archive": "cpp-parity-unregistered-credit-cost.tar.gz",
+  "sha256": "558560db7a92d944acb227d1ce04ae2d7d611538a86cbc55115e72c085876f9a",
+  "archive_bytes": 8665
+}
