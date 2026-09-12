@@ -19,6 +19,10 @@ on:
         description: Optional full Rust commit SHA for an additional scan regression baseline
         type: string
         default: ''
+      memory_baseline_ref:
+        description: Optional full Rust commit SHA for an additional memory regression baseline
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -112,6 +116,7 @@ jobs:
         env:
           BASELINE_REF: ${{ inputs.baseline_ref }}
           SCAN_BASELINE_REF: ${{ inputs.scan_baseline_ref }}
+          MEMORY_BASELINE_REF: ${{ inputs.memory_baseline_ref }}
         run: |
           mkdir -p target/parity-evidence
           {
@@ -130,7 +135,8 @@ jobs:
             [[ "$BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASELINE_REF"
             git worktree add --detach target/parity-baseline "$BASELINE_REF"
-            # Use identical scan drivers when the baseline predates this example.
+            # Use identical drivers, including when a baseline predates an example.
+            cp examples/parity.rs target/parity-baseline/examples/parity.rs
             cp examples/parity_scan.rs target/parity-baseline/examples/parity_scan.rs
             cargo build --manifest-path target/parity-baseline/Cargo.toml \
               --target-dir target/parity-baseline-build --locked --release --example parity --example parity_scan
@@ -144,6 +150,15 @@ jobs:
             cargo build --manifest-path target/parity-scan-baseline/Cargo.toml \
               --target-dir target/parity-scan-baseline-build --locked --release --example parity_scan
             echo "rust_scan_baseline:$SCAN_BASELINE_REF" >> target/parity-evidence/environment.txt
+          fi
+          if [ -n "$MEMORY_BASELINE_REF" ]; then
+            [[ "$MEMORY_BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$MEMORY_BASELINE_REF"
+            git worktree add --detach target/parity-memory-baseline "$MEMORY_BASELINE_REF"
+            cp examples/parity.rs target/parity-memory-baseline/examples/parity.rs
+            cargo build --manifest-path target/parity-memory-baseline/Cargo.toml \
+              --target-dir target/parity-memory-baseline-build --locked --release --example parity
+            echo "rust_memory_baseline:$MEMORY_BASELINE_REF" >> target/parity-evidence/environment.txt
           fi
       - name: Compare alternating native engine samples
         shell: bash
@@ -165,6 +180,17 @@ jobs:
             --baseline-rust target/parity-baseline-build/release/examples/parity \
             --output target/parity-evidence/rust-baseline --min-throughput 0.98 --max-p99 1.10 \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-checks.txt
+      - name: Compare the additional preserved memory baseline on the same runner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.memory_baseline_ref != '' }}
+        shell: bash
+        env:
+          CASE_FILTER: ${{ inputs.case }}
+        run: |
+          set -o pipefail
+          python3 -u tools/performance/compare.py --rust target/release/examples/parity \
+            --baseline-rust target/parity-memory-baseline-build/release/examples/parity \
+            --output target/parity-evidence/rust-baseline-anchor --min-throughput 0.98 --max-p99 1.10 \
+            --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-anchor-checks.txt
       - name: Compare resident append and scans against the Rust baseline
         if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
         shell: bash

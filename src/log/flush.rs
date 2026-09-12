@@ -5,7 +5,7 @@ use crate::{
     storage::{SegmentedStorage, transfer::SegmentTransfer},
 };
 pub(crate) struct PageFlush {
-    control: Arc<std::sync::RwLock<LogState>>,
+    control: Arc<LogControl>,
     token: Arc<()>,
     storage: Arc<()>,
     route: CompletionRoute,
