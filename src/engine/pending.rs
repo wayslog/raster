@@ -23,6 +23,7 @@ pub(crate) struct ExecutionContext {
 }
 pub(crate) struct SessionRuntime {
     pub id: SessionId,
+    pub registration: crate::coordination::RegistrationHandle,
     pub current: ExecutionContext,
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
@@ -32,9 +33,15 @@ pub(crate) struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    pub fn new(id: SessionId, last_accepted: Option<Serial>, version: CheckpointVersion) -> Self {
+    pub fn new(id: SessionId, registered: crate::coordination::RegisteredSession) -> Self {
+        let crate::coordination::RegisteredSession {
+            handle,
+            version,
+            last_accepted,
+        } = registered;
         Self {
             id,
+            registration: handle,
             current: ExecutionContext {
                 version,
                 last_accepted,
@@ -140,7 +147,9 @@ mod result_budget_tests {
     use crate::api::completion::{Outcome, Ticket, TicketState};
 
     fn runtime() -> SessionRuntime {
-        SessionRuntime::new(SessionId([2; 16]), None, CheckpointVersion(0))
+        let coordinator = crate::coordination::Coordinator::new(1).unwrap();
+        let id = SessionId([2; 16]);
+        SessionRuntime::new(id, coordinator.enroll_registered(id).unwrap())
     }
 
     fn request_id() -> RequestId {
