@@ -14,7 +14,7 @@ struct Inflight {
 }
 pub(crate) struct SegmentTransfer {
     direction: Direction,
-    storage: Option<std::sync::Arc<()>>,
+    storage: Option<std::sync::Arc<crate::sync::InstanceId>>,
     start: LogAddress,
     bytes: Vec<u8>,
     cursor: usize,

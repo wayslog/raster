@@ -31,18 +31,20 @@ struct LogControl {
     // Keep the derived restriction with the control allocation instead of
     // shifting the page pool, record table, and enclosing engine fields.
     mutable_floor: crate::sync::AtomicU64,
+    identity: crate::sync::InstanceId,
 }
 impl LogControl {
-    fn new(state: LogState) -> Self {
+    fn new(state: LogState) -> Result<Self, Error> {
         let floor = state
             .frontiers
             .begin
             .max(state.frontiers.read_only)
             .max(state.frontiers.head);
-        Self {
+        Ok(Self {
             state: std::sync::RwLock::new(state),
             mutable_floor: crate::sync::AtomicU64::new(floor.0),
-        }
+            identity: crate::sync::InstanceId::new()?,
+        })
     }
 }
 impl std::ops::Deref for LogControl {
@@ -181,7 +183,7 @@ impl<V: ValueLayout> HybridLog<V> {
         Ok(Self {
             pool: page::PagePool::new(config.page_bytes, config.memory_pages)?,
             page_bytes: config.page_bytes,
-            state: Arc::new(LogControl::new(LogState::default())),
+            state: Arc::new(LogControl::new(LogState::default())?),
             layout,
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
@@ -227,7 +229,7 @@ impl<V: ValueLayout> HybridLog<V> {
                     tail: end,
                 },
                 ..Default::default()
-            })),
+            })?),
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
     }
@@ -1183,3 +1185,6 @@ pub(crate) mod flush;
 mod evict;
 pub(crate) mod lookup;
 pub(crate) mod read_page;
+
+#[cfg(test)]
+mod lookup_identity_tests;

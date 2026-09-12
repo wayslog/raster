@@ -14,12 +14,12 @@ enum Stage {
 }
 /// Non-clonable reserved credentials,It can only be obtained after completely synchronizing the directory hierarchy..
 pub(crate) struct PreparedDirectory {
-    pub(super) owner: Arc<()>,
+    pub(super) owner: Arc<crate::sync::InstanceId>,
     pub(super) store: StoreId,
     pub(super) token: CheckpointToken,
 }
 pub(crate) struct DirectoryPrepare {
-    owner: Arc<()>,
+    owner: Arc<crate::sync::InstanceId>,
     store: StoreId,
     token: CheckpointToken,
     path: PathBuf,

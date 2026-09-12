@@ -9,7 +9,7 @@ pub(crate) struct PageRead {
     page: PageId,
     page_bytes: usize,
     transfer: SegmentTransfer,
-    protection: Option<(std::sync::Arc<()>, SegmentReadLease)>,
+    protection: Option<(std::sync::Arc<crate::sync::InstanceId>, SegmentReadLease)>,
 }
 pub(crate) struct ReadPage {
     page: PageId,

@@ -50,6 +50,8 @@ LogAddress、CacheAddress、PageId、Generation 分开表达逻辑位置与物�
 
 LogControl 在原有控制分配内维护 `max(begin, read_only, head)` 的单调汇总。写线程在控制写锁内完成校验，先发布限制再更新对应控制边界；未通过校验或仍有未发布预留时不推进，冻结因值争用失败后则保留已发布的只读目标。可变查找检查控制对象及页池中毒后读取汇总，仍通过记录租约和值许可访问内容；特殊截断竞争再读完整边界。汇总只是排除旧地址，不赋予值访问权，也不承诺检查之后其他线程不会失败。此前锁内查询的实现与依据见 [边界查询记录](acceptance/P9.2可变记录边界查询.md)。
 
+LogLookup 使用 [进程内实例编号](../src/sync/identity.rs) 核验日志与存储归属，不为每次查询克隆只用于身份比较的控制对象。编号在构造时原子分配，耗尽后拒绝创建，不回绕、不随对象销毁而复用，也不写入磁盘格式。跨实例的推进、源记录回调和完成交付在修改查询状态前被拒绝。编号本身不延长对象寿命、不授予值访问权；实际 RecordLease、PageRead、SegmentReadLease 和设备缓冲区继续持有原有资源保护，不能用编号替代它们。验证见 [归属测试](../src/log/lookup_identity_tests.rs)。
+
 ## 5. Epoch、检查点版本和同键许可
 
 [EpochManager](../src/epoch/mod.rs) 负责参与者、嵌套 guard 和延迟动作；[Coordinator](../src/coordination/mod.rs) 负责身份、序号、版本切分和全局动作，二者不是同一个计数器。
