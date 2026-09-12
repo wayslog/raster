@@ -10,7 +10,7 @@ enum Phase {
     Failed,
 }
 pub(crate) struct CatalogLock {
-    owner: Arc<()>,
+    owner: Arc<crate::sync::InstanceId>,
     route: CompletionRoute,
     mode: FileLockMode,
     phase: Phase,

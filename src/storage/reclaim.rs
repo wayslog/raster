@@ -35,7 +35,7 @@ enum Stage {
     Done,
 }
 pub(crate) struct SegmentDelete {
-    owner: Arc<()>,
+    owner: Arc<crate::sync::InstanceId>,
     hub: Arc<CompletionHub>,
     id: RequestId,
     file: FileId,

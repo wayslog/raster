@@ -31,7 +31,7 @@ pub(crate) struct SegmentReadLease {
     _bindings: Vec<Arc<()>>,
 }
 pub(crate) struct SegmentedStorage {
-    pub identity: Arc<()>,
+    pub identity: Arc<crate::sync::InstanceId>,
     pub device: Arc<dyn Device>,
     pub segment_bytes: u64,
     segments: Mutex<BTreeMap<u64, Binding>>,
@@ -46,7 +46,7 @@ impl SegmentedStorage {
             });
         }
         Ok(Self {
-            identity: Arc::new(()),
+            identity: Arc::new(crate::sync::InstanceId::new()?),
             device,
             segment_bytes,
             segments: Mutex::new(BTreeMap::new()),

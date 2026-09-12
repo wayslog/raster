@@ -1,0 +1,42 @@
+{
+  "base_commit": "c6c2957e92ebb64711868ff1506624b0cd2a9271",
+  "scope": "Copyable non-reused identities for log lookup attribution; local candidate",
+  "source_sha256": {
+    "src/checkpoint/catalog.rs": "b3e6778c42cebd6a748f6e8334d1fa198190dffa9a7a11826b466c0d3cda6107",
+    "src/checkpoint/catalog_lock.rs": "3a93e50bcd1007e2a0ecbdd72b798b50753f7520d12e2b5effc4532a9ed56230",
+    "src/checkpoint/directory.rs": "091dc8fbb8cccedf3bc8eca9614ca0ae74bf6267dfb3f3a0954f3cbaa2d0c612",
+    "src/checkpoint/log_material.rs": "435e5b10db2f856031b60da372152d93743e349cee6a35cdf7a838a349d074d0",
+    "src/checkpoint/material.rs": "9bf4d541356c43c4f08abd42e8d9a0ff0b6faec1766650823fb88928db21d36e",
+    "src/checkpoint/read.rs": "2d343be98f457408e55d41de986757912a0b8568cb60a76cc0da4ddba7df257a",
+    "src/log/flush.rs": "e735b955746c89279d100edfa6c6869c3181765496a9a428756700bf7d0947c2",
+    "src/log/lookup.rs": "e61cd5e6ea2e7144d09c808be7a9e25f34f49344fd626d618add57a3ab8b66ea",
+    "src/log/mod.rs": "48770aac997dcb8f0f2bcd888e7b17500f45a6733eb111a6379f4980326f17bb",
+    "src/log/read_page.rs": "42bf018e706d4d56ff3043c6541b0f76077e56a677f6b4afb67d1a744a62097b",
+    "src/storage/mod.rs": "e2af76e0f75b1ae07cbda954aa1e8c7d510d4b7c39637928e6c8dba555b32d27",
+    "src/storage/open.rs": "0d076f6cac3799ce2ecebeee49dea41ae8cc9d452c70b5526955ea23740790bb",
+    "src/storage/reclaim.rs": "7d09f5c398ebf205dcad5b715edcc92ffa4609351b92a04d872d53cfb7260999",
+    "src/storage/transfer.rs": "bbceae28a675f7674ea5f8fa613a6ae7833634890f9407996eedf992abcfa601",
+    "src/sync/mod.rs": "b4fb2ea0e67bcc5a62f564344ea0d1b5789aeae48b20e0315e454aa5954077b4",
+    "src/sync/identity.rs": "358305de8807c44ac73c3cea6a7f51a01b364353941f1332009b3751d741fa6c",
+    "src/log/lookup_identity_tests.rs": "4f67f3e3b26f53b5acf918aa8a9e7179bdad67ef798dbbd95f61cf77c3550c66"
+  },
+  "binary_sha256": {
+    "parity": "b78c724a5f69c62a569fbcf7f6e15348a3d1065417ee8da77c6f99d10f41c8c0",
+    "parity_scan": "9ae689aa46a4cccebad794d726d67048435de550dc7fbeb4fdf77b0fbf6389fe",
+    "benchmark": "07ff7eaa1351c07f3038a48ac8f3131f9df1ca79913d92be24a1e7300ba62abc"
+  },
+  "tests": {
+    "passed": 494,
+    "failed": 0,
+    "ignored": 0
+  },
+  "status": "Native comparison pending; local memory 15/18, append/scan 0/2 and strict lifecycle 3/3; five local gates remain open",
+  "archive": "cpp-parity-lookup-identity-local.tar.gz",
+  "sha256": "4c0b883a12e0e67d47930647bf703541a1b5d373c007fecc626e3d14412f9a78",
+  "archive_bytes": 365339,
+  "memory_passed": 15,
+  "scan_passed": 0,
+  "strict_lifecycle_passed": 3,
+  "trace_files": 24,
+  "unique_traces": 3
+}

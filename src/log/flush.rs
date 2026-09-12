@@ -7,7 +7,7 @@ use crate::{
 pub(crate) struct PageFlush {
     control: Arc<LogControl>,
     token: Arc<()>,
-    storage: Arc<()>,
+    storage: Arc<crate::sync::InstanceId>,
     route: CompletionRoute,
     page: PageId,
     generation: Generation,
