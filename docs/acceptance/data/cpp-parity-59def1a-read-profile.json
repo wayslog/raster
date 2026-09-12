@@ -1,0 +1,32 @@
+{
+  "commit": "59def1aae2748efbac7854b3dfae6bfa0ce2e025",
+  "scope": "Diagnostic stack sampling; timing excluded from performance acceptance",
+  "binary_sha256": "f8cb9f32b93c3948de0325689b1512fa99af705e1d9b5df1e28cabdf52f3aa32",
+  "workload": {
+    "engine": "rust",
+    "operation": "read",
+    "distribution": "uniform",
+    "threads": 4,
+    "count": 80000000,
+    "elapsed_ns": 44618781750,
+    "p99_ns": 18542,
+    "samples": 1250000,
+    "checksum": 560000000,
+    "digest": 11881612521032259365,
+    "verified_keys": 1024,
+    "retries": 4326381,
+    "pending": 0
+  },
+  "sample_exit_code": 0,
+  "attribution": {
+    "worker_samples": 14004,
+    "mutex_wait_samples_by_nearest_engine_frame": {
+      "log frontier": 2128,
+      "coordinator": 1656,
+      "resident record lease": 1372
+    },
+    "note": "Sampled stack attribution is diagnostic; it does not establish exclusive CPU time or causal speedup."
+  },
+  "archive": "cpp-parity-59def1a-read.sample.txt.gz",
+  "sha256": "d37d123d35f1843bbfa374f447762ae1b9f32715bd7efdb41ee0710e5d40b172"
+}
