@@ -1,0 +1,12 @@
+{
+  "run": "https://github.com/wayslog/raster/actions/runs/34685574411",
+  "commit": "321bc04",
+  "baseline_commit": "24c20d1680de859666e42e4aa7ee0e0b39da721f",
+  "artifact": "cpp-parity-321bc04.tar.gz",
+  "sha256": "06c8573ffc0d6b2f6dd537b188963817d71c20c20dac590b6a8f2c981ae52314",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34685575098",
+  "cases_per_comparison": 18,
+  "rounds": 4,
+  "operations_per_run": 2000000,
+  "status": "All result checks and six native engineering jobs passed; all C++ parity gates failed. Rust baseline comparison passed 17 of 18 gates; shared-hot Upsert with four threads regressed in P99."
+}
