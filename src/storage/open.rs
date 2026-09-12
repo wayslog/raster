@@ -10,7 +10,7 @@ enum Stage {
     Done,
 }
 pub(crate) struct SegmentOpen {
-    owner: Arc<crate::sync::InstanceId>,
+    owner: Arc<()>,
     number: u64,
     generation: Generation,
     create_new: bool,

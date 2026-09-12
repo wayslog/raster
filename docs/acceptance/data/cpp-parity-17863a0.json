@@ -1,0 +1,32 @@
+{
+  "commit": "17863a0f87f6f686b8ce0cce5c510764d845a0b6",
+  "scope": "Completed native comparisons; candidate withdrawn after immediate-baseline regressions",
+  "native_run": 34713215619,
+  "ci_run": 34713217397,
+  "ci_conclusion": "success",
+  "comparisons": {
+    "memory": {
+      "passed": 0,
+      "total": 18
+    },
+    "rust-baseline": {
+      "passed": 10,
+      "total": 18
+    },
+    "rust-baseline-anchor": {
+      "passed": 18,
+      "total": 18
+    },
+    "resident-scans": {
+      "passed": 2,
+      "total": 2
+    },
+    "resident-scans-anchor": {
+      "passed": 2,
+      "total": 2
+    }
+  },
+  "archive": "cpp-parity-17863a0.tar.gz",
+  "sha256": "41b8c1ac0051b2a865d7179bc5cbe49e0cdc11a3a95fb688021568dd0077795c",
+  "archive_bytes": 36653
+}

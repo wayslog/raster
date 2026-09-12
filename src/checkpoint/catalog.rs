@@ -28,7 +28,7 @@ enum Stage {
     Finish,
 }
 pub(crate) struct CatalogRead {
-    owner: Arc<crate::sync::InstanceId>,
+    owner: Arc<()>,
     guard: FileId,
     route: CompletionRoute,
     store: StoreId,

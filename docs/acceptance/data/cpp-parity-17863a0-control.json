@@ -1,0 +1,15 @@
+{
+  "commit": "17863a0f87f6f686b8ce0cce5c510764d845a0b6",
+  "scope": "Identical-source native control and local representation diagnostics; does not waive candidate regressions",
+  "native_run": 34714299096,
+  "byte_identical_binaries": true,
+  "memory_passed": 15,
+  "memory_total": 18,
+  "scan_passed": 1,
+  "scan_total": 2,
+  "local_source_root_control_byte_identical": true,
+  "layout_probe": "Current, previous-owner and nonzero-field lookup layouts all measured 400 bytes, including Option, with matching key and identity offsets on macOS ARM64.",
+  "archive": "cpp-parity-17863a0-control.tar.gz",
+  "sha256": "269eb7163e022ccaf7f04f8e7ab3bfb164e11697fd9be9241e505cba146ecca8",
+  "archive_bytes": 58668
+}

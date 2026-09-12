@@ -18,8 +18,8 @@ pub(crate) enum LookupStep<V: ValueLayout> {
     Continue,
 }
 pub(crate) struct LogLookup {
-    owner: crate::sync::InstanceId,
-    storage: crate::sync::InstanceId,
+    owner: Arc<LogControl>,
+    storage: Arc<()>,
     key: EncodedKey,
     next: Option<LogAddress>,
     route: CompletionRoute,
@@ -55,8 +55,8 @@ impl<V: ValueLayout> HybridLog<V> {
             address.validate()?;
         }
         Ok(LogLookup {
-            owner: self.state.identity,
-            storage: *storage.identity,
+            owner: self.state.clone(),
+            storage: storage.identity.clone(),
             key: key.into(),
             next: head,
             route,
@@ -105,7 +105,7 @@ impl LogLookup {
         storage: &SegmentedStorage,
         publish: impl FnOnce(&[u8]) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        if self.owner != log.state.identity || self.storage != *storage.identity {
+        if !Arc::ptr_eq(&self.owner, &log.state) || !Arc::ptr_eq(&self.storage, &storage.identity) {
             return Err(Error::InvalidState(
                 "Source record query attribution does not match",
             ));
@@ -174,7 +174,7 @@ impl LogLookup {
         storage: &SegmentedStorage,
         completion: IoCompletion,
     ) -> Result<(), Rejected<IoCompletion>> {
-        if self.storage != *storage.identity {
+        if !Arc::ptr_eq(&self.storage, &storage.identity) {
             return Err(Rejected {
                 request: completion,
                 reason: Error::InvalidState("Query belongs to other storage"),
@@ -194,7 +194,7 @@ impl LogLookup {
         storage: &SegmentedStorage,
         budget: PollBudget,
     ) -> Result<LookupStep<V>, Error> {
-        if self.owner != log.state.identity || self.storage != *storage.identity {
+        if !Arc::ptr_eq(&self.owner, &log.state) || !Arc::ptr_eq(&self.storage, &storage.identity) {
             return Err(Error::InvalidState("Query attribution does not match"));
         }
         if self.ended {
