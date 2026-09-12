@@ -69,6 +69,55 @@ fn fixed_trajectories_are_compared_operation_by_operation_through_the_real_engin
     replay(Trace::decode(include_str!("fixtures/p0.trace")).unwrap());
 }
 #[test]
+fn byte_key_storage_boundaries_preserve_full_keys_across_four_operations() {
+    let keys: Vec<_> = [0, 1, 15, 16, 17, 31, 64, 1024]
+        .into_iter()
+        .map(|length| vec![0xfa; length])
+        .chain([vec![0; 17], {
+            let mut key = vec![0; 17];
+            key[16] = 1;
+            key
+        }])
+        .collect();
+    let mut steps = Vec::new();
+    for stage in 0..9 {
+        for (index, key) in keys.iter().enumerate() {
+            let operation = match stage {
+                0 => Operation::Upsert(Value::Number(index as u64)),
+                1 => Operation::Rmw {
+                    operand: Value::Number(9),
+                    create_if_missing: false,
+                },
+                2 | 7 => Operation::Read {
+                    abort_if_tombstone: false,
+                },
+                3 => Operation::Delete {
+                    force_tombstone: true,
+                },
+                4 => Operation::Read {
+                    abort_if_tombstone: true,
+                },
+                5 => Operation::Rmw {
+                    operand: Value::Number(1),
+                    create_if_missing: false,
+                },
+                6 => Operation::Upsert(Value::Bytes(vec![index as u8; 80])),
+                8 => Operation::Delete {
+                    force_tombstone: false,
+                },
+                _ => unreachable!(),
+            };
+            steps.push(Step {
+                session: index as u64 % 2,
+                serial: steps.len() as u64 + 1,
+                key: key.clone(),
+                operation,
+            });
+        }
+    }
+    replay(Trace { seed: 0, steps });
+}
+#[test]
 fn determining_seed_mix_values_for_multi_session_four_operation_control() {
     for seed in [0, 1, 42, 0xabcdef, u64::MAX] {
         replay(Trace::generate(seed, 1500));

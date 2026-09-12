@@ -25,7 +25,7 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
     request: Option<O>,
     options: DeleteOptions,
     completed: bool,
-    key: Vec<u8>,
+    key: super::EncodedKey,
     hash: KeyHash,
     effect: Effect,
     complete: Completer<O::Output>,

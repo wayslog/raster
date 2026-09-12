@@ -33,7 +33,7 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     monitor: super::metrics::Monitor,
     request: Option<O>,
     prepared: Option<Prepared<S, O::Output>>,
-    key: Vec<u8>,
+    key: super::EncodedKey,
     hash: KeyHash,
     effect: Effect,
     complete: Option<Completer<O::Output>>,

@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     device::{CompletionRoute, IoCompletion},
+    schema::encoded_key::EncodedKey,
     storage::SegmentedStorage,
 };
 pub(crate) enum LookupStep<V: ValueLayout> {
@@ -19,7 +20,7 @@ pub(crate) enum LookupStep<V: ValueLayout> {
 pub(crate) struct LogLookup {
     owner: Arc<crate::sync::Mutex<LogState>>,
     storage: Arc<()>,
-    key: Vec<u8>,
+    key: EncodedKey,
     next: Option<LogAddress>,
     route: CompletionRoute,
     reading: Option<(PageId, PageRead)>,
@@ -32,7 +33,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn lookup_metadata(
         &self,
         storage: &SegmentedStorage,
-        key: Vec<u8>,
+        key: impl Into<EncodedKey>,
         head: Option<LogAddress>,
         route: CompletionRoute,
     ) -> Result<LogLookup, Error> {
@@ -44,7 +45,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn lookup(
         &self,
         storage: &SegmentedStorage,
-        key: Vec<u8>,
+        key: impl Into<EncodedKey>,
         head: Option<LogAddress>,
         route: CompletionRoute,
     ) -> Result<LogLookup, Error> {
@@ -54,7 +55,7 @@ impl<V: ValueLayout> HybridLog<V> {
         Ok(LogLookup {
             owner: self.state.clone(),
             storage: storage.identity.clone(),
-            key,
+            key: key.into(),
             next: head,
             route,
             reading: None,
@@ -95,14 +96,14 @@ impl LogLookup {
         }
         if address >= frontiers.head {
             let lease = log.lease(address)?;
-            if lease.key() != self.key {
+            if lease.key() != &*self.key {
                 return Err(Error::InvalidState("Source record key changed"));
             }
             return lease.value.with_record_snapshot(publish);
         }
         let (_, page) = self.cached.as_ref().ok_or(Error::Busy)?;
         let record = page.record(address)?;
-        if record.key != self.key {
+        if record.key != &*self.key {
             return Err(Error::InvalidFormat("Disk source record key mismatch"));
         }
         let length = record.header.encoded_len()?;
@@ -219,7 +220,7 @@ impl LogLookup {
                     Err(Error::RangeTruncated) if address < log.frontiers()?.head => continue,
                     Err(error) => return Err(error),
                 };
-                if lease.key() == self.key {
+                if lease.key() == &*self.key {
                     self.matched = Some(address);
                     return Ok(if lease.is_tombstone() {
                         LookupStep::Tombstone
@@ -236,7 +237,7 @@ impl LogLookup {
                     && *cached_page == page
                 {
                     let record = bytes.record(address)?;
-                    if record.key == self.key {
+                    if record.key == &*self.key {
                         self.matched = Some(address);
                         return Ok(if record.header.tombstone {
                             LookupStep::Tombstone

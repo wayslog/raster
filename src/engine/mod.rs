@@ -24,6 +24,7 @@ pub(crate) mod thread_sessions;
 mod upsert;
 mod version_permit;
 
+use crate::schema::encoded_key::EncodedKey;
 use crate::{
     cache::ReadCache, config::Config, coordination::Coordinator, epoch::EpochManager,
     index::MemIndex, log::HybridLog, schema::Schema, storage::SegmentedStorage, types::*,
@@ -63,7 +64,7 @@ impl<S: Schema> Engine<S> {
         session: &SessionRuntime,
         serial: Serial,
         request: &O,
-    ) -> Result<(KeyHash, Vec<u8>), Error> {
+    ) -> Result<(KeyHash, EncodedKey), Error> {
         use crate::schema::KeyCodec;
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(Error::InvalidState("Session closed or engine failed"));
@@ -84,11 +85,7 @@ impl<S: Schema> Engine<S> {
             let key = request.key();
             let hash = codec.hash(key);
             let len = codec.encoded_len(key)? as usize;
-            let mut bytes = Vec::new();
-            bytes
-                .try_reserve_exact(len)
-                .map_err(|_| Error::OutOfMemory)?;
-            bytes.resize(len, 0);
+            let mut bytes = EncodedKey::zeroed(len)?;
             codec.encode(key, &mut bytes)?;
             Ok((hash, bytes))
         })) {

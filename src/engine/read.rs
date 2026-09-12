@@ -25,7 +25,7 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     request: Option<O>,
     lookup: Option<LogLookup>,
     observed: Option<crate::index::EntrySnapshot>,
-    key: Vec<u8>,
+    key: super::EncodedKey,
     hash: KeyHash,
     options: ReadOptions,
     complete: Option<Completer<O::Output>>,
