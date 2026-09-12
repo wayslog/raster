@@ -1,0 +1,39 @@
+{
+  "base_commit": "793e9c8828e7f1b3e940b72a1e347aa216c7be63",
+  "scope": "Cold query state only; the direct statistics observer refinement has been withdrawn.",
+  "source_sha256": {
+    "src/log/lookup.rs": "9b8850dc55b5d8fc6aee940116d221708675ecbb6bcb51248011542e15f5d6e1"
+  },
+  "frozen_binary_sha256": {
+    "parity": "add932cf667aed4d6952a02d2ec4c29aaae4263dbcc9bd8006990d74e6df677f",
+    "parity_scan": "0eb54aba9c19ab1bd02cdc88080167038758c1cac36883b2580072d090ebcf72",
+    "benchmark": "3828ba70682e6fac0d1d6c480c8a0c7c3e8f75dee39b2144ed773ca16cc7ab28"
+  },
+  "rebuilt_binary_sha256": {
+    "parity": "add932cf667aed4d6952a02d2ec4c29aaae4263dbcc9bd8006990d74e6df677f",
+    "parity_scan": "0eb54aba9c19ab1bd02cdc88080167038758c1cac36883b2580072d090ebcf72",
+    "benchmark": "3828ba70682e6fac0d1d6c480c8a0c7c3e8f75dee39b2144ed773ca16cc7ab28"
+  },
+  "checks": {
+    "final-fmt": {
+      "exit_code": 0,
+      "output": ""
+    },
+    "final-examples": {
+      "exit_code": 0,
+      "output": "   Compiling raster v0.1.0 (worktree)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.62s\n     Running unittests examples/automatic.rs (target/debug/examples/automatic-ad68d24c9d1cc56f)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/benchmark/main.rs (target/debug/examples/benchmark-8d4809ec814470aa)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/disk_lifecycle/main.rs (target/debug/examples/disk_lifecycle-d70a944a95733331)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/interface.rs (target/debug/examples/interface-1b4d4ebb9f7babf4)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/memory.rs (target/debug/examples/memory-956166cab82af266)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/memory_matrix.rs (target/debug/examples/memory_matrix-e871d4e04e6f44f6)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/parity.rs (target/debug/examples/parity-6b6a4a8a3105026e)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/parity_scan.rs (target/debug/examples/parity_scan-4faf30d70780d220)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running unittests examples/resource_cycles.rs (target/debug/examples/resource_cycles-f2deaa1d0cd42c70)\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    "final-rustdoc": {
+      "exit_code": 0,
+      "output": " Documenting raster v0.1.0 (worktree)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.63s\n   Generated worktree/target/doc/raster/index.html\n"
+    },
+    "rebuild-default": {
+      "exit_code": 0,
+      "output": "   Compiling raster v0.1.0 (worktree)\n    Finished `release` profile [optimized] target(s) in 5.61s\n"
+    },
+    "rebuild-benchmark": {
+      "exit_code": 0,
+      "output": "   Compiling raster v0.1.0 (worktree)\n    Finished `release` profile [optimized] target(s) in 6.62s\n"
+    }
+  }
+}

@@ -23,13 +23,18 @@ pub(crate) struct LogLookup {
     key: EncodedKey,
     next: Option<LogAddress>,
     route: CompletionRoute,
-    reading: Option<(PageId, PageRead)>,
-    cached: Option<(PageId, ReadPage)>,
+    cold: Vec<ColdLookup>,
     ended: bool,
     matched: Option<LogAddress>,
     needs_value: bool,
     io_enabled: bool,
     awaiting_route: bool,
+}
+/// Cold state is allocated only when the query can submit its first page read.
+/// A fallible single-element vector keeps allocation failure on the error path.
+struct ColdLookup {
+    reading: Option<(PageId, PageRead)>,
+    cached: Option<(PageId, ReadPage)>,
 }
 impl<V: ValueLayout> HybridLog<V> {
     pub fn lookup_metadata(
@@ -60,8 +65,7 @@ impl<V: ValueLayout> HybridLog<V> {
             key: key.into(),
             next: head,
             route,
-            reading: None,
-            cached: None,
+            cold: Vec::new(),
             ended: false,
             matched: None,
             needs_value: true,
@@ -91,8 +95,9 @@ impl LogLookup {
         self.awaiting_route = false;
     }
     pub fn has_inflight(&self) -> bool {
-        self.reading
-            .as_ref()
+        self.cold
+            .first()
+            .and_then(|cold| cold.reading.as_ref())
             .is_some_and(|(_, reading)| reading.has_inflight())
     }
     pub fn matched_address(&self) -> Option<LogAddress> {
@@ -124,7 +129,11 @@ impl LogLookup {
             }
             return lease.value.with_record_snapshot(publish);
         }
-        let (_, page) = self.cached.as_ref().ok_or(Error::Busy)?;
+        let (_, page) = self
+            .cold
+            .first()
+            .and_then(|cold| cold.cached.as_ref())
+            .ok_or(Error::Busy)?;
         let record = page.record(address)?;
         if record.key != &*self.key {
             return Err(Error::InvalidFormat("Disk source record key mismatch"));
@@ -146,7 +155,7 @@ impl LogLookup {
         let Some(address) = self.next else {
             return Ok(None);
         };
-        let Some((_, page)) = &self.cached else {
+        let Some((_, page)) = self.cold.first().and_then(|cold| cold.cached.as_ref()) else {
             return Ok(None);
         };
         let record = page.record(address)?;
@@ -180,7 +189,8 @@ impl LogLookup {
                 reason: Error::InvalidState("Query belongs to other storage"),
             });
         }
-        let Some((_, reading)) = self.reading.as_mut() else {
+        let Some((_, reading)) = self.cold.first_mut().and_then(|cold| cold.reading.as_mut())
+        else {
             return Err(Rejected {
                 request: completion,
                 reason: Error::InvalidState("The query is not waiting for the I/O"),
@@ -212,10 +222,12 @@ impl LogLookup {
         storage: &SegmentedStorage,
         budget: PollBudget,
     ) -> Result<LookupStep<V>, Error> {
-        if let Some((page, reading)) = self.reading.as_mut() {
+        if let Some(cold) = self.cold.first_mut()
+            && let Some((page, reading)) = cold.reading.as_mut()
+        {
             if let Some(bytes) = reading.finish(storage)? {
-                self.cached = Some((*page, bytes));
-                self.reading = None;
+                cold.cached = Some((*page, bytes));
+                cold.reading = None;
             } else {
                 return match reading.submit_next(storage) {
                     Ok(_) => Ok(LookupStep::AwaitingIo),
@@ -256,7 +268,8 @@ impl LogLookup {
                 self.next = lease.previous();
             } else {
                 let page = address.page_offset(log.page_bytes as u64)?.0;
-                if let Some((cached_page, bytes)) = &self.cached
+                if let Some((cached_page, bytes)) =
+                    self.cold.first().and_then(|cold| cold.cached.as_ref())
                     && *cached_page == page
                 {
                     let record = bytes.record(address)?;
@@ -276,10 +289,20 @@ impl LogLookup {
                         self.awaiting_route = true;
                         return Ok(LookupStep::Continue);
                     }
-                    self.cached = None;
+                    if self.cold.is_empty() {
+                        self.cold
+                            .try_reserve_exact(1)
+                            .map_err(|_| Error::OutOfMemory)?;
+                        self.cold.push(ColdLookup {
+                            reading: None,
+                            cached: None,
+                        });
+                    }
+                    let cold = &mut self.cold[0];
+                    cold.cached = None;
                     let mut reading = PageRead::new(page, log.page_bytes, self.route)?;
                     let submitted = reading.submit_next(storage);
-                    self.reading = Some((page, reading));
+                    cold.reading = Some((page, reading));
                     return match submitted {
                         Ok(_) => Ok(LookupStep::AwaitingIo),
                         Err(Error::Busy) => Ok(LookupStep::Continue),
