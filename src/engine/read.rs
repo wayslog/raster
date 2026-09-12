@@ -2,8 +2,7 @@
 use super::{
     Engine, SessionRuntime,
     io_hub::CompletionHub,
-    pending::TaskStep,
-    task::{BorrowedTask, TaskWork},
+    pending::{PendingTask, TaskStep},
 };
 use crate::{
     api::{
@@ -21,7 +20,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 struct ReadTask<S: Schema, O: ReadOperation<S>> {
-    schema: std::marker::PhantomData<fn() -> S>,
+    engine: Arc<Engine<S>>,
     monitor: super::metrics::Monitor,
     request: Option<O>,
     lookup: Option<LogLookup>,
@@ -37,53 +36,53 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     permit: super::version_permit::VersionPermit,
 }
 impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
-    fn prepare_pending(&mut self, engine: &Arc<Engine<S>>) -> Result<bool, Error> {
+    fn prepare_pending(&mut self) -> Result<bool, Error> {
         let awaiting_route = self.lookup.as_ref().is_some_and(LogLookup::awaiting_route);
-        engine.io.activate_operation(&mut self.mailbox)?;
+        self.engine.io.activate_operation(&mut self.mailbox)?;
         if let Some(lookup) = &mut self.lookup {
             lookup.enable_io();
         }
         Ok(awaiting_route)
     }
-    fn run_initial(&mut self, engine: &Arc<Engine<S>>, budget: PollBudget) -> TaskStep {
-        if matches!(self.step(engine, budget), TaskStep::Complete) {
+    fn run_initial(&mut self, budget: PollBudget) -> TaskStep {
+        if matches!(self.step(budget), TaskStep::Complete) {
             return TaskStep::Complete;
         }
-        match self.prepare_pending(engine) {
+        match self.prepare_pending() {
             // Only the pre-I/O suspension is resumed here. It has not called
             // a value callback or submitted any device request yet.
-            Ok(true) => self.step(engine, budget),
+            Ok(true) => self.step(budget),
             Ok(false) => TaskStep::Retry,
             Err(cause) => {
-                self.finish(
-                    engine,
-                    Err(OperationError {
-                        cause,
-                        effect: Effect::NotApplied,
-                    }),
-                );
+                self.finish(Err(OperationError {
+                    cause,
+                    effect: Effect::NotApplied,
+                }));
                 TaskStep::Complete
             }
         }
     }
-    fn finish(&mut self, engine: &Arc<Engine<S>>, result: OperationResult<O::Output>) {
+    fn finish(&mut self, result: OperationResult<O::Output>) {
         if let Some(request) = self.request.take() {
-            let result = engine.finish_request(request, result, Effect::NotApplied);
+            let result = self
+                .engine
+                .finish_request(request, result, Effect::NotApplied);
             if let Some(complete) = &self.complete {
-                engine.complete_tracked(
+                self.engine.complete_tracked(
                     &mut self.monitor,
                     self.mailbox.registered_id(),
                     complete,
                     result,
                 );
             } else {
-                engine.record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
+                self.engine
+                    .record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
                 self.ready = Some(result);
             }
         }
     }
 }
-impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
+impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
     fn id(&self) -> RequestId {
         self.mailbox.id()
     }
@@ -93,50 +92,46 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
     fn version(&self) -> CheckpointVersion {
         self.version
     }
-    fn on_io(&mut self, engine: &Arc<Engine<S>>, completion: IoCompletion) -> Result<(), Error> {
+    fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
         self.lookup
             .as_mut()
             .ok_or(Error::InvalidState("Read without waiting for disk query"))?
-            .accept(&engine.storage, completion)
+            .accept(&self.engine.storage, completion)
             .map_err(|rejected| rejected.reason)
     }
-    fn step(&mut self, engine: &Arc<Engine<S>>, budget: PollBudget) -> TaskStep {
+    fn step(&mut self, budget: PollBudget) -> TaskStep {
         if self.request.is_none() {
             return TaskStep::Complete;
         }
-        if engine.failed.load(Ordering::SeqCst) {
-            self.abandon(
-                engine,
-                OperationError {
-                    cause: Error::InvalidState("engine_failed_closed"),
-                    effect: Effect::NotApplied,
-                },
-            );
+        if self.engine.failed.load(Ordering::SeqCst) {
+            self.abandon(OperationError {
+                cause: Error::InvalidState("engine_failed_closed"),
+                effect: Effect::NotApplied,
+            });
             return TaskStep::Complete;
         }
         match self.permit.ready() {
             Ok(true) => {}
             Ok(false) => return TaskStep::Retry,
             Err(cause) => {
-                self.abandon(
-                    engine,
-                    OperationError {
-                        cause,
-                        effect: Effect::NotApplied,
-                    },
-                );
+                self.abandon(OperationError {
+                    cause,
+                    effect: Effect::NotApplied,
+                });
                 return TaskStep::Complete;
             }
         }
         let result = catch_unwind(AssertUnwindSafe(
             || -> Result<Option<Outcome<O::Output>>, Error> {
                 if self.lookup.is_none() {
-                    let resolved = engine.resolve_index(self.hash, &self.key)?;
-                    if engine.config.cache.enabled {
-                        engine.metrics.cache(super::metrics::CacheEvent::Lookup);
+                    let resolved = self.engine.resolve_index(self.hash, &self.key)?;
+                    if self.engine.config.cache.enabled {
+                        self.engine
+                            .metrics
+                            .cache(super::metrics::CacheEvent::Lookup);
                     }
                     if let Some(record) = resolved.cached {
-                        if record.source < engine.log.frontiers()?.begin {
+                        if record.source < self.engine.log.frontiers()?.begin {
                             // GC Cache header replaced;Reparse index,Live keys after migration cannot be reported as truncated.
                             return Ok(None);
                         }
@@ -144,11 +139,11 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
                         if encoded.header.version != record.version {
                             return Err(Error::InvalidState("Cache record version mismatch"));
                         }
-                        engine.metrics.cache(super::metrics::CacheEvent::Hit);
+                        self.engine.metrics.cache(super::metrics::CacheEvent::Hit);
                         if let crate::index::IndexHead::Cache(address) = resolved.entry.head {
-                            engine.cache.touch(address)?;
+                            self.engine.cache.touch(address)?;
                         }
-                        let value = engine.log.decode_temporary(encoded.value)?;
+                        let value = self.engine.log.decode_temporary(encoded.value)?;
                         return value
                             .read(|view| {
                                 self.request
@@ -159,8 +154,8 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
                             .map(|value| Some(Outcome::Success(value)));
                     }
                     self.observed = Some(resolved.entry);
-                    let mut lookup = engine.log.lookup_deferred(
-                        &engine.storage,
+                    let mut lookup = self.engine.log.lookup_deferred(
+                        &self.engine.storage,
                         self.key.clone(),
                         resolved.head,
                         CompletionHub::route(self.mailbox.id()),
@@ -175,8 +170,8 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
                     .as_mut()
                     .expect("The request has not yet been finalized");
                 match self.lookup.as_mut().expect("query_created").step(
-                    &engine.log,
-                    &engine.storage,
+                    &self.engine.log,
+                    &self.engine.storage,
                     budget,
                 )? {
                     LookupStep::Continue | LookupStep::AwaitingIo => Ok(None),
@@ -185,7 +180,7 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
                     }
                     LookupStep::Missing => {
                         // Compaction may have moved the chain head and pushed forward while the cold read was waiting begin;Missing old link does not mean missing key.
-                        if self.observed != Some(engine.index.prepare(self.hash)?) {
+                        if self.observed != Some(self.engine.index.prepare(self.hash)?) {
                             self.lookup = None;
                             self.observed = None;
                             Ok(None)
@@ -218,7 +213,7 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
                         }
                     }
                     LookupStep::Decoded(value) => {
-                        engine.populate_cache(
+                        self.engine.populate_cache(
                             self.hash,
                             self.observed.expect("Index snapshot saved"),
                             self.lookup.as_ref().expect("query_created"),
@@ -234,7 +229,6 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
             Ok(Ok(None)) => TaskStep::Retry,
             Ok(result) => {
                 self.finish(
-                    engine,
                     result
                         .map(|value| value.expect("Incomplete results excluded"))
                         .map_err(|cause| OperationError {
@@ -245,32 +239,28 @@ impl<S: Schema, O: ReadOperation<S>> TaskWork<S> for ReadTask<S, O> {
                 TaskStep::Complete
             }
             Err(_) => {
-                engine.failed.store(true, Ordering::SeqCst);
-                self.abandon(
-                    engine,
-                    OperationError {
-                        cause: Error::InvalidState("Read callback panic"),
-                        effect: Effect::NotApplied,
-                    },
-                );
+                self.engine.failed.store(true, Ordering::SeqCst);
+                self.abandon(OperationError {
+                    cause: Error::InvalidState("Read callback panic"),
+                    effect: Effect::NotApplied,
+                });
                 TaskStep::Complete
             }
         }
     }
-    fn abandon(&mut self, engine: &Arc<Engine<S>>, error: OperationError) {
-        self.finish(engine, Err(error));
+    fn abandon(&mut self, error: OperationError) {
+        self.finish(Err(error));
     }
-    fn cleanup(&mut self, engine: &Arc<Engine<S>>) {
+}
+impl<S: Schema, O: ReadOperation<S>> Drop for ReadTask<S, O> {
+    fn drop(&mut self) {
         if self.request.is_some() {
-            self.abandon(
-                engine,
-                OperationError {
-                    cause: Error::SessionAbandoned,
-                    effect: Effect::NotApplied,
-                },
-            );
+            self.abandon(OperationError {
+                cause: Error::SessionAbandoned,
+                effect: Effect::NotApplied,
+            });
         }
-        let _ = engine.io.release_operation(&mut self.mailbox);
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -325,29 +315,23 @@ impl<S: Schema> Engine<S> {
             let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
-        let mut task = BorrowedTask::new(
-            self,
-            ReadTask {
-                monitor: self.metrics.accept(super::metrics::Kind::Read),
-                schema: std::marker::PhantomData,
-                request: Some(request),
-                lookup: None,
-                observed: None,
-                key,
-                hash,
-                options,
-                complete: None,
-                ready: None,
-                mailbox,
-                serial,
-                version: session.current.version,
-                permit,
-            },
-        );
-        if matches!(
-            task.run_initial(self, PollBudget::default()),
-            TaskStep::Complete
-        ) {
+        let mut task = ReadTask {
+            monitor: self.metrics.accept(super::metrics::Kind::Read),
+            engine: self.clone(),
+            request: Some(request),
+            lookup: None,
+            observed: None,
+            key,
+            hash,
+            options,
+            complete: None,
+            ready: None,
+            mailbox,
+            serial,
+            version: session.current.version,
+            permit,
+        };
+        if matches!(task.run_initial(PollBudget::default()), TaskStep::Complete) {
             Ok(Submission::Ready(
                 task.ready
                     .take()
@@ -359,10 +343,7 @@ impl<S: Schema> Engine<S> {
             let (ticket, complete) = Ticket::pair_bounded(id, credit);
             task.complete = Some(complete);
             task.monitor.pending();
-            session
-                .current
-                .tasks
-                .insert(id.slot, Box::new(task.into_owned()));
+            session.current.tasks.insert(id.slot, Box::new(task));
             Ok(Submission::Pending(ticket))
         }
     }
