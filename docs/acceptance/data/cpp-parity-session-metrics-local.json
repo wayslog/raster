@@ -1,0 +1,34 @@
+{
+  "base_commit": "9e8e4dae22b9756d4d3fc377d0c9eca4109c10a8",
+  "scope": "Per-session activity and monitor ownership; local candidate",
+  "source_sha256": {
+    "src/api/store.rs": "7ce25e37dc0365ed20f6207549e293f7fc1095c415683e86c2aca8f6d5bfddc3",
+    "src/engine/delete.rs": "50c62d4e93f500c3184d87f390c35a47441ac6d93eafed7fa15555232b948257",
+    "src/engine/metrics.rs": "26467a74e6023a09944ef41835bb6da5696f9ab40127531c7c0578a408d5a2f8",
+    "src/engine/metrics/session_tests.rs": "66689eb50fa058e5f00394d0587fc54733a276b8897012c95c1fc05adb375f38",
+    "src/engine/metrics/tracker_tests.rs": "29ffb6c259c263aea8140a3f73a46b90cd8d83da8d582aed804d19adf9357838",
+    "src/engine/pending.rs": "aca40fa5209bd45a076f6ffe76a0575778ec6e44a4534acd4e2a0ba3bc71050e",
+    "src/engine/read.rs": "af545be6d7c5a64a87511f0d74f42bf0e6a5b32c1d9e9ae5fe7c85280187dbe5",
+    "src/engine/rmw.rs": "3c947e9f7aadd645462c7876a6d540e0736bc36e4ed9a2cad1fb8b30cf4456a4",
+    "src/engine/upsert.rs": "3eac4491876b965dbe207dcdde323ec78ceb20e94514ea84cf5640d4c3b8b531"
+  },
+  "binary_sha256": {
+    "parity": "606252448427868b94cd88e6bca1a8000fddff911c38b3fbf14486fbc1a47907",
+    "parity_scan": "5439fbad353e31583c10b42225a0f66ef61f6822e3b5e714c2c0939906b5aa7e",
+    "benchmark": "f0ea58c882eb241b0933208c67c903342280ce73ce5655fb18c0fc37beb5d77c"
+  },
+  "tests": {
+    "passed": 493,
+    "failed": 0,
+    "ignored": 0
+  },
+  "status": "Native comparison pending; local memory 16/18, append/scan 0/2 and strict lifecycle 3/3; four local gates remain open",
+  "archive": "cpp-parity-session-metrics-local.tar.gz",
+  "sha256": "57feb5f2b716c026cd52b6de013fc6cd357fdde287f68bc3eb36663f2e896bb8",
+  "archive_bytes": 365154,
+  "memory_passed": 16,
+  "scan_passed": 0,
+  "strict_lifecycle_passed": 3,
+  "trace_files": 24,
+  "unique_traces": 3
+}

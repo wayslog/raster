@@ -354,7 +354,7 @@ impl<S: Schema> Engine<S> {
             return Err(Rejected { request, reason });
         }
         let mut task = RmwTask {
-            monitor: self.metrics.accept(super::metrics::Kind::Rmw),
+            monitor: session.tracker.accept(super::metrics::Kind::Rmw),
             engine: self.clone(),
             request: Some(request),
             lookup: None,

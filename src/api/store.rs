@@ -59,6 +59,7 @@ impl<S: Schema> RasterKV<S> {
             return Err(Error::InvalidState("engine_failed_closed"));
         }
         let thread_session = self.inner.thread_sessions.enter()?;
+        let tracker = self.inner.metrics.register()?;
         let id = match options.id {
             Some(id) => id,
             None => SessionId::generate()?,
@@ -76,7 +77,7 @@ impl<S: Schema> RasterKV<S> {
             engine: self.inner.clone(),
             id,
             participant: Some(participant),
-            runtime: crate::engine::SessionRuntime::new(id, registered),
+            runtime: crate::engine::SessionRuntime::new(id, registered, tracker),
             local: std::marker::PhantomData,
         })
     }
@@ -87,6 +88,7 @@ impl<S: Schema> RasterKV<S> {
             return Err(Error::InvalidState("engine_failed_closed"));
         }
         let thread_session = self.inner.thread_sessions.enter()?;
+        let tracker = self.inner.metrics.register()?;
         let (registered, serial, durable_version) = self.inner.coordinator.resume_registered(id)?;
         let participant = match self.inner.epoch.register() {
             Ok(participant) => participant,
@@ -101,7 +103,7 @@ impl<S: Schema> RasterKV<S> {
                 engine: self.inner.clone(),
                 id,
                 participant: Some(participant),
-                runtime: crate::engine::SessionRuntime::new(id, registered),
+                runtime: crate::engine::SessionRuntime::new(id, registered, tracker),
                 local: std::marker::PhantomData,
             },
             progress: super::maintenance::DurableProgress {

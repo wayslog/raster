@@ -296,7 +296,7 @@ impl<S: Schema> Engine<S> {
             return Err(Rejected { request, reason });
         }
         let mut task = UpsertTask {
-            monitor: self.metrics.accept(super::metrics::Kind::Upsert),
+            monitor: session.tracker.accept(super::metrics::Kind::Upsert),
             engine: self.clone(),
             request: Some(request),
             prepared: None,
