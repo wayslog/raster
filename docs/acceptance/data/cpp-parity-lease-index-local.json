@@ -1,0 +1,30 @@
+{
+  "base_commit": "08941623cd25e7f1f5dbd43cbe2525a2068c48f9",
+  "scope": "On-demand sharded weak record lease index; local candidate",
+  "source_sha256": {
+    "src/log/mod.rs": "8ce25058546aaca66c852e3a77a404ac4c2623062f4cadaa8410ae341391e73d",
+    "src/log/evict.rs": "5743df8ee80b8c12ec10cf87047e4bea3d14c999cc8975e59c962eebf46f532f",
+    "src/log/lease_tests.rs": "e63fc225274c872c6db645298f2b76d35199469f98a3b3342067b550dfadf5cd",
+    "src/log/records.rs": "d6f1bd702ff3c7092859a956801efdf3381451cf394693f6babc50e66610978b",
+    "src/log/records/tests.rs": "9cd1ab51cf8ab51ad957a97c8b59081bbeb6155be3ee18fd7b48443802b8b7da"
+  },
+  "binary_sha256": {
+    "parity": "8de8220e308bfa543c3e25908e204ea78a5e344797a6d0fe092f1f0121cd272e",
+    "parity_scan": "8fbd2a44c494f27e4b732ea28b95e32ac7f2e5d4a35bf5836d56314f1e7e7fb9",
+    "benchmark": "25eea6f8c5980dce85763ed21fa73ada36ed05ac41eb445c4d467fe8c4a3304d"
+  },
+  "tests": {
+    "passed": 495,
+    "failed": 0,
+    "ignored": 0
+  },
+  "status": "Withdrawn: only 9/18 memory, 1/2 append/scan and 2/3 strict lifecycle gates passed; no native C++ acceptance claimed",
+  "archive": "cpp-parity-lease-index-local.tar.gz",
+  "sha256": "ce3c38f2169fd06a0361ca27abc475a0a83397e673da8f3175526e260258817c",
+  "archive_bytes": 379140,
+  "memory_passed": 9,
+  "scan_passed": 1,
+  "strict_lifecycle_passed": 2,
+  "trace_files": 24,
+  "unique_traces": 3
+}
