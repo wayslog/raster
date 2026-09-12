@@ -36,6 +36,30 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
+    fn read_resident(
+        &mut self,
+        value: crate::log::RecordLease<crate::schema::SharedValue<S>>,
+    ) -> Result<Option<Outcome<O::Output>>, Error> {
+        let request = self
+            .request
+            .as_mut()
+            .expect("The request has not yet been finalized");
+        match value.try_read_live(|view| request.read(ValueRead { view }))? {
+            crate::log::ValueAccess::Ready(Some(value)) => {
+                value.map(|value| Some(Outcome::Success(value)))
+            }
+            crate::log::ValueAccess::Ready(None) => Ok(Some(if self.options.abort_if_tombstone {
+                Outcome::Aborted(AbortReason::Tombstone)
+            } else {
+                Outcome::NotFound
+            })),
+            crate::log::ValueAccess::Contended => {
+                self.lookup = None;
+                self.observed = None;
+                Ok(None)
+            }
+        }
+    }
     fn prepare_pending(&mut self) -> Result<bool, Error> {
         let awaiting_route = self.lookup.as_ref().is_some_and(LogLookup::awaiting_route);
         self.engine
@@ -160,6 +184,17 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                             })?
                             .map(|value| Some(Outcome::Success(value)));
                     }
+                    if let Some(value) = self.engine.log.resident_head(&self.key, resolved.head)? {
+                        // Keep tombstone and callback behavior identical to the chain lookup.
+                        if value.is_tombstone() {
+                            return Ok(Some(if self.options.abort_if_tombstone {
+                                Outcome::Aborted(AbortReason::Tombstone)
+                            } else {
+                                Outcome::NotFound
+                            }));
+                        }
+                        return self.read_resident(value);
+                    }
                     self.observed = Some(resolved.entry);
                     let mut lookup = self.engine.log.lookup_deferred(
                         &self.engine.storage,
@@ -200,25 +235,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     } else {
                         Outcome::NotFound
                     })),
-                    LookupStep::Resident(value) => {
-                        match value.try_read_live(|view| request.read(ValueRead { view }))? {
-                            crate::log::ValueAccess::Ready(Some(value)) => {
-                                value.map(|value| Some(Outcome::Success(value)))
-                            }
-                            crate::log::ValueAccess::Ready(None) => {
-                                Ok(Some(if self.options.abort_if_tombstone {
-                                    Outcome::Aborted(AbortReason::Tombstone)
-                                } else {
-                                    Outcome::NotFound
-                                }))
-                            }
-                            crate::log::ValueAccess::Contended => {
-                                self.lookup = None;
-                                self.observed = None;
-                                Ok(None)
-                            }
-                        }
-                    }
+                    LookupStep::Resident(value) => self.read_resident(value),
                     LookupStep::Decoded(value) => {
                         self.engine.populate_cache(
                             self.hash,

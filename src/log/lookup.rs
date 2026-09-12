@@ -37,6 +37,34 @@ struct ColdLookup {
     cached: Option<(PageId, ReadPage)>,
 }
 impl<V: ValueLayout> HybridLog<V> {
+    /// Borrow the query inputs when the current head is a matching resident record.
+    /// All other cases remain the responsibility of the owning chain traversal.
+    pub fn resident_head(
+        &self,
+        key: &[u8],
+        head: Option<LogAddress>,
+    ) -> Result<Option<RecordLease<V>>, Error> {
+        let Some(address) = head else { return Ok(None) };
+        address.validate()?;
+        let frontiers = self.frontiers()?;
+        if address < frontiers.begin {
+            return Ok(None);
+        }
+        if address >= frontiers.tail {
+            return Err(Error::InvalidFormat(
+                "The query address exceeds the end of the log",
+            ));
+        }
+        if address < frontiers.head {
+            return Ok(None);
+        }
+        let lease = match self.lease(address) {
+            Ok(lease) => lease,
+            Err(Error::RangeTruncated) if address < self.frontiers()?.head => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok((lease.key() == key).then_some(lease))
+    }
     pub fn lookup_metadata(
         &self,
         storage: &SegmentedStorage,
