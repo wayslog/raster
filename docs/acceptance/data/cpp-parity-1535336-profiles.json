@@ -1,0 +1,67 @@
+{
+  "scope": "macOS stack sampling; timing excluded from performance acceptance",
+  "profiles": {
+    "read-uniform": {
+      "commit": "15353362897f21e20d6be73180a1a44f8a6f8a1d",
+      "scope": "Diagnostic sampling only; timing excluded from performance acceptance",
+      "binary_sha256": "daf6c9c661baba28da39dff1770aec751aecc139260983bab413bd341d8800ee",
+      "sample_exit_code": 0,
+      "workload": {
+        "engine": "rust",
+        "operation": "read",
+        "distribution": "uniform",
+        "threads": 4,
+        "count": 80000000,
+        "elapsed_ns": 35446919583,
+        "p99_ns": 14750,
+        "samples": 1250000,
+        "checksum": 560000000,
+        "digest": 11881612521032259365,
+        "verified_keys": 1024,
+        "retries": 2305652,
+        "pending": 0
+      },
+      "attribution": {
+        "worker_samples": 14160,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 1809,
+          "phase snapshot": 1886,
+          "serial admission": 1085
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    },
+    "upsert-worker-hot": {
+      "commit": "15353362897f21e20d6be73180a1a44f8a6f8a1d",
+      "scope": "Diagnostic sampling only; timing excluded from performance acceptance",
+      "binary_sha256": "daf6c9c661baba28da39dff1770aec751aecc139260983bab413bd341d8800ee",
+      "sample_exit_code": 0,
+      "workload": {
+        "engine": "rust",
+        "operation": "upsert",
+        "distribution": "worker-hot",
+        "threads": 4,
+        "count": 80000000,
+        "elapsed_ns": 29739878792,
+        "p99_ns": 13875,
+        "samples": 1250000,
+        "checksum": 3360000000,
+        "digest": 8784911483345271589,
+        "verified_keys": 1024,
+        "retries": 0,
+        "pending": 0
+      },
+      "attribution": {
+        "worker_samples": 14156,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 1802,
+          "phase snapshot": 3088,
+          "serial admission": 1894
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    }
+  },
+  "archive": "cpp-parity-1535336-profiles.tar.gz",
+  "sha256": "80ba6e2b29dcf1807775c783ad03dc234c7b129d41ad902f7bd91b34b4b404b9"
+}
