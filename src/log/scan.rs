@@ -41,7 +41,7 @@ impl<V: ValueLayout> HybridLog<V> {
             .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         for boundary in [begin, end] {
             if boundary >= frontiers.head
-                && let Some((address, value)) = records.range(..boundary).next_back().transpose()?
+                && let Some((address, value)) = records.range(..boundary).next_back()
                 && address.checked_add(value.record_bytes() as u64)? > boundary
             {
                 return Err(Error::InvalidFormat(
@@ -83,7 +83,7 @@ impl<V: ValueLayout> HybridLog<V> {
                 .lock()
                 .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
             for boundary in [begin, end] {
-                if let Some((address, value)) = records.range(..boundary).next_back().transpose()?
+                if let Some((address, value)) = records.range(..boundary).next_back()
                     && address.checked_add(value.record_bytes() as u64)? > boundary
                 {
                     return Err(Error::InvalidFormat(
@@ -91,7 +91,10 @@ impl<V: ValueLayout> HybridLog<V> {
                     ));
                 }
             }
-            records.range(begin..end).next().transpose()?
+            records
+                .range(begin..end)
+                .next()
+                .map(|(address, value)| (*address, value.clone()))
         };
         let Some((address, value)) = selected else {
             return Ok(None);

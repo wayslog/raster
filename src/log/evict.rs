@@ -20,26 +20,21 @@ impl<V: ValueLayout> HybridLog<V> {
                     .records
                     .lock()
                     .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
-                let count = records
-                    .range(begin..end)
-                    .try_fold(0usize, |count, record| record.map(|_| count + 1))?;
+                let count = records.range(begin..end).count();
                 retired
                     .try_reserve_exact(count)
                     .map_err(|_| Error::OutOfMemory)?;
                 // Address table removal and head Publishing is done in the same control phase;No waiting for old lease.
-                let mut cursor = begin;
                 while let Some(address) = records
-                    .range(cursor..end)
+                    .range(begin..end)
                     .next()
-                    .transpose()?
-                    .map(|(address, _)| address)
+                    .map(|(address, _)| *address)
                 {
                     retired.push(
                         records
-                            .remove(&address)?
+                            .remove(&address)
                             .expect("The address is still in the table"),
                     );
-                    cursor = address.checked_add(1)?;
                 }
                 state.reclaim = Some((page, generation));
                 state.frontiers.head = end;
