@@ -15,6 +15,10 @@ on:
         description: Optional full Rust commit SHA for a paired regression comparison
         type: string
         default: ''
+      scan_baseline_ref:
+        description: Optional full Rust commit SHA for an additional scan regression baseline
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -107,6 +111,7 @@ jobs:
         shell: bash
         env:
           BASELINE_REF: ${{ inputs.baseline_ref }}
+          SCAN_BASELINE_REF: ${{ inputs.scan_baseline_ref }}
         run: |
           mkdir -p target/parity-evidence
           {
@@ -130,6 +135,15 @@ jobs:
             cargo build --manifest-path target/parity-baseline/Cargo.toml \
               --target-dir target/parity-baseline-build --locked --release --example parity --example parity_scan
             echo "rust_baseline:$BASELINE_REF" >> target/parity-evidence/environment.txt
+          fi
+          if [ -n "$SCAN_BASELINE_REF" ]; then
+            [[ "$SCAN_BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$SCAN_BASELINE_REF"
+            git worktree add --detach target/parity-scan-baseline "$SCAN_BASELINE_REF"
+            cp examples/parity_scan.rs target/parity-scan-baseline/examples/parity_scan.rs
+            cargo build --manifest-path target/parity-scan-baseline/Cargo.toml \
+              --target-dir target/parity-scan-baseline-build --locked --release --example parity_scan
+            echo "rust_scan_baseline:$SCAN_BASELINE_REF" >> target/parity-evidence/environment.txt
           fi
       - name: Compare alternating native engine samples
         shell: bash
@@ -160,6 +174,15 @@ jobs:
             --baseline target/parity-baseline-build/release/examples/parity_scan \
             --candidate target/release/examples/parity_scan \
             --output target/parity-evidence/resident-scans 2>&1 | tee target/parity-evidence/scan-checks.txt
+      - name: Compare resident scans against the additional preserved baseline
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.scan_baseline_ref != '' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tools/performance/compare_scan.py \
+            --baseline target/parity-scan-baseline-build/release/examples/parity_scan \
+            --candidate target/release/examples/parity_scan \
+            --output target/parity-evidence/resident-scans-anchor 2>&1 | tee target/parity-evidence/scan-anchor-checks.txt
       - name: Preserve results even when parity fails
         if: always()
         uses: actions/upload-artifact@v4
