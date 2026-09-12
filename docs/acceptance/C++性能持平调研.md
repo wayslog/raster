@@ -71,4 +71,21 @@ macOS ARM 原生单线程覆盖写的 5 秒采样中，工作线程有 3728 个�
 
 原始本地逐轮数据及二进制/源码哈希见 [邮箱候选测量](data/cpp-parity-mailbox-local.json)，路径脱敏后的原始采样见 [采样归档](data/cpp-parity-upsert.sample.txt.gz)。本地 `cargo test --locked --all-features` 共 445 项通过、0 失败、0 忽略，包含单元、集成及 doctest；格式检查、全目标全特性 Clippy 和文档/历史归档检查通过。
 
-这是局部收益，不能视为与 C++ 持平。下一步仍须在原生 Linux 确认候选结果，继续减少请求登记、版本观察及日志查找中的共享控制成本，并补齐删除、变长值和持久化生命周期对比。
+固定邮箱槽修改已提交为 `8b732f2`。[原生 Linux 18 组复测](https://github.com/wayslog/raster/actions/runs/34681594481) 的结果校验全部通过，性能门槛仍全部失败：单线程吞吐比为 0.054–0.090，四线程为 0.011–0.040。原始数据见 [归档](data/cpp-parity-8b732f2.tar.gz) 和 [清单](data/cpp-parity-8b732f2.json)。不同 runner 的绝对耗时不用于计算修改收益。[Linux/macOS 六组工程 CI](https://github.com/wayslog/raster/actions/runs/34681594507) 全部通过。
+
+### 第二处候选：同步读与 RMW 延迟创建 Ticket
+
+原先读与 RMW 无论是否 Pending，都会先分配 Ticket/Completer 共享结果槽；同步完成时再从槽中立即取出结果。候选实现先保留结果额度并执行操作，能够同步完成时直接移交拥有型结果；只有需要 Pending 才创建共享槽。请求序号、额度拒绝、完成通知和失败关闭协议保持一致，设备路径仍保留原 ticket。
+
+与 `8b732f2` 的 macOS 同机四轮交替测量如下，每轮 200 万操作。详见 [逐轮数据和哈希](data/cpp-parity-deferred-tickets-local.json)。
+
+| 场景 | 候选吞吐 / 8b732f2 | 候选 P99 / 8b732f2 |
+| --- | --- | --- |
+| 单线程均匀 Read | 1.193 | 0.906 |
+| 单线程均匀 RMW | 1.177 | 0.879 |
+| 四线程独立热点 Read | 1.264 | 0.853 |
+| 四线程独立热点 RMW | 1.193 | 0.884 |
+
+增加同步读/RMW 在结果容量为 1 时持续释放额度的测试，以及读请求析构 panic 的失败关闭测试。本地全特性单元、集成和 doctest 共 447 项通过，0 失败、0 忽略；全目标 Clippy 通过。原生 Linux 复测尚待完成。
+
+以上都是局部收益，不能视为与 C++ 持平。后续继续减少请求登记、版本观察及日志查找中的共享控制成本，并补齐删除、变长值和持久化生命周期对比。

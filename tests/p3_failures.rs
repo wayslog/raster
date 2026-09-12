@@ -104,6 +104,35 @@ fn after_taking_effect_the_requested_destructor_panic_returns_that_it_has_taken_
     assert_eq!(s.last_accepted(), Some(Serial(1)));
     assert!(store.start_session(SessionOptions::default()).is_err());
 }
+#[test]
+fn synchronous_read_destructor_panic_returns_failure_and_closes_the_engine() {
+    let store = store();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    session
+        .upsert(Serial(0), request())
+        .map_err(|r| r.reason)
+        .unwrap();
+    let mut read = request();
+    read.panic_drop = true;
+    assert!(matches!(
+        session
+            .read(Serial(1), read, ReadOptions::default())
+            .map_err(|r| r.reason)
+            .unwrap(),
+        Submission::Ready(Err(OperationError {
+            effect: Effect::NotApplied,
+            ..
+        }))
+    ));
+    assert_eq!(session.last_accepted(), Some(Serial(1)));
+    assert_eq!(store.diagnostics().unwrap().active_requests, 0);
+    assert!(
+        session
+            .read(Serial(2), request(), ReadOptions::default())
+            .is_err()
+    );
+    assert_eq!(session.last_accepted(), Some(Serial(1)));
+}
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Stage {
     None,

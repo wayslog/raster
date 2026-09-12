@@ -272,6 +272,52 @@ impl RmwOperation<Schema> for Add {
     }
 }
 struct Delete(u64);
+#[test]
+fn synchronous_reads_and_rmw_release_a_single_result_credit_between_calls() {
+    let mut config = raster::config::Config::default();
+    config.session.max_results = 1;
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(raster::device::null::NullDeviceFactory))
+        .create()
+        .unwrap();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    assert!(matches!(
+        outcome(
+            session
+                .read(Serial(0), Read(1), ReadOptions::default())
+                .map_err(|r| r.reason)
+                .unwrap()
+        ),
+        Outcome::NotFound
+    ));
+    for round in 0..32 {
+        let value = outcome(
+            session
+                .rmw(
+                    Serial(round * 2 + 1),
+                    Add {
+                        key: 1,
+                        delta: 1,
+                        copy: false,
+                    },
+                    RmwOptions::default(),
+                )
+                .map_err(|r| r.reason)
+                .unwrap(),
+        );
+        assert!(matches!(value, Outcome::Success(value) if value == round + 1));
+        let value = outcome(
+            session
+                .read(Serial(round * 2 + 2), Read(1), ReadOptions::default())
+                .map_err(|r| r.reason)
+                .unwrap(),
+        );
+        assert!(matches!(value, Outcome::Success(value) if value == round + 1));
+    }
+    assert_eq!(session.last_accepted(), Some(Serial(64)));
+    assert_eq!(store.diagnostics().unwrap().active_requests, 0);
+}
 impl Keyed<Schema> for Delete {
     fn key(&self) -> &u64 {
         &self.0
