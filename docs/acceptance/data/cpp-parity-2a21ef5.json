@@ -1,0 +1,395 @@
+{
+  "commit": "2a21ef5590cde2b113762b731078f128ba27c23a",
+  "native_run": 34709999167,
+  "ci_run": 34710062661,
+  "archive": "cpp-parity-2a21ef5.tar.gz",
+  "sha256": "7a5b301ba3b4b832243dff6a7a9280184840abcbbc1f6bc804cc04d1ce23c247",
+  "summary": {
+    "memory": {
+      "passed": 0,
+      "total": 18,
+      "comparisons": [
+        {
+          "case": "read/uniform/1",
+          "throughput_ratio": 0.09405090787268063,
+          "p99_ratio": 6.65,
+          "passed": false
+        },
+        {
+          "case": "read/uniform/4",
+          "throughput_ratio": 0.052891545331926276,
+          "p99_ratio": 31.093406593406595,
+          "passed": false
+        },
+        {
+          "case": "read/worker-hot/1",
+          "throughput_ratio": 0.0951554380944784,
+          "p99_ratio": 7.065573770491803,
+          "passed": false
+        },
+        {
+          "case": "read/worker-hot/4",
+          "throughput_ratio": 0.05369365655551732,
+          "p99_ratio": 27.322222222222223,
+          "passed": false
+        },
+        {
+          "case": "read/shared-hot/1",
+          "throughput_ratio": 0.09323728230928181,
+          "p99_ratio": 7.065573770491803,
+          "passed": false
+        },
+        {
+          "case": "read/shared-hot/4",
+          "throughput_ratio": 0.024810639388274623,
+          "p99_ratio": 138.37777777777777,
+          "passed": false
+        },
+        {
+          "case": "upsert/uniform/1",
+          "throughput_ratio": 0.11756066277697515,
+          "p99_ratio": 5.225352112676056,
+          "passed": false
+        },
+        {
+          "case": "upsert/uniform/4",
+          "throughput_ratio": 0.07604017394296382,
+          "p99_ratio": 16.49375,
+          "passed": false
+        },
+        {
+          "case": "upsert/worker-hot/1",
+          "throughput_ratio": 0.11829581847057154,
+          "p99_ratio": 5.014285714285714,
+          "passed": false
+        },
+        {
+          "case": "upsert/worker-hot/4",
+          "throughput_ratio": 0.06834111848539835,
+          "p99_ratio": 22.282722513089006,
+          "passed": false
+        },
+        {
+          "case": "upsert/shared-hot/1",
+          "throughput_ratio": 0.11750528853851971,
+          "p99_ratio": 5.014285714285714,
+          "passed": false
+        },
+        {
+          "case": "upsert/shared-hot/4",
+          "throughput_ratio": 0.06028256066124257,
+          "p99_ratio": 65.74285714285715,
+          "passed": false
+        },
+        {
+          "case": "rmw/uniform/1",
+          "throughput_ratio": 0.08819868240522725,
+          "p99_ratio": 6.697183098591549,
+          "passed": false
+        },
+        {
+          "case": "rmw/uniform/4",
+          "throughput_ratio": 0.06239664142434074,
+          "p99_ratio": 18.309375,
+          "passed": false
+        },
+        {
+          "case": "rmw/worker-hot/1",
+          "throughput_ratio": 0.08812650991393314,
+          "p99_ratio": 6.25531914893617,
+          "passed": false
+        },
+        {
+          "case": "rmw/worker-hot/4",
+          "throughput_ratio": 0.052997157459403886,
+          "p99_ratio": 26.39,
+          "passed": false
+        },
+        {
+          "case": "rmw/shared-hot/1",
+          "throughput_ratio": 0.08676976079143636,
+          "p99_ratio": 6.197183098591549,
+          "passed": false
+        },
+        {
+          "case": "rmw/shared-hot/4",
+          "throughput_ratio": 0.04472112273114515,
+          "p99_ratio": 99.22695035460993,
+          "passed": false
+        }
+      ]
+    },
+    "rust-baseline": {
+      "passed": 17,
+      "total": 18,
+      "comparisons": [
+        {
+          "case": "read/uniform/1",
+          "throughput_ratio": 1.2640102523550194,
+          "p99_ratio": 0.8056042031523643,
+          "passed": true
+        },
+        {
+          "case": "read/uniform/4",
+          "throughput_ratio": 1.1303508954783272,
+          "p99_ratio": 0.9478974702630256,
+          "passed": true
+        },
+        {
+          "case": "read/worker-hot/1",
+          "throughput_ratio": 1.2594490868304602,
+          "p99_ratio": 0.7893772893772893,
+          "passed": true
+        },
+        {
+          "case": "read/worker-hot/4",
+          "throughput_ratio": 1.09330582729329,
+          "p99_ratio": 1.1213613972234662,
+          "passed": false
+        },
+        {
+          "case": "read/shared-hot/1",
+          "throughput_ratio": 1.243610861343465,
+          "p99_ratio": 0.8305084745762712,
+          "passed": true
+        },
+        {
+          "case": "read/shared-hot/4",
+          "throughput_ratio": 1.2288314137345735,
+          "p99_ratio": 0.9944792050055208,
+          "passed": true
+        },
+        {
+          "case": "upsert/uniform/1",
+          "throughput_ratio": 1.3778806435452589,
+          "p99_ratio": 0.754582484725051,
+          "passed": true
+        },
+        {
+          "case": "upsert/uniform/4",
+          "throughput_ratio": 1.141296400635316,
+          "p99_ratio": 0.9738708473310936,
+          "passed": true
+        },
+        {
+          "case": "upsert/worker-hot/1",
+          "throughput_ratio": 1.3575773622099125,
+          "p99_ratio": 0.7782705099778271,
+          "passed": true
+        },
+        {
+          "case": "upsert/worker-hot/4",
+          "throughput_ratio": 1.1071484467955435,
+          "p99_ratio": 1.099304068522484,
+          "passed": true
+        },
+        {
+          "case": "upsert/shared-hot/1",
+          "throughput_ratio": 1.360906522608854,
+          "p99_ratio": 0.7782705099778271,
+          "passed": true
+        },
+        {
+          "case": "upsert/shared-hot/4",
+          "throughput_ratio": 1.3428359207969194,
+          "p99_ratio": 0.6670879488513866,
+          "passed": true
+        },
+        {
+          "case": "rmw/uniform/1",
+          "throughput_ratio": 1.2048343277686493,
+          "p99_ratio": 0.893048128342246,
+          "passed": true
+        },
+        {
+          "case": "rmw/uniform/4",
+          "throughput_ratio": 1.136658920157902,
+          "p99_ratio": 0.9447495961227786,
+          "passed": true
+        },
+        {
+          "case": "rmw/worker-hot/1",
+          "throughput_ratio": 1.2246720674185698,
+          "p99_ratio": 0.8384030418250951,
+          "passed": true
+        },
+        {
+          "case": "rmw/worker-hot/4",
+          "throughput_ratio": 1.0995219989646468,
+          "p99_ratio": 1.0210405508798777,
+          "passed": true
+        },
+        {
+          "case": "rmw/shared-hot/1",
+          "throughput_ratio": 1.2023659822854527,
+          "p99_ratio": 0.8280499519692603,
+          "passed": true
+        },
+        {
+          "case": "rmw/shared-hot/4",
+          "throughput_ratio": 1.1408704527445432,
+          "p99_ratio": 0.8646767118062179,
+          "passed": true
+        }
+      ]
+    },
+    "rust-baseline-anchor": {
+      "passed": 18,
+      "total": 18,
+      "comparisons": [
+        {
+          "case": "read/uniform/1",
+          "throughput_ratio": 1.1988867389142206,
+          "p99_ratio": 0.8774740810556079,
+          "passed": true
+        },
+        {
+          "case": "read/uniform/4",
+          "throughput_ratio": 1.1473102878304167,
+          "p99_ratio": 0.945007476324971,
+          "passed": true
+        },
+        {
+          "case": "read/worker-hot/1",
+          "throughput_ratio": 1.1699585158474382,
+          "p99_ratio": 0.896049896049896,
+          "passed": true
+        },
+        {
+          "case": "read/worker-hot/4",
+          "throughput_ratio": 1.1182944387029843,
+          "p99_ratio": 0.8796607174412441,
+          "passed": true
+        },
+        {
+          "case": "read/shared-hot/1",
+          "throughput_ratio": 1.1811218203106773,
+          "p99_ratio": 0.8786952089704383,
+          "passed": true
+        },
+        {
+          "case": "read/shared-hot/4",
+          "throughput_ratio": 1.2162297050040052,
+          "p99_ratio": 0.9907109285370638,
+          "passed": true
+        },
+        {
+          "case": "upsert/uniform/1",
+          "throughput_ratio": 1.3875412948038595,
+          "p99_ratio": 0.7352342158859471,
+          "passed": true
+        },
+        {
+          "case": "upsert/uniform/4",
+          "throughput_ratio": 1.1731977261402506,
+          "p99_ratio": 0.9330286517841448,
+          "passed": true
+        },
+        {
+          "case": "upsert/worker-hot/1",
+          "throughput_ratio": 1.3460964181303214,
+          "p99_ratio": 0.805045871559633,
+          "passed": true
+        },
+        {
+          "case": "upsert/worker-hot/4",
+          "throughput_ratio": 1.1763670547334468,
+          "p99_ratio": 0.8233039478727482,
+          "passed": true
+        },
+        {
+          "case": "upsert/shared-hot/1",
+          "throughput_ratio": 1.3499162915300331,
+          "p99_ratio": 0.7959183673469388,
+          "passed": true
+        },
+        {
+          "case": "upsert/shared-hot/4",
+          "throughput_ratio": 1.3647202021191212,
+          "p99_ratio": 0.7499230414037248,
+          "passed": true
+        },
+        {
+          "case": "rmw/uniform/1",
+          "throughput_ratio": 1.1971217853770577,
+          "p99_ratio": 0.8732014388489209,
+          "passed": true
+        },
+        {
+          "case": "rmw/uniform/4",
+          "throughput_ratio": 1.107591494864197,
+          "p99_ratio": 0.9782244556113903,
+          "passed": true
+        },
+        {
+          "case": "rmw/worker-hot/1",
+          "throughput_ratio": 1.1978027810499736,
+          "p99_ratio": 0.8751200768491835,
+          "passed": true
+        },
+        {
+          "case": "rmw/worker-hot/4",
+          "throughput_ratio": 1.0785264047796883,
+          "p99_ratio": 0.9215754618333915,
+          "passed": true
+        },
+        {
+          "case": "rmw/shared-hot/1",
+          "throughput_ratio": 1.1969389574052092,
+          "p99_ratio": 0.8610567514677103,
+          "passed": true
+        },
+        {
+          "case": "rmw/shared-hot/4",
+          "throughput_ratio": 1.1273179332843288,
+          "p99_ratio": 0.8309361812074757,
+          "passed": true
+        }
+      ]
+    },
+    "resident-scans": {
+      "passed": 2,
+      "total": 2,
+      "comparisons": [
+        {
+          "records": 4096,
+          "scans": 8,
+          "append_throughput_ratio": 1.078581210267479,
+          "scan_throughput_ratio": 1.004170895853166,
+          "p99_ratio": 1.0668360367402776,
+          "passed": true
+        },
+        {
+          "records": 65536,
+          "scans": 8,
+          "append_throughput_ratio": 1.0602571671111753,
+          "scan_throughput_ratio": 1.0130367548444796,
+          "p99_ratio": 1.0021800741225202,
+          "passed": true
+        }
+      ]
+    },
+    "resident-scans-anchor": {
+      "passed": 2,
+      "total": 2,
+      "comparisons": [
+        {
+          "records": 4096,
+          "scans": 8,
+          "append_throughput_ratio": 1.061716482964649,
+          "scan_throughput_ratio": 0.9971713148286722,
+          "p99_ratio": 1.0506649778340722,
+          "passed": true
+        },
+        {
+          "records": 65536,
+          "scans": 8,
+          "append_throughput_ratio": 1.016390984180473,
+          "scan_throughput_ratio": 0.9957027970182356,
+          "p99_ratio": 1.020013342228152,
+          "passed": true
+        }
+      ]
+    }
+  }
+}
