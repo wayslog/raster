@@ -1,0 +1,56 @@
+{
+  "commit": "793e9c8828e7f1b3e940b72a1e347aa216c7be63",
+  "archive": "cpp-parity-793e9c8-profiles.tar.gz",
+  "sha256": "2c0e23b92c1ac7257dd5e5acc0404e5be8ad34f4d664ad6ad17858053a62e47b",
+  "archive_bytes": 57758,
+  "summary": {
+    "sampled_copy_return_offsets": [
+      908,
+      1000
+    ],
+    "copy_bytes_per_call": 338,
+    "evidence": "Actual sampled stacks map both memmove calls to ReadTask::step; the corresponding binary instructions pass length 0x152 to memcpy. These observations do not by themselves prove a throughput gain.",
+    "worker_samples": {
+      "read-uniform-1": {
+        "worker_samples": 3776,
+        "mutex_wait_samples_by_nearest_engine_frame": {},
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      },
+      "read-uniform-4": {
+        "worker_samples": 14184,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 2406
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      },
+      "upsert-worker-hot-4": {
+        "worker_samples": 14124,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 2783
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    },
+    "binary_sha256": "606252448427868b94cd88e6bca1a8000fddff911c38b3fbf14486fbc1a47907"
+  },
+  "fileSHA256": {
+    "attribute.py": "cca0dd529dbfc31bc9a0002be5ae8ce1501b453ab9a33169558ce547ed579d05",
+    "read-step-assembly.txt": "640798435610b40e62a2218515a1dbe86b241505086161aab864b334e97d85e6",
+    "read-uniform-1.copies.json": "67fdea6438b077cc7087cddd5db54de91602a3fa76456491bb3558058e4732a3",
+    "read-uniform-1.json": "148f4f35e5627bb9ace7612100a9030007aedfc69538bf1835098c6318dea766",
+    "read-uniform-1.sample.txt": "1ec4b8af3c0cea9d4f9f5e013d455be8bd634eda292196d12a15b7c44b9cd6bf",
+    "read-uniform-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "read-uniform-1.stdout": "f3f10a8989ed85b0d016d0798bcdf045e2f38a2e6ab5d64ce133ba24598418df",
+    "read-uniform-4.copies.json": "2aaeb90d5ed39734940d66c6007797338014115f35e66a5f1177576d282ded75",
+    "read-uniform-4.json": "d87e87d55c08337eece6b7ae8251f89130ff5ee55edf0da857f1abcc5ed6d076",
+    "read-uniform-4.sample.txt": "c04baa25fc9fdc633d0022f6d238bebb63871ede592190e20f6a2904e5d1070c",
+    "read-uniform-4.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "read-uniform-4.stdout": "131ba4db53bb50256cc41165adb69a26277237689dc8d9a8d7825e8df48fb95b",
+    "run.py": "2666f2eb0e36444c1461772aab543792597edc64d8f033fcc84f016192cc9717",
+    "summary.json": "dbc7ff5066a20c23baf8aed2150cd32481edf00812ccfd83be40d3bad96ea35f",
+    "upsert-worker-hot-4.json": "42f1f23cb0f3c31d6e1b130e2be4b6aa1f927f9971ce4a652d3d8ab56b843266",
+    "upsert-worker-hot-4.sample.txt": "79f95984b0f2b8f0cf64ba16ab197fd6f4a80503326a5d2012dad5e086d5e755",
+    "upsert-worker-hot-4.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "upsert-worker-hot-4.stdout": "121e9f1d2b3661675444599116412e458d6d8551868afcc8088ba85cb804bb0d"
+  }
+}

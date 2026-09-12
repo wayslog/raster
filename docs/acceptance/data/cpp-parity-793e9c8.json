@@ -1,0 +1,32 @@
+{
+  "commit": "793e9c8828e7f1b3e940b72a1e347aa216c7be63",
+  "native_run": 34717297333,
+  "ci_run": 34717300409,
+  "ci_jobs_passed": 6,
+  "summary": {
+    "memory": {
+      "passed": 0,
+      "total": 18
+    },
+    "rust-baseline": {
+      "passed": 14,
+      "total": 18
+    },
+    "rust-baseline-anchor": {
+      "passed": 18,
+      "total": 18
+    },
+    "resident-scans": {
+      "passed": 2,
+      "total": 2
+    },
+    "resident-scans-anchor": {
+      "passed": 2,
+      "total": 2
+    }
+  },
+  "status": "Own-baseline memory 14/18 and C++ 0/18; performance acceptance remains incomplete.",
+  "archive": "cpp-parity-793e9c8.tar.gz",
+  "sha256": "3ec07db07e8fac9ae7c68085b4656a7dd3a71897a3364e8e10c47c16004c4762",
+  "archive_bytes": 65690
+}

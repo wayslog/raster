@@ -1,0 +1,28 @@
+{
+  "base_commit": "793e9c8828e7f1b3e940b72a1e347aa216c7be63",
+  "source_sha256": {
+    "src/log/lookup.rs": "9b8850dc55b5d8fc6aee940116d221708675ecbb6bcb51248011542e15f5d6e1"
+  },
+  "binary_sha256": {
+    "parity": "add932cf667aed4d6952a02d2ec4c29aaae4263dbcc9bd8006990d74e6df677f",
+    "parity_scan": "0eb54aba9c19ab1bd02cdc88080167038758c1cac36883b2580072d090ebcf72",
+    "benchmark": "3828ba70682e6fac0d1d6c480c8a0c7c3e8f75dee39b2144ed773ca16cc7ab28"
+  },
+  "hypothesis": "Move cold page state out of the resident query to reduce executed state copies; measure actual Read/RMW and an unaffected Upsert control. Cold state uses one fallible allocation reused across the query.",
+  "tests": {
+    "passed": 493,
+    "failed": 0,
+    "ignored": 0
+  },
+  "status": "Provisional local experiment; memory 13/18, scans 1/2, strict lifecycle 3/3. Negative gates remain open.",
+  "strict_passed": {
+    "memory": 13,
+    "scan": 1,
+    "lifecycle": 3
+  },
+  "trace_files": 24,
+  "unique_traces": 3,
+  "archive": "cpp-parity-deferred-query-io-local.tar.gz",
+  "sha256": "b555136f44068f9e7e3bf03a4a8a2d375fd37c70bdbfe278de43591ec3ee57c0",
+  "archive_bytes": 340922
+}

@@ -1,0 +1,27 @@
+{
+  "base_commit": "793e9c8828e7f1b3e940b72a1e347aa216c7be63",
+  "previous_experiment": "deferred-query-io",
+  "source_sha256": {
+    "src/engine/metrics.rs": "1d642b6c2d39e6104baf9f1f88d3e5fad3c1b3775dbc6d074cfcced9873a6790",
+    "src/index/growth.rs": "4d41a53d1fb9c563d873c14eb1e6d4c53cf378c77c33bbf1c25959d27e555eb6",
+    "src/cache/mod.rs": "5e9db2ecc0dc1d3cc371d112e5a5e7cbbbfe77b4bbcc09682fbc3414ea676266",
+    "src/log/lookup.rs": "9b8850dc55b5d8fc6aee940116d221708675ecbb6bcb51248011542e15f5d6e1"
+  },
+  "binary_sha256": {
+    "parity": "c26fc9f23cd88728b7a4805cf3a76d894ea34991745e3d7ed3a71d05885f44fa",
+    "parity_scan": "c4be8eb6b637b1f88e0dde8fd6e1c089f106374c1c2387dce6d73e933347bfe8",
+    "benchmark": "b1712c776aabb88a18f29b56946e8631f496c681f669f0260db92a414df89c5e"
+  },
+  "hypothesis": "Direct observer ownership removes one dependent pointer load from disabled index/cache event sampling; global enable decisions and accumulated history remain shared.",
+  "tests": {
+    "passed": 493,
+    "failed": 0,
+    "ignored": 0
+  },
+  "archive": "cpp-parity-direct-metrics-observer-local.tar.gz",
+  "sha256": "0d9750741acaa26025db878bd7055979eb32f40da324e688f786fa4e0a108043",
+  "archive_bytes": 356484,
+  "status": "Observer refinement withdrawn; combined local memory 13/18, append/scan 0/2 and strict lifecycle 1/3. The independent cold-state candidate remains provisional.",
+  "trace_files": 24,
+  "unique_traces": 3
+}
