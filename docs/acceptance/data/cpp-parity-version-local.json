@@ -1,0 +1,60 @@
+{
+  "baseline_commit": "24c20d1680de859666e42e4aa7ee0e0b39da721f",
+  "platform": "macOS ARM64",
+  "count": 2000000,
+  "rounds": 4,
+  "artifact": "cpp-parity-version-local.tar.gz",
+  "sha256": "8dba64428059c8d0c4ad96720412fee0727cfcd9a59c69543c03fd4c5b6c829f",
+  "candidate_source_sha256": "506880744a23a398ca24379bd7adbd6bd6011a266a046c64ed2e5472fd91443a",
+  "cases": {
+    "ready-cache-upsert-v2": {
+      "case": "upsert/uniform/1",
+      "throughput_ratio": 1.0247943067501726,
+      "p99_ratio": 0.9507211538461539,
+      "passed": true
+    },
+    "ready-cache-rmw-four-v2": {
+      "case": "rmw/worker-hot/4",
+      "throughput_ratio": 1.2193164924756,
+      "p99_ratio": 0.855592474840437,
+      "passed": true
+    },
+    "version-shards-upsert": {
+      "case": "upsert/uniform/1",
+      "throughput_ratio": 0.952975161199193,
+      "p99_ratio": 1.053030303030303,
+      "passed": false
+    },
+    "version-shards-rmw-four": {
+      "case": "rmw/worker-hot/4",
+      "throughput_ratio": 1.1636444838466002,
+      "p99_ratio": 0.866088835028189,
+      "passed": true
+    },
+    "version-shards-read-shared": {
+      "case": "read/shared-hot/4",
+      "throughput_ratio": 1.0865406330487082,
+      "p99_ratio": 0.9045514372532133,
+      "passed": true
+    },
+    "version-shards-v2-upsert": {
+      "case": "upsert/uniform/1",
+      "throughput_ratio": 0.9915774813252849,
+      "p99_ratio": 0.9495798319327731,
+      "passed": false
+    },
+    "version-shards-v2-rmw-four": {
+      "case": "rmw/worker-hot/4",
+      "throughput_ratio": 1.2069758556856316,
+      "p99_ratio": 1.1582676411451185,
+      "passed": false
+    },
+    "version-shards-v2-read-shared": {
+      "case": "read/shared-hot/4",
+      "throughput_ratio": 0.982116337875022,
+      "p99_ratio": 1.1947702324804874,
+      "passed": false
+    }
+  },
+  "status": "Local experiments only; native paired validation pending."
+}

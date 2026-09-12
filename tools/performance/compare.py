@@ -1,4 +1,4 @@
-"""Run paired direct-engine benchmarks and fail when Rust misses the parity gate."""
+"""Compare direct-engine workloads against C++ or a preserved Rust baseline."""
 import argparse
 import hashlib
 import itertools
@@ -37,7 +37,9 @@ def expected(operation, distribution, threads, count):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rust", type=Path, required=True)
-    parser.add_argument("--cpp", type=Path, required=True)
+    reference = parser.add_mutually_exclusive_group(required=True)
+    reference.add_argument("--cpp", type=Path)
+    reference.add_argument("--baseline-rust", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--count", type=int, default=2_000_000)
     parser.add_argument("--rounds", type=int, default=4)
@@ -47,7 +49,8 @@ def main():
     args = parser.parse_args()
     assert args.rounds >= 2 and args.count >= 16_384 and args.count % 4 == 0
     args.output.mkdir(parents=True, exist_ok=False)
-    binaries = {"cpp": args.cpp.resolve(), "rust": args.rust.resolve()}
+    reference = "cpp" if args.cpp else "baseline"
+    binaries = {reference: (args.cpp or args.baseline_rust).resolve(), "rust": args.rust.resolve()}
     metadata = {
         "protocol": 1, "created_unix": time.time(), "platform": platform.platform(),
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -55,6 +58,7 @@ def main():
         "cpu_count": os.cpu_count(), "cpu_affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
         "binary_sha256": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in binaries.items()},
         "count": args.count, "rounds": args.rounds, "sample_stride": 64,
+        "reference": reference,
         "min_throughput_ratio": args.min_throughput, "max_p99_ratio": args.max_p99,
     }
     (args.output / "environment.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -66,10 +70,10 @@ def main():
         if args.case and args.case != case:
             continue
         rows = {name: [] for name in binaries}
-        reference = expected(operation, distribution, threads, args.count)
+        expected_state = expected(operation, distribution, threads, args.count)
         # One unmeasured warmup per engine precedes alternating AB/BA process pairs.
         for round_index in range(-1, args.rounds):
-            order = ("cpp", "rust") if round_index % 2 == 0 else ("rust", "cpp")
+            order = (reference, "rust") if round_index % 2 == 0 else ("rust", reference)
             for name in order:
                 command = [str(binaries[name]), operation, distribution, str(threads), str(args.count), "64"]
                 completed = subprocess.run(command, capture_output=True, text=True, timeout=180)
@@ -81,14 +85,15 @@ def main():
                 objects = [json.loads(line) for line in completed.stdout.splitlines() if line.startswith('{"engine":')]
                 assert len(objects) == 1, prefix
                 row = objects[0]
-                assert row["engine"] == name and row["operation"] == operation and row["distribution"] == distribution
+                expected_engine = "cpp" if name == "cpp" else "rust"
+                assert row["engine"] == expected_engine and row["operation"] == operation and row["distribution"] == distribution
                 assert row["threads"] == threads and row["count"] == args.count
                 assert row["elapsed_ns"] > 0 and row["p99_ns"] > 0 and row["samples"] >= 256
-                assert all(row[key] == value for key, value in reference.items()), (prefix, row, reference)
+                assert all(row[key] == value for key, value in expected_state.items()), (prefix, row, expected_state)
                 if round_index >= 0:
                     rows[name].append(row)
-        throughput = statistics.median(r["elapsed_ns"] for r in rows["cpp"]) / statistics.median(r["elapsed_ns"] for r in rows["rust"])
-        p99 = statistics.median(r["p99_ns"] for r in rows["rust"]) / statistics.median(r["p99_ns"] for r in rows["cpp"])
+        throughput = statistics.median(r["elapsed_ns"] for r in rows[reference]) / statistics.median(r["elapsed_ns"] for r in rows["rust"])
+        p99 = statistics.median(r["p99_ns"] for r in rows["rust"]) / statistics.median(r["p99_ns"] for r in rows[reference])
         passed = throughput >= args.min_throughput and p99 <= args.max_p99
         summaries.append({"case": case, "throughput_ratio": throughput, "p99_ratio": p99, "passed": passed, "rows": rows})
         (args.output / "comparison.json").write_text(json.dumps(summaries, indent=2) + "\n")
