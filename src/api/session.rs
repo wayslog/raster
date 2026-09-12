@@ -272,6 +272,9 @@ impl<S: Schema> Session<S> {
         if self.participant.is_some() {
             self.runtime.closing = true;
             self.complete_pending(WaitMode::Until(deadline))?;
+            // No business request can be submitted after closing starts. Return
+            // the idle quota before publishing that this identity can resume.
+            self.runtime.routes.take();
             let participant = self.participant.as_ref().expect("Participants exist");
             let current = (
                 self.runtime.current.version,

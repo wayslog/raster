@@ -64,6 +64,10 @@ impl<S: Schema> RasterKV<S> {
             Some(id) => id,
             None => SessionId::generate()?,
         };
+        let routes = self
+            .inner
+            .io
+            .session_routes(id, self.inner.config.session.max_pending)?;
         let registered = self.inner.coordinator.enroll_registered(id)?;
         let participant = match self.inner.epoch.register() {
             Ok(id) => id,
@@ -77,7 +81,7 @@ impl<S: Schema> RasterKV<S> {
             engine: self.inner.clone(),
             id,
             participant: Some(participant),
-            runtime: crate::engine::SessionRuntime::new(id, registered, tracker),
+            runtime: crate::engine::SessionRuntime::new(id, registered, tracker, routes),
             local: std::marker::PhantomData,
         })
     }
@@ -89,6 +93,10 @@ impl<S: Schema> RasterKV<S> {
         }
         let thread_session = self.inner.thread_sessions.enter()?;
         let tracker = self.inner.metrics.register()?;
+        let routes = self
+            .inner
+            .io
+            .session_routes(id, self.inner.config.session.max_pending)?;
         let (registered, serial, durable_version) = self.inner.coordinator.resume_registered(id)?;
         let participant = match self.inner.epoch.register() {
             Ok(participant) => participant,
@@ -103,7 +111,7 @@ impl<S: Schema> RasterKV<S> {
                 engine: self.inner.clone(),
                 id,
                 participant: Some(participant),
-                runtime: crate::engine::SessionRuntime::new(id, registered, tracker),
+                runtime: crate::engine::SessionRuntime::new(id, registered, tracker, routes),
                 local: std::marker::PhantomData,
             },
             progress: super::maintenance::DurableProgress {

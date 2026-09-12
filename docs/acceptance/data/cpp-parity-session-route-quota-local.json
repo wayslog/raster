@@ -1,0 +1,34 @@
+{
+  "base_commit": "8b84661d3465715e17dc73d7f2aff26b785f0feb",
+  "source_sha256": {
+    "src/api/session.rs": "9f57f5a65e5fa073c2747e105f088d64b66f487ec9ce64018fcbd9941d2cfd59",
+    "src/api/store.rs": "3855136a50779c791a7df70d7f30735c0ab332c3e06c7185c7c296b77e110650",
+    "src/engine/delete.rs": "3c703262923fd7a11f372922936f2acf1761469d50118ae3b3060c719e65f122",
+    "src/engine/io_hub.rs": "703c7f8fd11881f7389009089212fa17b13a2fe0078049b0cfedb87afbdb7366",
+    "src/engine/io_hub/tests.rs": "1792411a7b49519e4477ebf2732c89210d1f5253f9e075adcdbb40c677b96ebc",
+    "src/engine/pending.rs": "68c3bdfcbe2b32570ada67e438f6d448d748023929b1441600b120b56921b683",
+    "src/engine/read.rs": "b95e8f88bcea3e7c0c95940aac78768fe85ccacc6282929d9b6a535e5e6653cd",
+    "src/engine/rmw.rs": "734840bb9ad4bc43f098258b81dda8ed300f3631d2e00b54fed1cad8ce05c790",
+    "src/engine/upsert.rs": "b8be9bae4ffc479414de5a50a2c9144ebdb7644168de03c9e5c51b91bf176170",
+    "src/engine/io_hub/session.rs": "2c4f96eb6ba162f06def54c4d5e43b2a5f71c5807cf82f0a7b0d8f93626d359e",
+    "src/engine/io_hub/session_tests.rs": "588fafb384439a2a6a53b4a5052c51c493e8758c84febd077a0576815ef9c385"
+  },
+  "binary_sha256": {
+    "parity": "2fc7f814bd74bbc0a921a2e562b595e6a09ebab566b7cb305c2f31db202c569e",
+    "parity_scan": "161a03e44c1419f593b131e9b172c0d84b10de13dec6ae58ed9cf848bbbf1ab4",
+    "benchmark": "fb548c83a0565ad7aa91756c2c664551a33f1a77e9195c913606330a9a06ab5f"
+  },
+  "tests": {
+    "passed": 498,
+    "failed": 0,
+    "ignored": 0
+  },
+  "final_test_refinement": "The stale-owner test uses heap-allocated replacements and drops its independent Weak, so only the route can preserve the original allocation.",
+  "previous_test_source_sha256": "b1e6f6604fb42399481c68a6e3e60633671ab560279e6f1eeff28be12b50a42b",
+  "archive": "cpp-parity-session-route-quota-local.tar.gz",
+  "sha256": "f027e188457d8f0a12677949f6a2483f3ea2c4d2909a90df465ec35df104d88d",
+  "archive_bytes": 469064,
+  "status": "Provisional candidate: local memory 9/18, append/scan 2/2, strict lifecycle 3/3. Native comparison is required; negative gates remain open.",
+  "trace_files": 24,
+  "unique_traces": 3
+}

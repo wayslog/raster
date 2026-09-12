@@ -1,0 +1,16 @@
+{
+  "commit": "8b84661d3465715e17dc73d7f2aff26b785f0feb",
+  "native_run": 34718582698,
+  "ci_run": 34718585108,
+  "passed": {
+    "memory": 0,
+    "rust-baseline": 14,
+    "rust-baseline-anchor": 17,
+    "resident-scans": 1,
+    "resident-scans-anchor": 2
+  },
+  "status": "C++ 0/18; own baseline memory 14/18 and scans 1/2; previous runtime memory 17/18 and scans 2/2. Full goal remains incomplete.",
+  "archive": "cpp-parity-8b84661.tar.gz",
+  "sha256": "0f9b464acdd6a81c3e43f31b81b866a48b719c2bc15b4d1bbc40b6925fe092c5",
+  "archive_bytes": 65701
+}

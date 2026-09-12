@@ -1,0 +1,7 @@
+{
+  "source_sha256": "39f42f5f8a77fe5ceeb127ff086f5e18e76000e828d2eb3748233626ed47aebf",
+  "binary_sha256": "1cf895b8049dd7a0f829942b3bd585691eaa5338e45421421d7a4063976a94d4",
+  "archive": "cpp-parity-inline-initial-read-local.tar.gz",
+  "sha256": "fa4e22fa3825394e1c36628b1b9774fae9563413f56d5f903279b7ca4f7d32a0",
+  "status": "Withdrawn: single-thread Read 1.008 did not support the 1.10 prediction; Upsert control 0.999, four-thread Read 1.136. No broad acceptance claimed."
+}
