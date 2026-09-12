@@ -6,7 +6,7 @@ use super::{
 use crate::{
     api::{
         Submission,
-        completion::{Completer, OperationResult, Outcome, Ticket, TicketState},
+        completion::{Completer, OperationResult, Outcome, Ticket},
         operation::{RmwOperation, RmwOptions, UpdateDecision},
     },
     device::IoCompletion,
@@ -32,7 +32,8 @@ struct RmwTask<S: Schema, O: RmwOperation<S>> {
     key: Vec<u8>,
     hash: KeyHash,
     effect: Effect,
-    complete: Completer<O::Output>,
+    complete: Option<Completer<O::Output>>,
+    ready: Option<OperationResult<O::Output>>,
     id: RequestId,
     serial: Serial,
     version: CheckpointVersion,
@@ -150,8 +151,14 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
     fn finish(&mut self, result: OperationResult<O::Output>) {
         if let Some(request) = self.request.take() {
             let result = self.engine.finish_request(request, result, self.effect);
-            self.engine
-                .complete_tracked(&mut self.monitor, self.id, &self.complete, result);
+            if let Some(complete) = &self.complete {
+                self.engine
+                    .complete_tracked(&mut self.monitor, self.id, complete, result);
+            } else {
+                self.engine
+                    .record_ready(&mut self.monitor, self.id, &result);
+                self.ready = Some(result);
+            }
         }
     }
     fn run_locked(&mut self, budget: PollBudget) -> TaskStep {
@@ -298,7 +305,6 @@ impl<S: Schema> Engine<S> {
             let _ = self.io.release(id);
             return Err(Rejected { request, reason });
         }
-        let (mut ticket, complete) = Ticket::pair_bounded(id, credit);
         let mut task = RmwTask {
             monitor: self.metrics.accept(super::metrics::Kind::Rmw),
             engine: self.clone(),
@@ -309,20 +315,22 @@ impl<S: Schema> Engine<S> {
             key,
             hash,
             effect: Effect::NotApplied,
-            complete,
+            complete: None,
+            ready: None,
             id,
             serial,
             version: session.current.version,
             permit,
         };
         if matches!(task.run_locked(PollBudget::default()), TaskStep::Complete) {
-            let TicketState::Ready(result) =
-                ticket.try_take().expect("Internal bills can be collected")
-            else {
-                unreachable!("The task has been completed")
-            };
-            Ok(Submission::Ready(result))
+            Ok(Submission::Ready(
+                task.ready
+                    .take()
+                    .expect("Synchronous RMW completed exactly once"),
+            ))
         } else {
+            let (ticket, complete) = Ticket::pair_bounded(id, credit);
+            task.complete = Some(complete);
             task.monitor.pending();
             session.current.tasks.insert(id.slot, Box::new(task));
             Ok(Submission::Pending(ticket))
