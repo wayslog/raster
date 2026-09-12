@@ -119,14 +119,16 @@ jobs:
             stat -f -c 'file_system:%T' .
           } > target/parity-evidence/environment.txt
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
-          cargo build --locked --release --example parity
+          cargo build --locked --release --example parity --example parity_scan
           sh tools/performance/build.sh target/upstream-source target/parity-build
           if [ -n "$BASELINE_REF" ]; then
             [[ "$BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
             git fetch --no-tags --depth=1 origin "$BASELINE_REF"
             git worktree add --detach target/parity-baseline "$BASELINE_REF"
+            # Use identical scan drivers when the baseline predates this example.
+            cp examples/parity_scan.rs target/parity-baseline/examples/parity_scan.rs
             cargo build --manifest-path target/parity-baseline/Cargo.toml \
-              --target-dir target/parity-baseline-build --locked --release --example parity
+              --target-dir target/parity-baseline-build --locked --release --example parity --example parity_scan
             echo "rust_baseline:$BASELINE_REF" >> target/parity-evidence/environment.txt
           fi
       - name: Compare alternating native engine samples
@@ -149,6 +151,15 @@ jobs:
             --baseline-rust target/parity-baseline-build/release/examples/parity \
             --output target/parity-evidence/rust-baseline --min-throughput 0.98 --max-p99 1.10 \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-checks.txt
+      - name: Compare resident append and scans against the Rust baseline
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tools/performance/compare_scan.py \
+            --baseline target/parity-baseline-build/release/examples/parity_scan \
+            --candidate target/release/examples/parity_scan \
+            --output target/parity-evidence/resident-scans 2>&1 | tee target/parity-evidence/scan-checks.txt
       - name: Preserve results even when parity fails
         if: always()
         uses: actions/upload-artifact@v4

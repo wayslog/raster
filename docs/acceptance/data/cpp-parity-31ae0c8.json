@@ -1,0 +1,12 @@
+{
+  "commit": "31ae0c86368b03cbd216d6b4eed658c2e9dcfd0e",
+  "baseline_commit": "329d4d45625dab616b580403ad22cf405eebaa69",
+  "run": "https://github.com/wayslog/raster/actions/runs/34687674330",
+  "engineering_ci": "https://github.com/wayslog/raster/actions/runs/34687674953",
+  "archive": "cpp-parity-31ae0c8.tar.gz",
+  "sha256": "e62c03c93764f9b79907fea2d62e5e57fab8574b08bc53e5a189f53caf1fef4f",
+  "correctness": "All 18 cases completed with independent result checks.",
+  "cpp_parity": "0 of 18 passed; incomplete.",
+  "rust_regression": "17 of 18 passed; upsert/uniform/1 throughput ratio 0.9795 is below 0.98.",
+  "ci": "All six native Linux/macOS feature jobs passed."
+}
