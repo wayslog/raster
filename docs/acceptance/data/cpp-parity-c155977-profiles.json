@@ -1,0 +1,65 @@
+{
+  "scope": "macOS stack sampling; timing excluded from performance acceptance",
+  "profiles": {
+    "read-uniform": {
+      "commit": "c1559774f63dfda16d74cdd3702796162f64f940",
+      "scope": "Diagnostic stack sampling only; timing excluded from performance acceptance",
+      "binary_sha256": "6063c377abdee607345800bf4ead15649d3d6ba7fc9a7cc5c1b4a57c8f653b1a",
+      "sample_exit_code": 0,
+      "workload": {
+        "engine": "rust",
+        "operation": "read",
+        "distribution": "uniform",
+        "threads": 4,
+        "count": 80000000,
+        "elapsed_ns": 31635650042,
+        "p99_ns": 14750,
+        "samples": 1250000,
+        "checksum": 560000000,
+        "digest": 11881612521032259365,
+        "verified_keys": 1024,
+        "retries": 2407746,
+        "pending": 0
+      },
+      "attribution": {
+        "worker_samples": 14152,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "resident record lease": 2185,
+          "serial admission": 756
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    },
+    "upsert-worker-hot": {
+      "commit": "c1559774f63dfda16d74cdd3702796162f64f940",
+      "scope": "Diagnostic stack sampling only; timing excluded from performance acceptance",
+      "binary_sha256": "6063c377abdee607345800bf4ead15649d3d6ba7fc9a7cc5c1b4a57c8f653b1a",
+      "sample_exit_code": 0,
+      "workload": {
+        "engine": "rust",
+        "operation": "upsert",
+        "distribution": "worker-hot",
+        "threads": 4,
+        "count": 80000000,
+        "elapsed_ns": 23161531750,
+        "p99_ns": 13417,
+        "samples": 1250000,
+        "checksum": 3360000000,
+        "digest": 8784911483345271589,
+        "verified_keys": 1024,
+        "retries": 0,
+        "pending": 0
+      },
+      "attribution": {
+        "worker_samples": 14204,
+        "mutex_wait_samples_by_nearest_engine_frame": {
+          "serial admission": 3035,
+          "resident record lease": 822
+        },
+        "note": "Sample counts are not exclusive CPU time and do not establish causal speedup."
+      }
+    }
+  },
+  "archive": "cpp-parity-c155977-profiles.tar.gz",
+  "sha256": "f9ccddfe327c4b08663f97a9f8fe47392444b3251c6d5ea16fff8b0739fe64c7"
+}
