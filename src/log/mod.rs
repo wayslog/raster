@@ -1,6 +1,6 @@
 //! Mixed log page status,Access permission and allocation interface;Do not directly invoke user operations.
 use crate::{config::LogConfig, schema::value::ValueLayout, types::*};
-use std::{collections::BTreeMap, marker::PhantomData, rc::Rc, sync::Arc};
+use std::{marker::PhantomData, rc::Rc, sync::Arc};
 
 /// Contended It only means that the value access permission has not been obtained yet;Layout read/update Or the operation error cannot be transferred to this state..
 pub(crate) enum ValueAccess<T> {
@@ -149,7 +149,7 @@ pub(crate) struct HybridLog<V: ValueLayout> {
     page_bytes: usize,
     state: Arc<crate::sync::Mutex<LogState>>,
     layout: Arc<V>,
-    records: crate::sync::Mutex<BTreeMap<LogAddress, Arc<value::PageValue<V>>>>,
+    records: record_table::RecordTable<value::PageValue<V>>,
 }
 impl<V: ValueLayout> HybridLog<V> {
     pub fn new(config: LogConfig, layout: Arc<V>) -> Result<Self, Error> {
@@ -158,7 +158,7 @@ impl<V: ValueLayout> HybridLog<V> {
             page_bytes: config.page_bytes,
             state: Arc::new(crate::sync::Mutex::new(LogState::default())),
             layout,
-            records: crate::sync::Mutex::new(BTreeMap::new()),
+            records: record_table::RecordTable::new(config.page_bytes)?,
         })
     }
     pub fn preallocate(&mut self) -> Result<(), Error> {
@@ -203,7 +203,7 @@ impl<V: ValueLayout> HybridLog<V> {
                 },
                 ..Default::default()
             })),
-            records: crate::sync::Mutex::new(BTreeMap::new()),
+            records: record_table::RecordTable::new(config.page_bytes)?,
         })
     }
     fn enter_reservation(&self) -> Result<ReservationActivity<'_>, Error> {
@@ -263,12 +263,7 @@ impl<V: ValueLayout> HybridLog<V> {
     }
     #[cfg(test)]
     pub fn reserve(&self, value: V::Owned) -> Result<RecordReservation<'_, V>, Error> {
-        let activity = self.enter_reservation()?;
-        Ok(RecordReservation {
-            _activity: activity,
-            owner: self,
-            value: value::PageValue::initialize(&self.pool, self.layout.clone(), value)?,
-        })
+        self.reserve_record(b"", None, value)
     }
     pub fn tombstone_fits(&self, key_len: usize) -> Result<(), Error> {
         if key_len
@@ -415,18 +410,7 @@ impl<V: ValueLayout> HybridLog<V> {
             return Err(Error::InvalidState("Reserve other logs"));
         }
         let address = reservation.value.address()?;
-        {
-            let mut records = self
-                .records
-                .lock()
-                .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
-            if records.contains_key(&address) {
-                return Err(Error::InvalidState(
-                    "Record address is published repeatedly",
-                ));
-            }
-            records.insert(address, Arc::new(reservation.value));
-        }
+        self.records.insert(address, Arc::new(reservation.value))?;
         // Caller handling CAS Targets can be removed in case of conflict;Record table lock cannot be held here.
         let result = publish(address);
         drop(reservation._activity);
@@ -434,11 +418,7 @@ impl<V: ValueLayout> HybridLog<V> {
     }
     pub fn lease(&self, address: LogAddress) -> Result<RecordLease<V>, Error> {
         address.validate()?;
-        let records = self
-            .records
-            .lock()
-            .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
-        let value = records.get(&address).ok_or(Error::RangeTruncated)?.clone();
+        let value = self.records.get(address)?.ok_or(Error::RangeTruncated)?;
         Ok(RecordLease {
             value,
             local: PhantomData,
@@ -466,13 +446,7 @@ impl<V: ValueLayout> HybridLog<V> {
     }
     /// The upper layer must first remove the index visibility;Old lease retention value,Disallow direct release of its allocation.
     pub fn retire(&self, address: LogAddress) -> Result<(), Error> {
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
-        records.get(&address).ok_or(Error::RangeTruncated)?.seal()?;
-        let value = records.remove(&address).expect("Confirmed record exists");
-        drop(records);
+        let value = self.records.remove_checked(address, |value| value.seal())?;
         drop(value);
         Ok(())
     }
@@ -517,7 +491,8 @@ impl<V: ValueLayout> HybridLog<V> {
             .lock()
             .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         state.frontiers.read_only = target;
-        for (_, value) in records.range(..target) {
+        for record in records.range(..target) {
+            let (_, value) = record?;
             value.seal()?;
         }
         // of each record seal Arbitration with updated licenses;Keep target on failure,but does not push the boundaries of security.
@@ -572,9 +547,10 @@ impl<V: ValueLayout> HybridLog<V> {
                 .lock()
                 .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
             let mut values = Vec::new();
-            for (address, value) in records.range(begin.max(state.frontiers.begin)..end) {
+            for record in records.range(begin.max(state.frontiers.begin)..end) {
+                let (address, value) = record?;
                 values.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
-                values.push((*address, value.clone()));
+                values.push((address, value));
             }
             (generation, values)
         };
@@ -607,6 +583,7 @@ impl<V: ValueLayout> HybridLog<V> {
 }
 mod gate;
 mod page;
+mod record_table;
 pub(crate) mod scan;
 mod value;
 
@@ -757,7 +734,7 @@ mod tests {
         assert!(log.reserve(9).is_err());
         let temporary = log.decode_temporary(&u64::MAX.to_le_bytes()).unwrap();
         assert_eq!(temporary.read(|v| v).unwrap(), u64::MAX);
-        assert_eq!(log.frontiers().unwrap().tail, LogAddress(64));
+        assert_eq!(log.frontiers().unwrap().tail, LogAddress(508));
         assert!(log.reserve(9).is_err());
         drop(log);
         assert_eq!(temporary.read(|v| v).unwrap(), u64::MAX);
@@ -880,7 +857,7 @@ mod tests {
         assert_eq!(log.frontiers().unwrap().tail, before);
         drop(pending);
         let end = log.pad_tail().unwrap();
-        assert_eq!(end, LogAddress(64));
+        assert_eq!(end, LogAddress(512));
         log.advance_read_only(end).unwrap();
         assert_eq!(log.frontiers().unwrap().safe_read_only, end);
     }
@@ -928,22 +905,24 @@ mod tests {
             log.finish_initialization(log.reserve(value).unwrap())
                 .unwrap();
         }
-        assert_eq!(log.frontiers().unwrap().tail, LogAddress(64));
+        assert_eq!(log.frontiers().unwrap().tail, LogAddress(508));
+        // Model allocator page-end padding while an initialized record is still unpublished.
+        log.pool.pad_tail().unwrap();
         assert!(matches!(
-            log.advance_read_only(LogAddress(64)),
+            log.advance_read_only(LogAddress(512)),
             Err(Error::Busy)
         ));
         assert_eq!(log.frontiers().unwrap().safe_read_only, LogAddress(0));
         drop(pending);
-        log.advance_read_only(LogAddress(64)).unwrap();
+        log.advance_read_only(LogAddress(512)).unwrap();
         let frontiers = log.frontiers().unwrap();
-        assert_eq!(frontiers.read_only, LogAddress(64));
-        assert_eq!(frontiers.safe_read_only, LogAddress(64));
+        assert_eq!(frontiers.read_only, LogAddress(512));
+        assert_eq!(frontiers.safe_read_only, LogAddress(512));
         assert_eq!(frontiers.flushed_until, LogAddress(0));
         assert!(log.advance_read_only(LogAddress(0)).is_err());
-        assert!(log.advance_read_only(LogAddress(65)).is_err());
-        assert!(log.advance_read_only(LogAddress(128)).is_err());
-        let lease = log.lease(LogAddress(8)).unwrap();
+        assert!(log.advance_read_only(LogAddress(513)).is_err());
+        assert!(log.advance_read_only(LogAddress(1024)).is_err());
+        let lease = log.lease(LogAddress(64)).unwrap();
         assert_eq!(lease.read(|value| value).unwrap(), 2);
         assert!(lease.update(|_| Ok(())).is_err());
     }
@@ -955,6 +934,7 @@ mod tests {
             log.finish_initialization(log.reserve(value).unwrap())
                 .unwrap();
         }
+        log.pad_tail().unwrap();
         let entered = Barrier::new(2);
         let leave = Barrier::new(2);
         std::thread::scope(|scope| {
@@ -970,16 +950,16 @@ mod tests {
             });
             entered.wait();
             assert!(matches!(
-                log.advance_read_only(LogAddress(64)),
+                log.advance_read_only(LogAddress(512)),
                 Err(Error::Busy)
             ));
             let frontiers = log.frontiers().unwrap();
-            assert_eq!(frontiers.read_only, LogAddress(64));
+            assert_eq!(frontiers.read_only, LogAddress(512));
             assert_eq!(frontiers.safe_read_only, LogAddress(0));
             leave.wait();
         });
-        log.advance_read_only(LogAddress(64)).unwrap();
-        assert_eq!(log.frontiers().unwrap().safe_read_only, LogAddress(64));
+        log.advance_read_only(LogAddress(512)).unwrap();
+        assert_eq!(log.frontiers().unwrap().safe_read_only, LogAddress(512));
     }
     #[test]
     fn partial_initialization_failure_is_cleaned_up_by_itself_and_the_success_value_is_only_destroyed_once()
@@ -989,7 +969,7 @@ mod tests {
         let destructors = Arc::new(AtomicUsize::new(0));
         let log = HybridLog::new(
             LogConfig {
-                page_bytes: 64,
+                page_bytes: 128,
                 memory_pages: 1,
                 mutable_fraction: 0.5,
             },
@@ -1093,7 +1073,7 @@ mod tests {
     fn log() -> HybridLog<AtomicU64Value> {
         HybridLog::new(
             LogConfig {
-                page_bytes: 64,
+                page_bytes: 512,
                 memory_pages: 1,
                 mutable_fraction: 0.5,
             },
