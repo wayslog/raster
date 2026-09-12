@@ -1,0 +1,10 @@
+{
+  "run": "https://github.com/wayslog/raster/actions/runs/34681038972",
+  "commit": "90b231c",
+  "artifact": "cpp-parity-90b231c.tar.gz",
+  "sha256": "bdc70954ec0bacb24fdd1a0ed8a0b391397522dd6a1b8ba3c2f8636b77e997dd",
+  "cases": 18,
+  "rounds": 4,
+  "operations_per_run": 2000000,
+  "status": "All result checks passed; all performance parity gates failed."
+}
