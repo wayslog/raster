@@ -44,7 +44,7 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
 }
 impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn advance(&mut self) -> Result<Option<Outcome<O::Output>>, Error> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let resolved = engine.resolve_index(self.hash, &self.key)?;
         let entry = resolved.entry;
         let head = resolved.head;

@@ -54,7 +54,7 @@ impl<S: Schema> Session<S> {
         request: R,
         options: ReadOptions,
     ) -> Result<Submission<R::Output>, Rejected<R>> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let _guard = match self
             .participant
             .ok_or(Error::InvalidState("session_closed"))
@@ -70,7 +70,7 @@ impl<S: Schema> Session<S> {
         serial: Serial,
         request: U,
     ) -> Result<Submission<U::Output>, Rejected<U>> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let _guard = match self
             .participant
             .ok_or(Error::InvalidState("session_closed"))
@@ -87,7 +87,7 @@ impl<S: Schema> Session<S> {
         request: M,
         options: RmwOptions,
     ) -> Result<Submission<M::Output>, Rejected<M>> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let _guard = match self
             .participant
             .ok_or(Error::InvalidState("session_closed"))
@@ -104,7 +104,7 @@ impl<S: Schema> Session<S> {
         request: D,
         options: DeleteOptions,
     ) -> Result<Submission<D::Output>, Rejected<D>> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let _guard = match self
             .participant
             .ok_or(Error::InvalidState("session_closed"))
@@ -130,7 +130,7 @@ impl<S: Schema> Session<S> {
         if self.participant.is_none() {
             return Ok(Progress::default());
         }
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let _guard = engine
             .epoch
             .enter(self.participant.expect("Confirmed participant exists"))?;

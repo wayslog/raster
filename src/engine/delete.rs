@@ -36,7 +36,7 @@ struct DeleteTask<S: Schema, O: DeleteOperation<S>> {
 }
 impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
     fn advance(&mut self, _budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
-        let engine = self.engine.clone();
+        let engine = &self.engine;
         let resolved = engine.resolve_index(self.hash, &self.key)?;
         let entry = resolved.entry;
         if !self.options.force_tombstone && !entry.present {
