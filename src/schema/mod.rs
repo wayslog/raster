@@ -1,5 +1,6 @@
 //! Key semantics and value layout are shared strategies;The context of each user operation belongs to the session.
 pub mod builtin;
+pub(crate) mod encoded_key;
 pub mod key;
 pub mod value;
 

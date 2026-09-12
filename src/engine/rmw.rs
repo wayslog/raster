@@ -29,7 +29,7 @@ struct RmwTask<S: Schema, O: RmwOperation<S>> {
     lookup: Option<(crate::index::EntrySnapshot, LogLookup)>,
     options: RmwOptions,
     skip_in_place: bool,
-    key: Vec<u8>,
+    key: super::EncodedKey,
     hash: KeyHash,
     effect: Effect,
     complete: Option<Completer<O::Output>>,
