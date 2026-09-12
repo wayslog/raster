@@ -1,4 +1,4 @@
-//! 仅用于验收二进制的分配计数；不替换 RasterKV 库使用者的全局分配器。
+//! Allocation count for acceptance binary only;Do not replace RasterKV Global allocator for library consumers.
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicUsize, Ordering::Relaxed},
@@ -23,7 +23,7 @@ impl Counters {
             peak: AtomicUsize::new(0),
         }
     }
-    /// 多字段不是原子快照；验收只在业务线程已退出、对象已销毁后采样。
+    /// Multifield is not an atomic snapshot;Acceptance only occurs when the business thread has exited,Sample after object has been destroyed.
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             bytes: self.bytes.load(Relaxed),
@@ -48,10 +48,10 @@ impl<'a> TrackingAllocator<'a> {
         Self { counters }
     }
 }
-// SAFETY: 完整委托 System 的指针和布局契约；计数仅使用不分配、不恐慌的原子操作。
+// SAFETY: Complete commission System pointers and layout contracts;count only uses no allocation,Atomic operations without panic.
 unsafe impl GlobalAlloc for TrackingAllocator<'_> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: 调用者提供 GlobalAlloc 要求的有效非零布局，原样传递。
+        // SAFETY: The caller provides GlobalAlloc a valid non-zero layout required,Pass as is.
         let pointer = unsafe { System.alloc(layout) };
         if !pointer.is_null() {
             self.counters.allocated(layout.size());
@@ -59,7 +59,7 @@ unsafe impl GlobalAlloc for TrackingAllocator<'_> {
         pointer
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: 布局与 alloc 相同；System 保证成功返回的字节已清零。
+        // SAFETY: Layout and alloc Same;System Guaranteed that the bytes returned successfully have been cleared.
         let pointer = unsafe { System.alloc_zeroed(layout) };
         if !pointer.is_null() {
             self.counters.allocated(layout.size());
@@ -67,13 +67,13 @@ unsafe impl GlobalAlloc for TrackingAllocator<'_> {
         pointer
     }
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        // SAFETY: 调用者保证指针仍存活且布局与分配一致，未修改该配对。
+        // SAFETY: The caller guarantees that the pointer is still alive and that the layout is consistent with the allocation.,The pairing has not been modified.
         unsafe { System.dealloc(pointer, layout) };
         self.counters.bytes.fetch_sub(layout.size(), Relaxed);
         self.counters.allocations.fetch_sub(1, Relaxed);
     }
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        // SAFETY: 调用者保证原指针/布局有效且新大小合法，原样委托 System。
+        // SAFETY: The caller guarantees the original pointer/The layout is valid and the new size is legal,Delegate as is System.
         let next = unsafe { System.realloc(pointer, layout, size) };
         if !next.is_null() {
             if size >= layout.size() {

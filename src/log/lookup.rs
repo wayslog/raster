@@ -1,4 +1,4 @@
-//! 混合日志链查询；等待只保存逻辑地址、规范键编码和拥有型页字节。
+//! Mixed log chain query;Wait to save only the logical address,Canonical key encoding and owning page bytes.
 use super::{
     read_page::{PageRead, ReadPage},
     *,
@@ -40,7 +40,7 @@ impl<V: ValueLayout> HybridLog<V> {
         lookup.needs_value = false;
         Ok(lookup)
     }
-    /// key 必须来自 KeyCodec 的规范编码，不能传入任意未验证的持久字节。
+    /// key must come from KeyCodec standard encoding,Arbitrary unvalidated persistent bytes cannot be passed in.
     pub fn lookup(
         &self,
         storage: &SegmentedStorage,
@@ -74,7 +74,7 @@ impl LogLookup {
     pub fn matched_address(&self) -> Option<LogAddress> {
         self.matched.filter(|_| self.ended)
     }
-    /// 成功元数据匹配后的同步源快照。驻留源的独占许可一直覆盖闭包，冷源使用已校验的拥有页。
+    /// Sync source snapshot after successful metadata match.The exclusive permission of the resident source always covers the closure,Cold source uses verified owning page.
     pub fn with_matched_record<V: ValueLayout, R>(
         &self,
         log: &HybridLog<V>,
@@ -82,11 +82,13 @@ impl LogLookup {
         publish: impl FnOnce(&[u8]) -> Result<R, Error>,
     ) -> Result<R, Error> {
         if !Arc::ptr_eq(&self.owner, &log.state) || !Arc::ptr_eq(&self.storage, &storage.identity) {
-            return Err(Error::InvalidState("源记录查询归属不匹配"));
+            return Err(Error::InvalidState(
+                "Source record query attribution does not match",
+            ));
         }
-        let address = self
-            .matched_address()
-            .ok_or(Error::InvalidState("查询没有已完成的匹配记录"))?;
+        let address = self.matched_address().ok_or(Error::InvalidState(
+            "Query has no completed matching records",
+        ))?;
         let frontiers = log.frontiers()?;
         if address < frontiers.begin {
             return Err(Error::RangeTruncated);
@@ -94,14 +96,14 @@ impl LogLookup {
         if address >= frontiers.head {
             let lease = log.lease(address)?;
             if lease.key() != self.key {
-                return Err(Error::InvalidState("源记录键已改变"));
+                return Err(Error::InvalidState("Source record key changed"));
             }
             return lease.value.with_record_snapshot(publish);
         }
         let (_, page) = self.cached.as_ref().ok_or(Error::Busy)?;
         let record = page.record(address)?;
         if record.key != self.key {
-            return Err(Error::InvalidFormat("磁盘源记录键不匹配"));
+            return Err(Error::InvalidFormat("Disk source record key mismatch"));
         }
         let length = record.header.encoded_len()?;
         let mut bytes = Vec::new();
@@ -112,7 +114,7 @@ impl LogLookup {
         record.encode(&mut bytes)?;
         publish(&bytes)
     }
-    /// 只在成功解码冷记录后调用；返回拥有型编码，不暴露页借用。
+    /// Only called after successfully decoding a cold record;Returns the owning code,Do not expose page borrowing.
     pub fn cache_record(&self, limit: usize) -> Result<Option<(LogAddress, Vec<u8>)>, Error> {
         if !self.ended {
             return Ok(None);
@@ -139,7 +141,10 @@ impl LogLookup {
         record.encode(&mut bytes)?;
         Ok(Some((address, bytes)))
     }
-    #[allow(clippy::result_large_err, reason = "错误路由原样归还完成缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "The error route is returned intact to the completion buffer."
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -148,13 +153,13 @@ impl LogLookup {
         if !Arc::ptr_eq(&self.storage, &storage.identity) {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("查询属于其他存储"),
+                reason: Error::InvalidState("Query belongs to other storage"),
             });
         }
         let Some((_, reading)) = self.reading.as_mut() else {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("查询没有等待该 I/O"),
+                reason: Error::InvalidState("The query is not waiting for the I/O"),
             });
         };
         reading.accept(storage, completion)
@@ -166,10 +171,10 @@ impl LogLookup {
         budget: PollBudget,
     ) -> Result<LookupStep<V>, Error> {
         if !Arc::ptr_eq(&self.owner, &log.state) || !Arc::ptr_eq(&self.storage, &storage.identity) {
-            return Err(Error::InvalidState("查询归属不匹配"));
+            return Err(Error::InvalidState("Query attribution does not match"));
         }
         if self.ended {
-            return Err(Error::InvalidState("查询已经终结"));
+            return Err(Error::InvalidState("Query has been terminated"));
         }
         let result = self.advance(log, storage, budget);
         if !matches!(result, Ok(LookupStep::AwaitingIo | LookupStep::Continue)) {
@@ -204,7 +209,9 @@ impl LogLookup {
                 return Ok(LookupStep::Missing);
             }
             if address >= frontiers.tail {
-                return Err(Error::InvalidFormat("查询地址超过日志尾部"));
+                return Err(Error::InvalidFormat(
+                    "The query address exceeds the end of the log",
+                ));
             }
             if address >= frontiers.head {
                 let lease = match log.lease(address) {
@@ -253,7 +260,9 @@ impl LogLookup {
                 }
             }
             if self.next.is_some_and(|previous| previous >= address) {
-                return Err(Error::InvalidFormat("日志前驱没有严格递减"));
+                return Err(Error::InvalidFormat(
+                    "Log predecessor is not strictly decreasing",
+                ));
             }
         }
         Ok(LookupStep::Continue)

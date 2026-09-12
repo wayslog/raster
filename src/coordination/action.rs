@@ -1,4 +1,4 @@
-//! 动作状态和会话注册共用同一锁；阶段确认不等价于材料持久化。
+//! Action state and session registration share the same lock;Stage confirmation is not equivalent to material persistence.
 use super::*;
 use std::sync::Arc;
 #[derive(Default)]
@@ -48,16 +48,18 @@ impl Coordinator {
         Ok(self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?
             .system)
     }
     pub fn start_action(&self, kind: Action) -> Result<MaintenanceId, Error> {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.closed || registry.system.phase == Phase::Failed {
-            return Err(Error::InvalidState("存储已关闭或协调动作失败"));
+            return Err(Error::InvalidState(
+                "Storage is closed or coordination action failed",
+            ));
         }
         if registry.action.is_some()
             || kind == Action::Recover && registry.sessions.values().any(|s| s.active)
@@ -69,7 +71,7 @@ impl Coordinator {
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
         let id = MaintenanceId(registry.next_action);
-        // 活跃但无业务的会话也必须参与；不得用其操作次数推断已退出。
+        // Sessions that are active but have no business must also participate;The number of operations must not be used to infer exit.
         let participants = registry
             .sessions
             .iter()
@@ -106,7 +108,7 @@ impl Coordinator {
         };
         Ok(id)
     }
-    /// 阶段和动作 ID 必须都匹配；重复确认只能保持同一切分，不能篡改旧序号。
+    /// stages and actions ID must all match;Repeated confirmation can only maintain the same split,The old serial number cannot be tampered with.
     pub fn acknowledge(
         &self,
         id: MaintenanceId,
@@ -116,17 +118,19 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.system.phase != phase || !barrier(phase) {
-            return Err(Error::InvalidState("确认阶段不匹配"));
+            return Err(Error::InvalidState("Confirm phase mismatch"));
         }
         let registered = registry
             .sessions
             .get(&cut.session)
             .filter(|s| s.active)
-            .ok_or(Error::InvalidState("会话未注册"))?;
+            .ok_or(Error::InvalidState("session_not_registered"))?;
         if cut.last_accepted > registered.last_accepted {
-            return Err(Error::InvalidState("会话切分超过已接受序号"));
+            return Err(Error::InvalidState(
+                "Session split exceeds accepted sequence number",
+            ));
         }
         if phase == Phase::WaitPending && cut.old_pending != 0 {
             return Err(Error::Busy);
@@ -135,38 +139,42 @@ impl Coordinator {
             .action
             .as_mut()
             .filter(|a| a.id == id)
-            .ok_or(Error::InvalidState("维护动作不匹配"))?;
+            .ok_or(Error::InvalidState("maintenance_action_mismatch"))?;
         let participant = action
             .participants
             .get_mut(&cut.session)
-            .ok_or(Error::InvalidState("会话不属于阶段参与集合"))?;
+            .ok_or(Error::InvalidState(
+                "Session does not belong to stage participation collection",
+            ))?;
         if matches!(phase, Phase::InProgress | Phase::WaitPending) {
             if let Some(old) = participant.cut {
                 if old.last_accepted != cut.last_accepted || cut.old_pending > old.old_pending {
-                    return Err(Error::InvalidState("会话旧版本切分发生变化"));
+                    return Err(Error::InvalidState("Session old version sharding changed"));
                 }
             } else if phase == Phase::WaitPending {
-                return Err(Error::InvalidState("会话尚未登记版本切分"));
+                return Err(Error::InvalidState(
+                    "The session has not registered version split",
+                ));
             }
             participant.cut = Some(cut);
         }
         participant.acknowledged = Some(phase);
         Ok(())
     }
-    /// 驱动者完成该阶段实际工作后调用；本方法只验证状态与参与者屏障。
+    /// Called after the driver has completed the actual work in this phase;This method only verifies status and participant barriers.
     pub fn advance(&self, id: MaintenanceId, expected: Phase) -> Result<SystemState, Error> {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.system.phase != expected {
-            return Err(Error::InvalidState("推进阶段不匹配"));
+            return Err(Error::InvalidState("Advance phase mismatch"));
         }
         let action = registry
             .action
             .as_ref()
             .filter(|a| a.id == id)
-            .ok_or(Error::InvalidState("维护动作不匹配"))?;
+            .ok_or(Error::InvalidState("maintenance_action_mismatch"))?;
         if barrier(expected)
             && action
                 .participants
@@ -179,10 +187,10 @@ impl Coordinator {
             registry
                 .system
                 .action
-                .ok_or(Error::InvalidState("无维护动作"))?,
+                .ok_or(Error::InvalidState("No maintenance action"))?,
             expected,
         )
-        .ok_or(Error::InvalidState("阶段不能直接推进"))?;
+        .ok_or(Error::InvalidState("Stages cannot be advanced directly"))?;
         if next == Phase::InProgress {
             registry.system.version = CheckpointVersion(
                 registry
@@ -196,16 +204,18 @@ impl Coordinator {
         registry.system.phase = next;
         Ok(registry.system)
     }
-    /// Publish 的持久化结果由实际维护驱动者确认后，才能释放动作占用。
+    /// Publish After the persistence results are confirmed by the actual maintenance driver,to release the action occupation.
     pub fn finish_action(&self, id: MaintenanceId) -> Result<(), Error> {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.system.phase != Phase::Publish
             || registry.action.as_ref().is_none_or(|a| a.id != id)
         {
-            return Err(Error::InvalidState("维护动作尚未到发布阶段"));
+            return Err(Error::InvalidState(
+                "Maintenance action has not yet reached the release stage",
+            ));
         }
         registry.action = None;
         registry.system.id = None;
@@ -217,12 +227,12 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         let action = registry
             .action
             .as_mut()
             .filter(|a| a.id == id)
-            .ok_or(Error::InvalidState("维护动作不匹配"))?;
+            .ok_or(Error::InvalidState("maintenance_action_mismatch"))?;
         action.failure.get_or_insert_with(|| Arc::new(cause));
         registry.system.phase = Phase::Failed;
         Ok(())
@@ -232,16 +242,16 @@ impl Coordinator {
         let registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         Ok(registry
             .action
             .as_ref()
             .filter(|a| a.id == id)
-            .ok_or(Error::InvalidState("维护动作不匹配"))?
+            .ok_or(Error::InvalidState("maintenance_action_mismatch"))?
             .failure
             .clone())
     }
-    /// 只有拥有会话的线程排空两个上下文后调用；退出参与者保留切分而不删除。
+    /// Called only after the thread owning the session has drained both contexts;Exiting participants retains shards without deleting them.
     pub fn leave_drained(
         &self,
         current: (CheckpointVersion, SessionCut),
@@ -250,7 +260,7 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         let session = current.1.session;
         if current.1.old_pending != 0
             || previous.is_some_and(|(_, cut)| cut.old_pending != 0 || cut.session != session)
@@ -261,47 +271,52 @@ impl Coordinator {
             .sessions
             .get(&session)
             .filter(|s| s.active)
-            .ok_or(Error::InvalidState("会话未注册"))?;
+            .ok_or(Error::InvalidState("session_not_registered"))?;
         if current.1.last_accepted != registered.last_accepted {
-            return Err(Error::InvalidState("关闭会话的已接受序号不匹配"));
+            return Err(Error::InvalidState(
+                "Accepted sequence number mismatch for closed session",
+            ));
         }
         let system = registry.system;
         if let Some(action) = &mut registry.action {
             let participant = action
                 .participants
                 .get_mut(&session)
-                .ok_or(Error::InvalidState("会话不属于动作参与集合"))?;
+                .ok_or(Error::InvalidState(
+                    "Session does not belong to action participation set",
+                ))?;
             if action.failure.is_none() {
-                let version = if matches!(
-                    system.action,
-                    Some(Action::CheckpointFull | Action::CheckpointLog)
-                ) && matches!(
-                    system.phase,
-                    Phase::InProgress | Phase::WaitPending | Phase::WaitFlush | Phase::Publish
-                ) {
-                    CheckpointVersion(
-                        system
-                            .version
-                            .0
-                            .checked_sub(1)
-                            .ok_or(Error::InvalidState("检查点旧版本不存在"))?,
-                    )
-                } else {
-                    system.version
-                };
+                let version =
+                    if matches!(
+                        system.action,
+                        Some(Action::CheckpointFull | Action::CheckpointLog)
+                    ) && matches!(
+                        system.phase,
+                        Phase::InProgress | Phase::WaitPending | Phase::WaitFlush | Phase::Publish
+                    ) {
+                        CheckpointVersion(
+                            system.version.0.checked_sub(1).ok_or(Error::InvalidState(
+                                "Checkpoint old version does not exist",
+                            ))?,
+                        )
+                    } else {
+                        system.version
+                    };
                 let cut = if current.0 == version {
                     current.1
                 } else {
                     previous
                         .filter(|(v, _)| *v == version)
-                        .ok_or(Error::InvalidState("关闭会话缺少旧版本切分"))?
+                        .ok_or(Error::InvalidState(
+                            "Closing session is missing old version sharding",
+                        ))?
                         .1
                 };
                 if participant
                     .cut
                     .is_some_and(|old| old.last_accepted != cut.last_accepted)
                 {
-                    return Err(Error::InvalidState("关闭会话改变已固定切分"));
+                    return Err(Error::InvalidState("Close session changes fixed sharding"));
                 }
                 participant.cut = Some(cut);
             }
@@ -310,7 +325,7 @@ impl Coordinator {
         registry
             .sessions
             .get_mut(&session)
-            .expect("已验证会话存在")
+            .expect("Verified session exists")
             .active = false;
         Ok(())
     }
@@ -318,12 +333,12 @@ impl Coordinator {
         let registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         let action = registry
             .action
             .as_ref()
             .filter(|a| a.id == id)
-            .ok_or(Error::InvalidState("维护动作不匹配"))?;
+            .ok_or(Error::InvalidState("maintenance_action_mismatch"))?;
         let mut cuts = action.completed.clone();
         for participant in action.participants.values() {
             cuts.push(participant.cut.ok_or(Error::Busy)?);
@@ -344,7 +359,8 @@ mod tests {
         }
     }
     #[test]
-    fn 接受序号与版本校验原子进行且拒绝不消费序号() {
+    fn accept_serial_numbers_and_version_verification_atomically_and_reject_without_consuming_serial_numbers()
+     {
         let c = Coordinator::new(1).unwrap();
         let session = SessionId([1; 16]);
         c.enroll(session).unwrap();
@@ -367,7 +383,8 @@ mod tests {
         assert_eq!(c.cuts(id).unwrap()[0].last_accepted, Some(Serial(7)));
     }
     #[test]
-    fn 完整动作逐阶段确认且旧请求未排空不能发布() {
+    fn the_complete_action_is_confirmed_step_by_step_and_old_requests_cannot_be_released_until_they_are_drained()
+     {
         let c = Coordinator::new(2).unwrap();
         let sessions = [SessionId([1; 16]), SessionId([2; 16])];
         for session in sessions {
@@ -415,7 +432,7 @@ mod tests {
         );
     }
     #[test]
-    fn 仅索引动作不递增日志版本且恢复要求没有活跃会话() {
+    fn index_only_actions_do_not_increment_log_versions_and_recovery_requires_no_active_sessions() {
         let c = Coordinator::new(1).unwrap();
         let session = SessionId([1; 16]);
         c.enroll(session).unwrap();
@@ -434,7 +451,8 @@ mod tests {
         c.shutdown().unwrap();
     }
     #[test]
-    fn 动作中放弃参与会话保留首个失败并禁止新成功动作() {
+    fn abandoning_participation_in_the_session_during_the_action_retains_the_first_failed_action_and_prohibits_new_successful_actions()
+     {
         let c = Coordinator::new(1).unwrap();
         let session = SessionId([1; 16]);
         c.enroll(session).unwrap();
@@ -444,7 +462,7 @@ mod tests {
             &*c.action_failure(id).unwrap().unwrap(),
             Error::SessionAbandoned
         ));
-        c.fail_action(id, Error::Codec("第二次错误")).unwrap();
+        c.fail_action(id, Error::Codec("second mistake")).unwrap();
         assert!(matches!(
             &*c.action_failure(id).unwrap().unwrap(),
             Error::SessionAbandoned
@@ -455,7 +473,7 @@ mod tests {
         c.shutdown().unwrap();
     }
     #[test]
-    fn 注册与阶段开始竞争不会漏记参与者() {
+    fn registration_and_stage_start_competition_will_not_miss_participants() {
         for _ in 0..32 {
             let c = Coordinator::new(1).unwrap();
             let barrier = std::sync::Barrier::new(2);
@@ -492,7 +510,7 @@ mod tests {
         }
     }
     #[test]
-    fn 版本耗尽拒绝推进并保持原状态() {
+    fn the_version_is_exhausted_and_refuses_to_advance_and_remains_in_its_original_state() {
         let c = Coordinator::new(1).unwrap();
         c.registry.lock().unwrap().system.version = CheckpointVersion(u64::MAX);
         let id = c.start_action(Action::CheckpointLog).unwrap();

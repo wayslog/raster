@@ -1,4 +1,4 @@
-//! 记录占槽编码与页尾填充。零填充仅由明确的页剩余范围解释。
+//! Record slot encoding and footer padding.Zero padding is only explained by explicit page remaining range.
 use super::wire::{Reader, checksum, invalid};
 use crate::types::*;
 
@@ -10,7 +10,7 @@ pub(crate) struct RecordHeader {
     pub version: CheckpointVersion,
     pub key_bytes: u32,
     pub value_bytes: u32,
-    /// 值的磁盘槽容量，不包含键、记录头和尾部校验。
+    /// value disk slot capacity,Does not contain keys,Record header and trailer verification.
     pub capacity_bytes: u32,
     pub tombstone: bool,
     pub invalid: bool,
@@ -29,7 +29,7 @@ impl RecordHeader {
             .checked_add(u64::from(self.key_bytes))
             .and_then(|n| n.checked_add(u64::from(self.capacity_bytes)))
             .ok_or_else(invalid)?;
-        // 单条记录占槽使用 u32，调用者还须约束为当前页可容纳范围。
+        // A single record occupies a slot. u32,The caller must also be constrained to the range that the current page can accommodate.
         usize::try_from(u32::try_from(len).map_err(|_| invalid())?).map_err(|_| invalid())
     }
     pub fn encode(&self, output: &mut [u8]) -> Result<usize, Error> {
@@ -119,7 +119,7 @@ impl Record<'_> {
     }
 }
 impl<'a> Record<'a> {
-    /// 输入必须是一个完整占槽，不能包含下一条记录；页遍历者据头部长度切片。
+    /// The input must be a complete slot,Cannot contain the next record;Page traverser slices by header length.
     pub fn decode(bytes: &'a [u8]) -> Result<Self, Error> {
         let header = RecordHeader::decode(bytes.get(..HEADER_BYTES).ok_or_else(invalid)?)?;
         let len = header.encoded_len()?;
@@ -141,7 +141,7 @@ impl<'a> Record<'a> {
     }
 }
 
-/// 页尾不足一个头部，或上层明确结束该页时，用零填满剩余范围。
+/// The footer of the page is less than a header,Or when the upper layer explicitly ends the page,Fill remaining range with zeros.
 #[cfg(test)]
 pub(crate) fn encode_padding(remaining_page: &mut [u8]) {
     remaining_page.fill(0);
@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn 固定记录样例解码并逐字节复原() {
+    fn fixed_record_sample_decoding_and_byte_by_byte_restoration() {
         let bytes = fixture();
         let record = Record::decode(&bytes).unwrap();
         assert_eq!(record.key, b"k\xff");
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn 截断追加和每一位损坏均拒绝() {
+    fn truncated_appends_and_every_bit_corruption_are_rejected() {
         let bytes = fixture();
         for len in 0..bytes.len() {
             assert!(Record::decode(&bytes[..len]).is_err());
@@ -195,7 +195,7 @@ mod tests {
             for bit in 0..8 {
                 let mut bad = bytes.clone();
                 bad[i] ^= 1 << bit;
-                assert!(Record::decode(&bad).is_err(), "偏移 {i} 位 {bit}");
+                assert!(Record::decode(&bad).is_err(), "offset {i} Bit {bit}");
             }
         }
     }
@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn 重算校验也不能绕过版本长度与保留位校验() {
+    fn recalculation_verification_cannot_bypass_version_length_and_reserved_bit_verification() {
         for (offset, data) in [
             (4, vec![2, 0]),
             (6, vec![8, 0]),
@@ -222,12 +222,12 @@ mod tests {
             let mut bytes = fixture();
             bytes[offset..offset + data.len()].copy_from_slice(&data);
             repair(&mut bytes);
-            assert!(Record::decode(&bytes).is_err(), "偏移 {offset}");
+            assert!(Record::decode(&bytes).is_err(), "offset {offset}");
         }
     }
 
     #[test]
-    fn 墓碑空键无效记录与页末标记可往返() {
+    fn tombstone_empty_key_invalid_record_and_end_of_page_mark_can_go_back_and_forth() {
         let header = RecordHeader {
             previous: Some(LogAddress(0)),
             version: CheckpointVersion(u64::MAX),
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn 拒绝不修改输出且页填充不能伪装为记录() {
+    fn rejection_does_not_modify_the_output_and_page_fill_cannot_be_disguised_as_records() {
         let bytes = fixture();
         let mut record = Record::decode(&bytes).unwrap();
         let mut output = vec![0xaa; bytes.len()];

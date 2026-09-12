@@ -1,4 +1,4 @@
-//! 后台页推进共用设备邮箱，但不执行或迁移会话用户请求。
+//! The background page promotes shared device mailboxes,but does not execute or migrate session user requests.
 use super::{Engine, io_hub::CompletionHub};
 use crate::{log::flush::PageFlush, schema::Schema, types::*};
 #[derive(Default)]
@@ -24,7 +24,7 @@ impl<S: Schema> Engine<S> {
             }
             Err(_) => {
                 self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
-                Err(Error::InvalidState("后台日志推进恐慌"))
+                Err(Error::InvalidState("Background log push panic"))
             }
         }
     }
@@ -32,7 +32,7 @@ impl<S: Schema> Engine<S> {
         let mut state = match self.storage_progress.try_lock() {
             Ok(state) => state,
             Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
-            Err(_) => return Err(Error::InvalidState("后台日志推进锁中毒")),
+            Err(_) => return Err(Error::InvalidState("background_log_progress_lock_poisoned")),
         };
         if let Some((id, task)) = &mut state.flush {
             if let Some(completion) = self.io.take(*id)? {
@@ -66,18 +66,18 @@ impl<S: Schema> Engine<S> {
                 Err(error) => return Err(error),
             }
         }
-        // GC 负责越过作废前缀；只排空已有写入，避免重新编码已经逻辑丢弃的数据。
+        // GC Responsible for crossing obsolete prefixes;Only flush existing writes,Avoid recoding data that has been logically discarded.
         if self.coordinator.snapshot()?.action == Some(crate::coordination::Action::Gc) {
             return Ok(false);
         }
-        // 至少保留当前页可变，最多保留 memory_pages - 1 页，留出循环推进空间。
+        // Keep at least the current page variable,retain at most memory_pages - 1 page,Leave room for circulation.
         let mutable = ((self.config.log.memory_pages as f64 * self.config.log.mutable_fraction)
             .ceil() as u64)
             .max(1)
             .min((self.config.log.memory_pages - 1) as u64);
         let tail_page = frontiers.tail.0 / self.config.log.page_bytes as u64;
         let target_page = tail_page.saturating_add(1).saturating_sub(mutable);
-        // 检查点可主动冻结仍在可变窗口中的尾页；刷盘目标不能退回窗口计算值。
+        // Checkpoints can actively freeze the last page that is still in the mutable window;The brush target cannot return to the window calculation value.
         let target = LogAddress::from_page_offset(
             PageId(target_page),
             0,
@@ -92,7 +92,7 @@ impl<S: Schema> Engine<S> {
             Err(Error::Busy) => return Ok(false),
             Err(error) => return Err(error),
         }
-        // 后台路由保留一个额外邮箱，不能被所有用户 Pending 槽占满。
+        // The background routing retains an additional mailbox,Not available to all users Pending slot full.
         let version = self.coordinator.snapshot()?.version;
         let id = self.io.reserve(SessionId(self.id.0))?;
         match self
@@ -115,13 +115,13 @@ impl<S: Schema> Engine<S> {
 }
 
 impl<S: Schema> Engine<S> {
-    /// 关闭已阻止注册新会话；只完成已启动的后台页，不编码新的页。
+    /// Turn off Blocked registration of new sessions;Only complete the started background page,Do not encode new pages.
     pub(crate) fn drain_storage(&self, deadline: Deadline) -> Result<(), Error> {
         loop {
             let active = match self.storage_progress.try_lock() {
                 Ok(state) => state.flush.is_some(),
                 Err(std::sync::TryLockError::WouldBlock) => true,
-                Err(_) => return Err(Error::InvalidState("后台日志推进锁中毒")),
+                Err(_) => return Err(Error::InvalidState("background_log_progress_lock_poisoned")),
             };
             if !active || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
                 return Ok(());
@@ -134,21 +134,23 @@ impl<S: Schema> Engine<S> {
             std::thread::yield_now();
         }
     }
-    /// 仅在设备 shutdown 成功、所有在途缓冲归还后调用。
+    /// only on device shutdown success,Called after all in-flight buffers have been returned.
     pub(crate) fn release_stopped_storage(&self) -> Result<(), Error> {
         let mut state = self
             .storage_progress
             .try_lock()
             .map_err(|error| match error {
                 std::sync::TryLockError::WouldBlock => Error::Busy,
-                std::sync::TryLockError::Poisoned(_) => Error::InvalidState("后台日志推进锁中毒"),
+                std::sync::TryLockError::Poisoned(_) => {
+                    Error::InvalidState("background_log_progress_lock_poisoned")
+                }
             })?;
         if let Some((id, task)) = &mut state.flush {
             task.discard_after_device_shutdown()?;
             self.io.release(*id)?;
             state.flush = None;
         }
-        // 会话放弃的历史路由仍可能有完成；返回的拥有型缓冲在此释放。
+        // Historical routes that were abandoned by the session may still have completed;The returned owned buffer is released here.
         self.io.discard_after_device_shutdown(&*self.storage.device)
     }
 }
@@ -163,7 +165,8 @@ mod tests {
         schema::builtin::{AtomicU64Value, SchemaPair, U64Key},
     };
     #[test]
-    fn 检查点已冻结尾页即使仍在可变窗口内也继续后台刷盘() {
+    fn the_checkpoint_has_frozen_and_the_last_page_continues_to_be_flushed_in_the_background_even_if_it_is_still_within_the_variable_window()
+     {
         struct Directory(std::path::PathBuf);
         impl Drop for Directory {
             fn drop(&mut self) {
@@ -197,7 +200,10 @@ mod tests {
         store.inner.log.advance_read_only(end).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while store.inner.log.frontiers().unwrap().flushed_until != end {
-            assert!(std::time::Instant::now() < deadline, "已冻结尾页没有刷出");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "The frozen last page has not been refreshed"
+            );
             store.inner.poll_maintenance(PollBudget::default()).unwrap();
             std::thread::yield_now();
         }

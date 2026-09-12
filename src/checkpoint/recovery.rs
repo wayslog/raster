@@ -1,4 +1,4 @@
-//! 恢复集合的语义与逐材料校验；全部验证之前不能发布恢复后的实例。
+//! Restoring collection semantics and material-by-material verification;The restored instance cannot be released until everything has been verified..
 use crate::{
     api::maintenance::RecoverySet,
     config::Config,
@@ -21,7 +21,7 @@ pub(crate) struct RecoveryPlan {
     verified: BTreeSet<(CheckpointToken, u64)>,
 }
 impl RecoveryPlan {
-    /// 清单应先通过提交读取器；此处不将合法描述等同于磁盘材料已验证。
+    /// The manifest should first pass through the submission reader;Legal descriptions are not equated here with disk material verified.
     pub fn new<S: Schema>(
         set: &RecoverySet,
         index: Manifest,
@@ -38,7 +38,9 @@ impl RecoveryPlan {
             || index.token != set.index
             || log.token != set.log
         {
-            return Err(Error::InvalidFormat("恢复集合身份与清单不匹配"));
+            return Err(Error::InvalidFormat(
+                "Recovery collection identity does not match manifest",
+            ));
         }
         match_recovery(&index, &log)?;
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -46,11 +48,11 @@ impl RecoveryPlan {
                 .key_codec()
                 .validate_identity(index.key_format, &index.hash)?;
             if schema.value_layout().format_id() != index.value_format {
-                return Err(Error::InvalidFormat("恢复值布局不匹配"));
+                return Err(Error::InvalidFormat("Recovery value layout mismatch"));
             }
             Ok(())
         }))
-        .map_err(|_| Error::InvalidState("恢复语义校验恐慌"))??;
+        .map_err(|_| Error::InvalidState("Recovery semantic check panic"))??;
         let maximum_index = config
             .index
             .buckets
@@ -68,7 +70,9 @@ impl RecoveryPlan {
             if (manifest.kind == Kind::Log && count != 0)
                 || (manifest.kind != Kind::Log && count != 1)
             {
-                return Err(Error::InvalidFormat("当前索引格式要求恰好一份完整索引材料"));
+                return Err(Error::InvalidFormat(
+                    "The current index format requires exactly one complete index of material",
+                ));
             }
             for material in &manifest.materials {
                 match material.kind {
@@ -77,7 +81,9 @@ impl RecoveryPlan {
                             || material.bytes > maximum_index as u64
                             || !(material.bytes - 36).is_multiple_of(24)
                         {
-                            return Err(Error::InvalidFormat("索引材料长度不符合配置容量"));
+                            return Err(Error::InvalidFormat(
+                                "Index material length does not meet configured capacity",
+                            ));
                         }
                     }
                     Kind::Log => {
@@ -89,16 +95,24 @@ impl RecoveryPlan {
                             || material.bytes
                                 != PageFrame::encoded_size(config.log.page_bytes)? as u64
                         {
-                            return Err(Error::InvalidFormat("日志材料页布局与恢复配置不匹配"));
+                            return Err(Error::InvalidFormat(
+                                "Log material page layout does not match recovery configuration",
+                            ));
                         }
                     }
-                    Kind::Full => return Err(Error::InvalidFormat("材料不能使用完整检查点类型")),
+                    Kind::Full => {
+                        return Err(Error::InvalidFormat(
+                            "Material cannot use full checkpoint type",
+                        ));
+                    }
                 }
                 let key = (manifest.token, material.id);
                 if let Some(previous) = materials.insert(key, material.clone())
                     && previous != *material
                 {
-                    return Err(Error::InvalidFormat("同一材料存在冲突描述"));
+                    return Err(Error::InvalidFormat(
+                        "Conflicting descriptions exist for the same material",
+                    ));
                 }
             }
         }
@@ -125,7 +139,7 @@ impl RecoveryPlan {
     pub fn log(&self) -> &Manifest {
         &self.log
     }
-    /// 错误和重复材料不推进完成计数；地址有效性仍不代替完整链及重放校验。
+    /// Errors and duplicate materials do not advance completion count;Address validity still does not replace the complete chain and replay verification.
     pub fn verify_material<'a, S: Schema>(
         &mut self,
         token: CheckpointToken,
@@ -135,19 +149,18 @@ impl RecoveryPlan {
     ) -> Result<ValidatedMaterial<'a>, Error> {
         let key = (token, id);
         if self.verified.contains(&key) {
-            return Err(Error::InvalidState("恢复材料已验证"));
+            return Err(Error::InvalidState("Recovery materials verified"));
         }
-        let material = self
-            .materials
-            .get(&key)
-            .ok_or(Error::InvalidFormat("材料不属于恢复集合"))?;
+        let material = self.materials.get(&key).ok_or(Error::InvalidFormat(
+            "Material does not belong to recovery collection",
+        ))?;
         material.verify(bytes)?;
         let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             schema
                 .key_codec()
                 .validate_identity(self.index.key_format, &self.index.hash)?;
             if schema.value_layout().format_id() != self.index.value_format {
-                return Err(Error::InvalidFormat("恢复值布局发生变化"));
+                return Err(Error::InvalidFormat("Recovery value layout changed"));
             }
             Ok(match material.kind {
                 Kind::Index => {
@@ -157,7 +170,9 @@ impl RecoveryPlan {
                             entry.address < material.begin || entry.address >= material.end
                         })
                     {
-                        return Err(Error::InvalidFormat("恢复索引桶数或链头范围不匹配"));
+                        return Err(Error::InvalidFormat(
+                            "Recovery index bucket number or chain head range does not match",
+                        ));
                     }
                     ValidatedMaterial::Index(image)
                 }
@@ -174,10 +189,10 @@ impl RecoveryPlan {
                     }
                     ValidatedMaterial::Log(frame)
                 }
-                Kind::Full => return Err(Error::InvalidFormat("非法恢复材料类型")),
+                Kind::Full => return Err(Error::InvalidFormat("Illegal recovery material types")),
             })
         }))
-        .map_err(|_| Error::InvalidState("恢复材料语义校验恐慌"))??;
+        .map_err(|_| Error::InvalidState("Restoring Material Semantic Check Panic"))??;
         self.verified.insert(key);
         Ok(parsed)
     }

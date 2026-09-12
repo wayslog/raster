@@ -1,4 +1,4 @@
-//! 显式磁盘编码；v1 已经 P5 恢复协议验收冻结，不兼容变化须显式升级版本。
+//! explicit disk encoding;v1 Already P5 Recovery Agreement Acceptance Freeze,Incompatible changes require an explicit upgrade version.
 mod manifest;
 mod record;
 mod wire;

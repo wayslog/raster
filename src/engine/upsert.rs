@@ -1,4 +1,4 @@
-//! Upsert 等待空间时保留已生成值；每次发布在同键仲裁内取得最新链头。
+//! Upsert Keep generated values while waiting for space;Get the latest link head in the same key quorum for each release.
 use super::{
     Engine, SessionRuntime,
     pending::{PendingTask, TaskStep},
@@ -49,7 +49,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         let entry = resolved.entry;
         let head = resolved.head;
         if self.prepared.is_none() {
-            let request = self.request.as_mut().expect("请求未完成");
+            let request = self.request.as_mut().expect("Request not completed");
             if let Some(lease) = engine
                 .log
                 .find_mutable(&self.key, head)?
@@ -81,7 +81,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 plan,
             });
         }
-        let prepared = self.prepared.as_mut().expect("已有拥有型值");
+        let prepared = self.prepared.as_mut().expect("Already possessive value");
         let allocation = match engine.log.allocate_record(&self.key, head, prepared.plan) {
             Ok(allocation) => allocation,
             Err(Error::CapacityExceeded) if engine.storage.device.capabilities().supports_files => {
@@ -89,7 +89,8 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             }
             Err(error) => return Err(error),
         };
-        let reservation = allocation.initialize(prepared.value.take().expect("尚未消费值"))?;
+        let reservation =
+            allocation.initialize(prepared.value.take().expect("Value not yet consumed"))?;
         let address = engine
             .log
             .finish_initialization(reservation.with_version(self.version))?;
@@ -99,7 +100,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         {
             PublishResult::Published => {
                 self.effect = Effect::Applied;
-                let output = prepared.output.take().expect("尚未交付输出");
+                let output = prepared.output.take().expect("Output not delivered yet");
                 self.prepared = None;
                 Ok(Some(Outcome::Success(output)))
             }
@@ -119,7 +120,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             self.engine.failed.store(true, Ordering::SeqCst);
             let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
             result = Err(OperationError {
-                cause: Error::InvalidState("待追加值析构恐慌"),
+                cause: Error::InvalidState("Destruction panic of pending value"),
                 effect: self.effect,
             });
         }
@@ -131,7 +132,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 self.engine
                     .complete_tracked(&mut self.monitor, self.id, complete, result);
             } else {
-                // 初次同步推进尚无票据；异常展开只能收尾并失败关闭，不能假装已通知。
+                // There is no ticket yet for the first simultaneous promotion;Exception expansion can only end and fail to close,Can't pretend to be informed.
                 self.engine.failed.store(true, Ordering::SeqCst);
                 self.monitor
                     .finish(super::metrics::Completed::Failed(Effect::Unknown), None);
@@ -142,7 +143,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn run_locked(&mut self) -> UpsertStep<O::Output> {
         if self.engine.failed.load(Ordering::SeqCst) {
             return UpsertStep::Ready(Err(OperationError {
-                cause: Error::InvalidState("引擎已失败关闭"),
+                cause: Error::InvalidState("engine_failed_closed"),
                 effect: self.effect,
             }));
         }
@@ -160,7 +161,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             Ok(result) => result,
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("写入回调恐慌"))
+                Err(Error::InvalidState("Write callback panic"))
             }
         };
         if matches!(result, Ok(None)) {
@@ -171,7 +172,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         }
         UpsertStep::Ready(
             result
-                .map(|value| value.expect("已排除等待空间"))
+                .map(|value| value.expect("Waiting space excluded"))
                 .map_err(|cause| OperationError {
                     cause,
                     effect: self.effect,
@@ -190,7 +191,7 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
         self.version
     }
     fn on_io(&mut self, _: IoCompletion) -> Result<(), Error> {
-        Err(Error::InvalidState("Upsert 不拥有该设备请求"))
+        Err(Error::InvalidState("Upsert Don't own the device request"))
     }
     fn step(&mut self, _: PollBudget) -> TaskStep {
         if self.request.is_none() {
@@ -203,7 +204,7 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
                 Err(std::sync::TryLockError::WouldBlock) => return TaskStep::Retry,
                 Err(_) => {
                     self.abandon(OperationError {
-                        cause: Error::InvalidState("操作仲裁锁中毒"),
+                        cause: Error::InvalidState("Operation arbitration lock poisoning"),
                         effect: self.effect,
                     });
                     return TaskStep::Complete;
@@ -296,7 +297,9 @@ impl<S: Schema> Engine<S> {
         };
         match task.run_locked() {
             UpsertStep::Ready(result) => {
-                let result = task.finalize(result).expect("同步请求只终结一次");
+                let result = task
+                    .finalize(result)
+                    .expect("Synchronous requests are terminated only once");
                 self.record_ready(&mut task.monitor, id, &result);
                 Ok(Submission::Ready(result))
             }

@@ -1,4 +1,5 @@
-//! 实际工作线程、部分效果和资源收尾；门闩控制并行交错，不模拟复制结果。
+//! Exercise the actual worker thread, partial effects, and resource cleanup;
+//! a latch controls parallel interleaving, and copy results are never simulated.
 use super::*;
 use crate::{
     api::{
@@ -59,8 +60,8 @@ impl ValueCodec for Codec {
             assert!(
                 current
                     .name()
-                    .is_some_and(|name| name.starts_with("raster压缩-")),
-                "复制值解码必须在工作线程执行"
+                    .is_some_and(|name| name.starts_with("rastercompaction-")),
+                "Copy value decoding must be performed on a worker thread"
             );
             self.0.calls.fetch_add(1, Ordering::SeqCst);
             let mut gate = self.0.gate.lock().unwrap();
@@ -72,8 +73,8 @@ impl ValueCodec for Codec {
             drop(gate);
             if value == 1 {
                 match self.0.failure.load(Ordering::SeqCst) {
-                    1 => return Err(Error::Codec("工作线程解码失败")),
-                    2 => panic!("工作线程解码恐慌"),
+                    1 => return Err(Error::Codec("Worker thread decoding failed")),
+                    2 => panic!("Worker thread decoding panic"),
                     _ => {}
                 }
             }
@@ -149,14 +150,18 @@ fn insert_probe(store: &RasterKV<ProbeSchema>, keys: &[u64]) -> Session<ProbeSch
 fn reach_two(store: &RasterKV<ProbeSchema>, session: &mut Session<ProbeSchema>, probe: &Probe) {
     let until = deadline();
     while probe.entered() < 2 {
-        assert!(!until.expired(), "两个工作者没有同时到达值解码门闩");
+        assert!(
+            !until.expired(),
+            "Two workers did not arrive at the value decoding latch at the same time"
+        );
         session.poll(PollBudget::default()).unwrap();
         store.maintenance().poll(PollBudget::default()).unwrap();
         std::thread::yield_now();
     }
 }
 #[test]
-fn 两算法在独立线程同时复制且正常报告前工作线程全部退出() {
+fn the_two_algorithms_all_work_threads_exit_before_independent_threads_copy_at_the_same_time_and_report_normally()
+ {
     for algorithm in [CompactionAlgorithm::Lookup, CompactionAlgorithm::ScanDedup] {
         let probe = Arc::new(Probe::default());
         let _release = Release(probe.clone());
@@ -192,11 +197,14 @@ fn 两算法在独立线程同时复制且正常报告前工作线程全部退�
         store.shutdown(deadline()).unwrap();
         drop(session);
         drop(store);
-        assert!(weak.upgrade().is_none(), "空闲工作线程不能循环持有存储");
+        assert!(
+            weak.upgrade().is_none(),
+            "Idle worker threads cannot cycle holding storage"
+        );
     }
 }
 #[test]
-fn 工作者错误和恐慌保留实际复制计数且不自动重放() {
+fn worker_errors_and_panics_retain_actual_replication_counts_and_are_not_automatically_replayed() {
     for mode in [1, 2] {
         let probe = Arc::new(Probe::default());
         let _release = Release(probe.clone());
@@ -211,7 +219,7 @@ fn 工作者错误和恐慌保留实际复制计数且不自动重放() {
             .unwrap();
         reach_two(&store, &mut session, &probe);
         {
-            // 与条件等待共用门闩锁，避免通知先于 wait 而丢失第一条记录的释放信号。
+            // Shared latch with condition wait,Avoid notifications preceded by wait And the release signal of the first record is lost.
             let _gate = probe.gate.lock().unwrap();
             probe.release_zero.store(true, Ordering::SeqCst);
             probe.wake.notify_all();
@@ -225,7 +233,10 @@ fn 工作者错误和恐慌保留实际复制计数且不自动重放() {
             .unwrap()
             < before.tail
         {
-            assert!(!limit.expired(), "第一条复制未完成发布");
+            assert!(
+                !limit.expired(),
+                "The first copy is not completed and published"
+            );
             session.poll(PollBudget::default()).unwrap();
             store.maintenance().poll(PollBudget::default()).unwrap();
             std::thread::yield_now();
@@ -233,7 +244,7 @@ fn 工作者错误和恐慌保留实际复制计数且不自动重放() {
         probe.release();
         let result = session.wait_maintenance(&ticket, deadline()).unwrap();
         let Err(Error::CompactionFailed { copied, cause, .. }) = &*result else {
-            panic!("应失败：{result:?}")
+            panic!("should fail:{result:?}")
         };
         assert!(matches!(&**cause, Error::Codec(_) | Error::InvalidState(_)));
         assert_eq!(store.inner.failed.load(Ordering::SeqCst), mode == 2);
@@ -253,8 +264,11 @@ fn 工作者错误和恐慌保留实际复制计数且不自动重放() {
                 None => break,
             }
         }
-        assert_eq!(*copied, actual, "计数必须与实际发布记录一致");
-        assert_eq!(*copied, 1, "已发布第一条后才让第二条失败");
+        assert_eq!(*copied, actual, "Count must match actual published record");
+        assert_eq!(
+            *copied, 1,
+            "The first one was published before the second one failed"
+        );
         let calls = probe.calls.load(Ordering::SeqCst);
         for _ in 0..16 {
             let _ = store.maintenance().poll(PollBudget::default());
@@ -265,7 +279,8 @@ fn 工作者错误和恐慌保留实际复制计数且不自动重放() {
     }
 }
 #[test]
-fn 超过线程预算接受前拒绝且无会话驱动可以完成多工作者() {
+fn thread_budget_exceeded_reject_before_accept_and_multi_worker_can_be_done_without_session_driver()
+{
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
@@ -349,7 +364,7 @@ mod io_failure {
             let selected = matches!(request.operation, IoOperation::Read { .. })
                 && std::thread::current()
                     .name()
-                    .is_some_and(|name| name.starts_with("raster压缩-"));
+                    .is_some_and(|name| name.starts_with("rastercompaction-"));
             let mut state = self.control.state.lock().unwrap();
             let id = self.inner.submit(request)?;
             if selected {
@@ -380,9 +395,11 @@ mod io_failure {
                     if !state.failed {
                         assert!(matches!(completion.result, Ok(IoOutcome::Transferred(_))));
                         completion.result = if self.control.fatal {
-                            Err(Error::InvalidState("注入工作者读取协议损坏"))
+                            Err(Error::InvalidState("Injection worker read protocol broken"))
                         } else {
-                            Err(Error::Io(std::io::Error::other("工作者磁盘读取完成失败")))
+                            Err(Error::Io(std::io::Error::other(
+                                "Worker disk read completion failed",
+                            )))
                         };
                         state.failed = true;
                     }
@@ -405,7 +422,8 @@ mod io_failure {
         }
     }
     #[test]
-    fn 多个工作者在途读取遇到单次失败时先归还全部缓冲再终结动作() {
+    fn when_multiple_workers_encounter_a_single_failure_when_reading_in_transit_they_first_return_all_buffers_and_then_terminate_the_action()
+     {
         let control = Arc::new(Control::default());
         let (_root, store) = setup(Some(Box::new(Factory(control.clone()))));
         let mut session = store.start_session(Default::default()).unwrap();
@@ -420,7 +438,10 @@ mod io_failure {
             .unwrap();
         let until = deadline();
         while control.state.lock().unwrap().held.len() < 2 {
-            assert!(!until.expired(), "工作者未产生并行磁盘读取");
+            assert!(
+                !until.expired(),
+                "Workers are not producing parallel disk reads"
+            );
             session.poll(PollBudget::default()).unwrap();
             store.maintenance().poll(PollBudget::default()).unwrap();
             std::thread::yield_now();
@@ -433,7 +454,7 @@ mod io_failure {
         control.release.store(true, Ordering::SeqCst);
         let result = session.wait_maintenance(&ticket, deadline()).unwrap();
         let Err(Error::CompactionFailed { copied, cause, .. }) = &*result else {
-            panic!("预期读取失败：{result:?}")
+            panic!("Expected read failure:{result:?}")
         };
         assert!(matches!(&**cause, Error::Io(_)));
         assert!(!store.inner.failed.load(Ordering::SeqCst));
@@ -448,7 +469,7 @@ mod io_failure {
         assert_eq!(
             control.state.lock().unwrap().reads,
             reads,
-            "不自动重试工作请求"
+            "Do not automatically retry work requests"
         );
         let mut scan = store
             .scan(ScanOptions {
@@ -468,7 +489,7 @@ mod io_failure {
         store.shutdown(deadline()).unwrap();
     }
     #[test]
-    fn 工作者失败关闭保留未归还读取租约直到设备结束() {
+    fn worker_failed_shutdown_retains_unreturned_read_lease_until_end_of_device() {
         let control = Arc::new(Control {
             fatal: true,
             ..Default::default()
@@ -485,7 +506,7 @@ mod io_failure {
             .unwrap();
         let limit = deadline();
         while control.state.lock().unwrap().held.len() < 2 {
-            assert!(!limit.expired(), "没有到达两路在途读取");
+            assert!(!limit.expired(), "No arrival of two-way read in transit");
             session.poll(PollBudget::default()).unwrap();
             store.maintenance().poll(PollBudget::default()).unwrap();
             std::thread::yield_now();
@@ -498,14 +519,14 @@ mod io_failure {
         assert!(store.inner.failed.load(Ordering::SeqCst));
         assert!(
             !control.state.lock().unwrap().held.is_empty(),
-            "仍有工作者缓冲未交还"
+            "There are still worker buffers that have not been returned"
         );
         assert!(
             matches!(
                 store.inner.storage.invalidate(0, Generation(0)),
                 Err(Error::Busy)
             ),
-            "失败票据不等于在途租约可释放"
+            "Failed ticket does not equal in-transit lease releasable"
         );
         session.close(deadline()).unwrap();
         store.shutdown(deadline()).unwrap();
@@ -516,7 +537,8 @@ mod io_failure {
 }
 
 #[test]
-fn 多工作者与写删交错后重复检查点截断恢复保持墓碑和会话进度() {
+fn repeated_checkpoint_truncation_recovery_after_multi_worker_interleaving_with_write_delete_maintains_tombstones_and_session_progress()
+ {
     let root = Directory(std::env::temp_dir().join(format!(
         "raster-workers-cycle-{:x?}",
         StoreId::generate().unwrap().0
@@ -545,7 +567,7 @@ fn 多工作者与写删交错后重复检查点截断恢复保持墓碑和会�
     }
     assert!(
         store.inner.cache.allocated_bytes() > 0,
-        "压缩前实际存在缓存头"
+        "Cache header actually exists before compression"
     );
     let mut serial = 408;
     let mut missing = HashSet::new();
@@ -603,7 +625,10 @@ fn 多工作者与写删交错后重复检查点截断恢复保持墓碑和会�
         );
         latest = Some(checkpoint.clone());
     }
-    assert!(deleted > 0, "重复流程实际释放工作段");
+    assert!(
+        deleted > 0,
+        "The repetitive process actually releases the work segment"
+    );
     let checkpoint = latest.unwrap();
     let session_id = session.id();
     let store_id = store.id();

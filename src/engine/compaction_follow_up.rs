@@ -1,4 +1,4 @@
-//! 复合压缩的后续动作：按上游顺序先检查点再截断，不持有复制动作等待子任务。
+//! Follow-up to compound compression:Checkpoint first and then truncate in upstream order,Does not hold copy action waiting for subtask.
 use super::*;
 use crate::api::maintenance::CheckpointKind;
 
@@ -11,7 +11,7 @@ pub(super) enum Stage {
     Report,
 }
 impl Job {
-    /// 失败关闭也先收取已发布的子任务结果，不能丢失成功检查点或 GC 的真实错误。
+    /// If the shutdown fails, the published subtask results will also be collected first.,Cannot lose a successful checkpoint or GC true error.
     pub(super) fn collect_child(&mut self) -> Result<bool, Error> {
         match &mut self.stage {
             Stage::Checkpoint(ticket) => {
@@ -60,7 +60,11 @@ impl Job {
             },
             Stage::Checkpoint(_) | Stage::Gc(_) => return self.collect_child(),
             Stage::Report => self.publish_report()?,
-            Stage::Copy => return Err(Error::InvalidState("复制阶段不能执行后续动作")),
+            Stage::Copy => {
+                return Err(Error::InvalidState(
+                    "Subsequent actions cannot be performed during the copy phase.",
+                ));
+            }
         }
         Ok(true)
     }

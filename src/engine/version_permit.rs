@@ -1,4 +1,4 @@
-//! 挂起期间保留逻辑版本登记，不保留记录租约或用户上下文引用。
+//! Preserve logical version registration during suspend,Does not retain record leases or user context references.
 use crate::types::*;
 use std::{
     collections::BTreeMap,
@@ -21,8 +21,8 @@ impl VersionPermits {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| Error::InvalidState("请求版本登记锁中毒"))?;
-        // 阶段观察落后的调用不能插到已登记的新版本之前；拒绝发生在接受序号前。
+            .map_err(|_| Error::InvalidState("Request version registration lock poisoning"))?;
+        // Phase observation lag calls cannot be inserted before a registered new version;Rejection occurs before sequence number is accepted.
         if active
             .range((hash.0, version.0)..=(hash.0, u64::MAX))
             .any(|(&(h, v), _)| h == hash.0 && v > version.0)
@@ -48,7 +48,7 @@ impl VersionPermit {
         let active = self
             .active
             .lock()
-            .map_err(|_| Error::InvalidState("请求版本登记锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Request version registration lock poisoning"))?;
         Ok(active.range((self.key.0, 0)..self.key).next().is_none())
     }
 }
@@ -68,7 +68,8 @@ impl Drop for VersionPermit {
 mod tests {
     use super::*;
     #[test]
-    fn 旧版本全部退出后新版本才可执行且不同键互不阻塞() {
+    fn the_new_version_can_be_executed_only_after_all_old_versions_have_been_exited_and_different_keys_do_not_block_each_other()
+     {
         let permits = VersionPermits::default();
         let old = permits.reserve(KeyHash(1), CheckpointVersion(0)).unwrap();
         let same = permits.reserve(KeyHash(1), CheckpointVersion(0)).unwrap();

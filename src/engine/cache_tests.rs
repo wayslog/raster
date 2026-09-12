@@ -1,4 +1,4 @@
-//! 原生缓存命中、失效及维护路径验证。
+//! native cache hit,Failure and maintenance path verification.
 use super::*;
 use crate::schema::KeyCodec;
 fn cached_store(capacity: usize) -> (Directory, RasterKV<Schema>) {
@@ -34,7 +34,7 @@ fn hit(session: &mut Session<Schema>, serial: u64, key: u64, value: u64) {
         .read(Serial(serial), Read(key), Default::default())
         .unwrap()
     else {
-        panic!("缓存应同步命中")
+        panic!("Cache should hit synchronously")
     };
     assert!(
         matches!(result.unwrap(), crate::api::completion::Outcome::Success(actual) if actual == value)
@@ -57,7 +57,7 @@ impl UpsertOperation<Schema> for Write {
     }
 }
 #[test]
-fn 冷页缓存同步命中且写入删除后不会返回旧值() {
+fn cold_page_cache_synchronization_hit_and_write_deletion_will_not_return_the_old_value() {
     let (_root, store) = cached_store(8192);
     let mut session = cold_keys(&store);
     assert_eq!(read_value(&mut session, 400, 0), Some(0));
@@ -94,17 +94,17 @@ fn 冷页缓存同步命中且写入删除后不会返回旧值() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 迟到磁盘读取不将更新或删除之前的值重新装入缓存() {
+fn late_disk_reads_do_not_reload_the_cache_with_values_before_updating_or_deleting() {
     let (_root, store) = cached_store(8192);
     let mut session = cold_keys(&store);
     let Submission::Pending(mut old) = session
         .read(Serial(400), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("旧页应挂起")
+        panic!("Old pages should be suspended")
     };
     let Submission::Ready(result) = session.upsert(Serial(401), Write(0, 999)).unwrap() else {
-        panic!("尾部应有空间立即写入")
+        panic!("There should be space at the end to write immediately")
     };
     result.unwrap();
     assert!(matches!(
@@ -116,7 +116,7 @@ fn 迟到磁盘读取不将更新或删除之前的值重新装入缓存() {
         .read(Serial(403), Read(1), Default::default())
         .unwrap()
     else {
-        panic!("旧页应挂起")
+        panic!("Old pages should be suspended")
     };
     let deleter = crate::engine::session_actor::session(&store);
     deleter.call(|deleter| {
@@ -143,7 +143,7 @@ fn 迟到磁盘读取不将更新或删除之前的值重新装入缓存() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 缓存淘汰扩容检查点与恢复始终保持主日志地址() {
+fn cache_elimination_expansion_checkpointing_and_recovery_always_maintain_the_main_log_address() {
     let (_root, store) = cached_store(512);
     let mut config = store.inner.config.clone();
     let mut session = cold_keys(&store);
@@ -189,7 +189,7 @@ fn 缓存淘汰扩容检查点与恢复始终保持主日志地址() {
         .read(Serial(411), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("恢复不保留缓存")
+        panic!("Restore without preserving cache")
     };
     assert!(matches!(
         session.wait(&mut first, deadline()).unwrap().unwrap(),
@@ -222,7 +222,8 @@ impl UpsertOperation<Schema> for PausedWrite {
     }
 }
 #[test]
-fn 写回调暂停时缓存安装与淘汰让出且不破坏其发布快照() {
+fn write_callbacks_pause_when_cache_is_mounted_and_evicted_to_yield_without_destroying_its_published_snapshot()
+ {
     let (_root, store) = cached_store(200);
     let mut session = cold_keys(&store);
     assert_eq!(read_value(&mut session, 400, 0), Some(0));
@@ -248,7 +249,7 @@ fn 写回调暂停时缓存安装与淘汰让出且不破坏其发布快照() {
                 )
                 .unwrap()
             else {
-                panic!("应立即发布")
+                panic!("should be published immediately")
             };
             result.unwrap();
             writer.close(deadline()).unwrap();
@@ -274,7 +275,7 @@ fn 写回调暂停时缓存安装与淘汰让出且不破坏其发布快照() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 缓存预算不足仅跳过安装而不使正常读取失败() {
+fn insufficient_cache_budget_only_skips_installation_without_failing_normal_reads() {
     let (_root, store) = cached_store(1);
     let mut session = cold_keys(&store);
     for serial in 400..402 {
@@ -282,7 +283,7 @@ fn 缓存预算不足仅跳过安装而不使正常读取失败() {
             .read(Serial(serial), Read(0), Default::default())
             .unwrap()
         else {
-            panic!("预算不足时仍走磁盘")
+            panic!("Still use disk when budget is low")
         };
         assert!(matches!(
             session.wait(&mut ticket, deadline()).unwrap().unwrap(),
@@ -304,7 +305,7 @@ impl Keyed<Schema> for CompactAdd {
 impl crate::api::operation::RmwOperation<Schema> for CompactAdd {
     type Output = u64;
     fn initial(&mut self) -> Result<(u64, u64), Error> {
-        panic!("最新热键必须存在")
+        panic!("Latest hotkey must exist")
     }
     fn copy_update(
         &mut self,
@@ -326,7 +327,8 @@ impl crate::api::operation::RmwOperation<Schema> for CompactAdd {
     }
 }
 #[test]
-fn 压缩与缓存扫描挂起读及后续写删交错仍保留最新值() {
+fn compression_and_cache_scan_pending_reads_and_subsequent_writes_and_deletions_are_interleaved_and_still_retain_the_latest_values()
+ {
     use crate::api::{
         maintenance::{CompactionAlgorithm, CompactionOptions},
         scan::{Buffering, ScanOptions},
@@ -349,7 +351,7 @@ fn 压缩与缓存扫描挂起读及后续写删交错仍保留最新值() {
             .read(Serial(402), Read(1), Default::default())
             .unwrap()
         else {
-            panic!("用户读取仍应挂起")
+            panic!("User reads should still hang")
         };
         let ticket = store
             .maintenance()
@@ -362,7 +364,7 @@ fn 压缩与缓存扫描挂起读及后续写删交错仍保留最新值() {
             })
             .unwrap();
         let Submission::Ready(result) = session.upsert(Serial(403), Write(0, 999)).unwrap() else {
-            panic!("尾页仍有空间")
+            panic!("There is still space on the last page")
         };
         result.unwrap();
         match session

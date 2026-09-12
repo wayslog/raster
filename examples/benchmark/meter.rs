@@ -1,4 +1,4 @@
-//! 计量设备实际完成字节；接受登记与完成匹配共享锁，不能因提交/轮询竞争漏计。
+//! Measuring device actual completion bytes;Accept registration and complete matching shared lock,cannot be submitted due to/Polling contention missing count.
 use raster::{
     device::*,
     types::{Deadline, Error, IoId, PollBudget},
@@ -16,7 +16,10 @@ pub struct Counts {
 pub struct Meter(Arc<Mutex<Counts>>);
 impl Meter {
     pub fn snapshot(&self) -> Counts {
-        *self.0.lock().expect("基准计量锁未中毒")
+        *self
+            .0
+            .lock()
+            .expect("Baseline metering lock is not poisoned")
     }
     pub fn wrap(&self, inner: Arc<dyn Device>) -> Metered {
         Metered {
@@ -52,7 +55,10 @@ impl Device for Metered {
         self.inner.capabilities()
     }
     fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {
-        let mut ledger = self.ledger.lock().expect("基准路由锁未中毒");
+        let mut ledger = self
+            .ledger
+            .lock()
+            .expect("Baseline routing lock is not poisoned");
         let direction = match &request.operation {
             IoOperation::Read { buffer, .. } => Direction::Read(buffer.len()),
             IoOperation::Write { buffer, .. } => Direction::Write(buffer.len()),
@@ -61,27 +67,40 @@ impl Device for Metered {
         let id = self.inner.submit(request)?;
         assert!(
             ledger.insert(id, direction).is_none(),
-            "设备不能复用在途标识"
+            "The device cannot reuse the in-transit identification"
         );
         Ok(id)
     }
     fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
-        let mut ledger = self.ledger.lock().expect("基准路由锁未中毒");
+        let mut ledger = self
+            .ledger
+            .lock()
+            .expect("Baseline routing lock is not poisoned");
         let begin = output.len();
         let result = self.inner.poll(budget, output);
-        let mut counts = self.counts.0.lock().expect("基准计量锁未中毒");
+        let mut counts = self
+            .counts
+            .0
+            .lock()
+            .expect("Baseline metering lock is not poisoned");
         for completion in &output[begin..] {
-            let direction = ledger
-                .remove(&completion.id)
-                .ok_or(Error::InvalidState("计量设备返回未知完成"))?;
+            let direction = ledger.remove(&completion.id).ok_or(Error::InvalidState(
+                "Metering device returns unknown completion",
+            ))?;
             if let Ok(IoOutcome::Transferred(bytes)) = completion.result {
                 let (limit, total) = match direction {
                     Direction::Read(limit) => (limit, &mut counts.read),
                     Direction::Write(limit) => (limit, &mut counts.written),
-                    Direction::Other => return Err(Error::InvalidState("元数据不能返回传输字节")),
+                    Direction::Other => {
+                        return Err(Error::InvalidState(
+                            "Metadata cannot return transferred bytes",
+                        ));
+                    }
                 };
                 if bytes > limit {
-                    return Err(Error::InvalidState("传输字节超过请求范围"));
+                    return Err(Error::InvalidState(
+                        "Transmitted bytes exceed request range",
+                    ));
                 }
                 *total = total
                     .checked_add(bytes as u64)

@@ -1,4 +1,4 @@
-//! RMW 磁盘等待后重查链头；空间不足时释放旧值并重新计算，不能覆盖并发更新。
+//! RMW Check the chain head again after disk wait;Release old values and recalculate when there is insufficient space,Cannot override concurrent updates.
 use super::{
     Engine, SessionRuntime,
     pending::{PendingTask, TaskStep},
@@ -61,7 +61,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             )?;
             self.lookup = Some((entry, lookup));
         }
-        let (snapshot, lookup) = self.lookup.as_mut().expect("查询已创建");
+        let (snapshot, lookup) = self.lookup.as_mut().expect("query_created");
         let source = lookup.step(&engine.log, &engine.storage, budget)?;
         if matches!(source, LookupStep::AwaitingIo | LookupStep::Continue) {
             return Ok(None);
@@ -72,9 +72,14 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         if changed {
             return Ok(None);
         }
-        let request = self.request.as_mut().expect("请求尚未终结");
+        let request = self
+            .request
+            .as_mut()
+            .expect("The request has not yet been finalized");
         let (value, output) = match source {
-            LookupStep::Present => return Err(Error::InvalidState("值查询只返回了元数据")),
+            LookupStep::Present => {
+                return Err(Error::InvalidState("Value query only returned metadata"));
+            }
             LookupStep::Resident(lease) => {
                 if !self.skip_in_place {
                     self.effect = Effect::Unknown;
@@ -109,7 +114,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                 }
                 request.initial()?
             }
-            LookupStep::AwaitingIo | LookupStep::Continue => unreachable!("等待已返回"),
+            LookupStep::AwaitingIo | LookupStep::Continue => unreachable!("Wait has returned"),
         };
         let plan = engine.schema.value_layout().plan(&value)?.validate()?;
         engine.log.record_fits(self.key.len(), plan)?;
@@ -155,7 +160,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         }
         if self.engine.failed.load(Ordering::SeqCst) {
             self.abandon(OperationError {
-                cause: Error::InvalidState("引擎已失败关闭"),
+                cause: Error::InvalidState("engine_failed_closed"),
                 effect: self.effect,
             });
             return TaskStep::Complete;
@@ -175,7 +180,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             Ok(result) => result,
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("写入回调恐慌"))
+                Err(Error::InvalidState("Write callback panic"))
             }
         };
         if matches!(result, Ok(None)) {
@@ -186,7 +191,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         }
         self.finish(
             result
-                .map(|value| value.expect("已排除等待空间"))
+                .map(|value| value.expect("Waiting space excluded"))
                 .map_err(|cause| OperationError {
                     cause,
                     effect: self.effect,
@@ -208,7 +213,7 @@ impl<S: Schema, O: RmwOperation<S>> PendingTask for RmwTask<S, O> {
     fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
         self.lookup
             .as_mut()
-            .ok_or(Error::InvalidState("RMW 没有等待磁盘查询"))?
+            .ok_or(Error::InvalidState("RMW No waiting for disk queries"))?
             .1
             .accept(&self.engine.storage, completion)
             .map_err(|rejected| rejected.reason)
@@ -221,7 +226,7 @@ impl<S: Schema, O: RmwOperation<S>> PendingTask for RmwTask<S, O> {
                 Err(std::sync::TryLockError::WouldBlock) => return TaskStep::Retry,
                 Err(_) => {
                     self.abandon(OperationError {
-                        cause: Error::InvalidState("操作仲裁锁中毒"),
+                        cause: Error::InvalidState("Operation arbitration lock poisoning"),
                         effect: self.effect,
                     });
                     return TaskStep::Complete;
@@ -311,9 +316,10 @@ impl<S: Schema> Engine<S> {
             permit,
         };
         if matches!(task.run_locked(PollBudget::default()), TaskStep::Complete) {
-            let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")
+            let TicketState::Ready(result) =
+                ticket.try_take().expect("Internal bills can be collected")
             else {
-                unreachable!("任务已经完成")
+                unreachable!("The task has been completed")
             };
             Ok(Submission::Ready(result))
         } else {

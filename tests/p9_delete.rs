@@ -1,4 +1,4 @@
-//! 从公开会话和真实文件设备验证删除契约，不替换引擎内部模块。
+//! Verify delete contract from public session and real file device,No replacement of internal engine modules.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{
     RasterKV, Session, Submission,
@@ -96,20 +96,21 @@ impl<K: KeyCodec<Key = u64>> DeleteOperation<Schema<K>> for Request {
 impl<K: KeyCodec<Key = u64>> RmwOperation<Schema<K>> for Request {
     type Output = u64;
     fn initial(&mut self) -> Result<(u64, u64), Error> {
-        panic!("本用例禁止创建")
+        panic!("This use case prohibits the creation of")
     }
     fn copy_update(&mut self, _: ValueRead<'_, Schema<K>>) -> Result<(u64, u64), Error> {
-        panic!("本用例没有旧值")
+        panic!("There is no old value in this use case")
     }
     fn update_in_place(
         &mut self,
         _: ValueUpdate<'_, Schema<K>>,
     ) -> Result<UpdateDecision<u64>, Error> {
-        panic!("本用例没有旧值")
+        panic!("There is no old value in this use case")
     }
 }
 #[test]
-fn 禁止创建的缺失读改写保留上游空索引槽供后续盲删() {
+fn missing_read_write_creation_is_prohibited_and_upstream_empty_index_slots_are_retained_for_subsequent_blind_deletion()
+ {
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .device(Box::new(null::NullDeviceFactory))
         .create()
@@ -161,7 +162,8 @@ fn take<K: KeyCodec<Key = u64>, T: 'static>(
 }
 
 #[test]
-fn 普通可变链头删除释放索引槽而强制删除保留墓碑() {
+fn ordinary_variable_link_head_deletion_releases_the_index_slot_while_forced_deletion_retains_the_tombstone()
+ {
     use raster::api::completion::AbortReason;
     for force_tombstone in [false, true] {
         let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
@@ -179,10 +181,13 @@ fn 普通可变链头删除释放索引槽而强制删除保留墓碑() {
         match (force_tombstone, take(&mut session, result)) {
             (false, Outcome::Success(DeleteOutcome::IndexRemoved))
             | (true, Outcome::Success(DeleteOutcome::TombstoneWritten)) => {}
-            other => panic!("删除结果错误 {other:?}"),
+            other => panic!("Delete result error {other:?}"),
         }
         let after = store.diagnostics().unwrap();
-        assert_eq!(after.tail, before.tail, "可变记录删除应原地完成");
+        assert_eq!(
+            after.tail, before.tail,
+            "Variable record deletion should be done in-place"
+        );
         assert_eq!(
             after.bucket_distribution.iter().sum::<u64>(),
             u64::from(force_tombstone)
@@ -198,7 +203,7 @@ fn 普通可变链头删除释放索引槽而强制删除保留墓碑() {
             .unwrap();
         match (force_tombstone, take(&mut session, result)) {
             (false, Outcome::NotFound) | (true, Outcome::Aborted(AbortReason::Tombstone)) => {}
-            other => panic!("墓碑可达性错误 {other:?}"),
+            other => panic!("Tombstone reachability error {other:?}"),
         }
         let result = session
             .delete(Serial(3), Request(7), DeleteOptions { force_tombstone })
@@ -206,7 +211,7 @@ fn 普通可变链头删除释放索引槽而强制删除保留墓碑() {
         match (force_tombstone, take(&mut session, result)) {
             (false, Outcome::NotFound)
             | (true, Outcome::Success(DeleteOutcome::TombstoneWritten)) => {}
-            other => panic!("再次删除结果错误 {other:?}"),
+            other => panic!("Delete result error again {other:?}"),
         }
         session.close(deadline()).unwrap();
         drop(session);
@@ -241,7 +246,8 @@ impl KeyCodec for CollisionKey {
     }
 }
 #[test]
-fn 删除同标签链中记录和不存在的碰撞键均不丢失其他键() {
+fn deleting_records_in_the_same_tag_chain_and_non_existing_collision_keys_will_not_lose_other_keys()
+{
     use raster::api::completion::AbortReason;
     let store = RasterKV::builder(SchemaPair::new(CollisionKey, AtomicU64Value))
         .device(Box::new(null::NullDeviceFactory))
@@ -252,7 +258,7 @@ fn 删除同标签链中记录和不存在的碰撞键均不丢失其他键() {
         let result = session.upsert(Serial(key), Request(key)).unwrap();
         assert!(matches!(take(&mut session, result), Outcome::Success(n) if n == key));
     }
-    // 链中键和有有效前驱的链头必须保留；同 tag 无匹配键也接受盲删。
+    // Chain keys and chain heads with valid predecessors must be retained;Same tag Blind deletion is accepted even if there is no matching key.
     for (serial, key) in [(3, 1), (4, 2), (5, 99), (6, 1)] {
         let result = session
             .delete(Serial(serial), Request(key), Default::default())
@@ -304,7 +310,8 @@ fn builder(config: Config) -> raster::Builder<Schema> {
         }))
 }
 #[test]
-fn 删除不修改旧检查点且恢复后强制墓碑仍可达() {
+fn delete_the_old_checkpoint_without_modifying_it_and_force_the_tombstone_to_still_be_reachable_after_recovery()
+ {
     use raster::api::{
         completion::AbortReason,
         maintenance::{CheckpointKind, RecoverySet},
@@ -347,7 +354,7 @@ fn 删除不修改旧检查点且恢复后强制墓碑仍可达() {
     ));
     assert!(
         store.diagnostics().unwrap().tail > before,
-        "旧版本记录必须通过追加删除"
+        "Old version records must be deleted by appending"
     );
     let ticket = store
         .maintenance()
@@ -378,7 +385,7 @@ fn 删除不修改旧检查点且恢复后强制墓碑仍可达() {
             .unwrap();
         match (deleted, take(&mut session, result)) {
             (false, Outcome::Success(7)) | (true, Outcome::Aborted(AbortReason::Tombstone)) => {}
-            other => panic!("恢复删除版本错误 {other:?}"),
+            other => panic!("Undelete version error {other:?}"),
         }
         session.close(deadline()).unwrap();
         drop(session);
@@ -387,7 +394,7 @@ fn 删除不修改旧检查点且恢复后强制墓碑仍可达() {
 }
 
 #[test]
-fn 普通删除冷键不读取旧记录且仍能遮蔽磁盘值() {
+fn ordinary_delete_cold_keys_do_not_read_old_records_and_can_still_obscure_disk_values() {
     let root = Directory(std::env::temp_dir().join(format!(
         "raster-delete-{:x?}",
         StoreId::generate().unwrap().0
@@ -408,7 +415,7 @@ fn 普通删除冷键不读取旧记录且仍能遮蔽磁盘值() {
         let result = session.upsert(Serial(key), Request(key)).unwrap();
         assert!(matches!(take(&mut session, result), Outcome::Success(n) if n == key));
     }
-    // 先用真实 Read 证明目标已经离开内存；默认不启用读缓存。
+    // Use reality first Read Proves that the target has left memory;Read caching is not enabled by default.
     let before = reads.load(Ordering::SeqCst);
     let result = session
         .read(Serial(800), Request(0), Default::default())
@@ -427,7 +434,7 @@ fn 普通删除冷键不读取旧记录且仍能遮蔽磁盘值() {
     assert_eq!(
         reads.load(Ordering::SeqCst),
         before,
-        "删除不能为存在性判断读取旧记录"
+        "Delete cannot read old records for existence judgment"
     );
     let result = session
         .read(Serial(802), Request(0), Default::default())

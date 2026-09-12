@@ -1,4 +1,4 @@
-//! 自动调度的实际文件 I/O、停止排空、错误结果与恢复；不手动触发压缩。
+//! Actual files automatically scheduled I/O,Stop emptying,Error results and recovery;No manual triggering of compression.
 use super::*;
 use crate::api::maintenance::{
     AutoCompactionPhase as AutoPhase, AutoCompactionStatus, PhysicalReclamation,
@@ -47,15 +47,15 @@ impl DeviceFactory for Factory {
 }
 impl Device for GatedDevice {
     fn capabilities(&self) -> DeviceCapabilities {
-        if std::thread::current().name() == Some("raster自动压缩")
+        if std::thread::current().name() == Some("rasterautomatic_compression")
             && self.gate.panic_accept.swap(false, Ordering::SeqCst)
         {
-            panic!("注入自动接受前的设备能力查询恐慌");
+            panic!("Inject device capability query panic before auto-acceptance");
         }
         self.inner.capabilities()
     }
     fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo> {
-        // 填充阶段只有 Upsert；所有冷读均来自自动任务，也要拦住 Session 协助推进时提交的读取。
+        // The filling phase only Upsert;All cold reads come from automated tasks,Stop it too Session Read committed while assisting with advancement.
         let select = matches!(request.operation, IoOperation::Read { .. });
         let mut state = self.gate.state.lock().unwrap();
         let id = self.inner.submit(request)?;
@@ -67,7 +67,7 @@ impl Device for GatedDevice {
     }
     fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
         if self.gate.panic_poll.swap(false, Ordering::SeqCst) {
-            panic!("注入自动线程的设备轮询恐慌");
+            panic!("Device polling panic injected into automatic threads");
         }
         let mut incoming = Vec::new();
         self.inner.poll(budget, &mut incoming)?;
@@ -85,7 +85,7 @@ impl Device for GatedDevice {
                 if self.gate.fail.load(Ordering::SeqCst) && !state.failed {
                     assert!(matches!(completion.result, Ok(IoOutcome::Transferred(_))));
                     completion.result = if self.gate.fatal.load(Ordering::SeqCst) {
-                        Err(Error::InvalidState("注入自动读取协议错误"))
+                        Err(Error::InvalidState("Inject automatic read protocol errors"))
                     } else {
                         Err(Error::Io(std::io::Error::from_raw_os_error(5)))
                     };
@@ -104,7 +104,7 @@ impl Device for GatedDevice {
     }
     fn shutdown(&self, deadline: Deadline) -> Result<(), Error> {
         self.inner.shutdown(deadline)?;
-        // 底层已停止，适配器保留的完成缓冲也在设备结束边界释放。
+        // The bottom layer has stopped,The completion buffer retained by the adapter is also released at the device end boundary.
         let mut state = self.gate.state.lock().unwrap();
         state.selected.clear();
         state.held.clear();
@@ -130,7 +130,7 @@ fn config(root: &Directory) -> Config {
     let policy = &mut config.maintenance.auto_compaction_policy;
     policy.check_interval = Duration::from_millis(5);
     policy.log_size_budget = 32 * 1024;
-    // 触发时已写满八页，四页驻留预算之外至少有两个完整冷页，首轮目标能覆盖整段。
+    // Eight pages filled when triggered,At least two full cold pages in addition to the four-page dwell budget,The first round target can cover the entire section.
     policy.trigger_fraction = 1.0;
     policy.compact_fraction = 0.4;
     policy.max_compacted_bytes = 8192;
@@ -151,7 +151,10 @@ fn fixture(gate: &Arc<Gate>) -> (Directory, RasterKV<Schema>, Config) {
 fn until(mut condition: impl FnMut() -> bool) {
     let end = deadline();
     while !condition() {
-        assert!(!end.expired(), "自动维护未达到指定状态");
+        assert!(
+            !end.expired(),
+            "Automatic maintenance has not reached the specified status"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
 }
@@ -169,7 +172,7 @@ fn submit<O, T: 'static>(
                 return session.wait(&mut ticket, end).unwrap().unwrap();
             }
             Err(rejected) if matches!(rejected.reason, Error::Busy) => {
-                assert!(!end.expired(), "接受前 Busy 未解除");
+                assert!(!end.expired(), "Before accepting Busy Not released");
                 assert_ne!(
                     session
                         .engine
@@ -206,7 +209,8 @@ fn stopped(store: &RasterKV<Schema>) -> AutoCompactionStatus {
     status
 }
 #[test]
-fn 自动维护真实读取在途时停止幂等且截止时间保留任务() {
+fn automatically_maintain_idempotent_and_deadline_preserving_tasks_that_stop_real_reads_in_transit()
+{
     let gate = Arc::new(Gate::default());
     gate.hold.store(true, Ordering::SeqCst);
     let _release = Release(gate.clone());
@@ -254,7 +258,8 @@ fn 自动维护真实读取在途时停止幂等且截止时间保留任务() {
     assert_eq!(stopped(&store).completed_compactions, 1);
 }
 #[test]
-fn 关闭自动排空已接受压缩且线程不持有存储环() {
+fn turning_off_automatic_draining_has_accepted_compression_and_the_thread_does_not_hold_a_storage_ring()
+ {
     let gate = Arc::new(Gate::default());
     gate.hold.store(true, Ordering::SeqCst);
     let release = Release(gate.clone());
@@ -269,7 +274,10 @@ fn 关闭自动排空已接受压缩且线程不持有存储环() {
         until(|| {
             store.maintenance().auto_compaction_status().unwrap().phase == AutoPhase::Stopping
         });
-        assert!(!closer.is_finished(), "I/O 未归还，关闭不能提前成功");
+        assert!(
+            !closer.is_finished(),
+            "I/O not returned,Closing cannot be successful in advance"
+        );
         drop(release);
         assert!(closer.join().unwrap().unwrap().device_drained);
     });
@@ -278,7 +286,7 @@ fn 关闭自动排空已接受压缩且线程不持有存储环() {
     assert!(weak.upgrade().is_none());
 }
 #[test]
-fn 自动压缩普通错误保留原始结果并停止而不重放() {
+fn automatic_compression_of_normal_errors_preserves_original_results_and_stops_without_replaying() {
     let gate = Arc::new(Gate::default());
     gate.hold.store(true, Ordering::SeqCst);
     let _release = Release(gate.clone());
@@ -317,7 +325,8 @@ fn 自动压缩普通错误保留原始结果并停止而不重放() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 自动调度等待手动屏障时可停止且不取消手动任务() {
+fn automatic_scheduling_can_be_stopped_while_waiting_for_manual_barriers_without_canceling_manual_tasks()
+ {
     let gate = Arc::new(Gate::default());
     let (_root, store, _) = fixture(&gate);
     let mut session = store.start_session(Default::default()).unwrap();
@@ -326,7 +335,7 @@ fn 自动调度等待手动屏障时可停止且不取消手动任务() {
         .maintenance()
         .checkpoint(CheckpointKind::Full)
         .unwrap();
-    // 第二个会话未刷新屏障，自动任务只能等待全局动作；写会话仍可正常写入和刷页。
+    // Barrier not refreshed in second session,Automatic tasks can only wait for global actions;The write session can still write and flush pages normally.
     for key in 0..600 {
         put(&mut session, key, key);
     }
@@ -354,7 +363,8 @@ fn 自动调度等待手动屏障时可停止且不取消手动任务() {
 }
 
 #[test]
-fn 多轮自动压缩与检查点恢复保持墓碑及会话进度() {
+fn multiple_rounds_of_automatic_compression_and_checkpoint_recovery_maintain_tombstones_and_session_progress()
+ {
     let gate = Arc::new(Gate::default());
     let (_root, mut store, config) = fixture(&gate);
     let mut session = store.start_session(Default::default()).unwrap();
@@ -429,7 +439,7 @@ fn 多轮自动压缩与检查点恢复保持墓碑及会话进度() {
             .recover(set)
             .unwrap();
         store = recovered;
-        // 恢复发布后调度器才启动；开始会话若与自动任务同时接受，等待 Busy 后重试。
+        // The scheduler is started only after publishing is resumed.;Starting a session if accepted simultaneously with an automated task,wait Busy Try again later.
         let end = deadline();
         let resumed = loop {
             match store.continue_session(id) {
@@ -462,7 +472,8 @@ fn 多轮自动压缩与检查点恢复保持墓碑及会话进度() {
 }
 
 #[test]
-fn 自动回收被挂起读者延后后只接续物理回收直到租约释放() {
+fn automatic_collection_is_delayed_by_a_suspended_reader_and_only_physical_collection_continues_until_the_lease_is_released()
+ {
     let gate = Arc::new(Gate::default());
     gate.hold.store(true, Ordering::SeqCst);
     let _release = Release(gate.clone());
@@ -473,7 +484,7 @@ fn 自动回收被挂起读者延后后只接续物理回收直到租约释放()
         .read(Serial(600), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("冷读取必须挂起并保存段租约");
+        panic!("Cold reads must suspend and save segment leases");
     };
     gate.hold.store(false, Ordering::SeqCst);
     until(|| {
@@ -487,7 +498,7 @@ fn 自动回收被挂起读者延后后只接续物理回收直到租约释放()
     let status = store.maintenance().auto_compaction_status().unwrap();
     assert_eq!(
         status.completed_compactions, 1,
-        "段租约未归还时不能通过重复复制来重试删除"
+        "Deletion cannot be retried through repeated replication when segment lease is not returned"
     );
     let first = status.last_compaction.unwrap();
     assert_eq!(first.as_ref().as_ref().unwrap().until, LogAddress(8192));
@@ -542,7 +553,8 @@ fn 自动回收被挂起读者延后后只接续物理回收直到租约释放()
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 禁用时无需线程且启用的空闲线程不会阻碍存储销毁() {
+fn no_threads_are_required_when_disabled_and_idle_threads_enabled_will_not_block_storage_destruction()
+ {
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .device(Box::new(device::null::NullDeviceFactory))
         .create()
@@ -579,7 +591,8 @@ fn 禁用时无需线程且启用的空闲线程不会阻碍存储销毁() {
 }
 
 #[test]
-fn 自动维护协议错误或设备恐慌失败关闭后仍能结束调度和设备() {
+fn automatic_maintenance_protocol_errors_or_device_panic_failures_can_still_end_scheduling_and_equipment_after_shutdown()
+ {
     for panic_poll in [false, true] {
         let gate = Arc::new(Gate::default());
         gate.hold.store(true, Ordering::SeqCst);
@@ -590,8 +603,8 @@ fn 自动维护协议错误或设备恐慌失败关闭后仍能结束调度和�
         drop(session);
         until(|| !gate.state.lock().unwrap().held.is_empty());
         if panic_poll {
-            // 完成仍被扣留，先确认后台实际进入 panic 点；不能让另一故障抢先终结任务，
-            // 将尚未消耗的 panic 开关留给后续主线程 shutdown。
+            // Completion still withheld,First confirm the actual entry into the background panic point;Do not allow another fault to terminate the task first,
+            // unused panic The switch is left to the subsequent main thread shutdown.
             gate.panic_poll.store(true, Ordering::SeqCst);
             until(|| !gate.panic_poll.load(Ordering::SeqCst));
         } else {
@@ -612,7 +625,8 @@ fn 自动维护协议错误或设备恐慌失败关闭后仍能结束调度和�
 }
 
 #[test]
-fn 自动接受前恐慌同步终结手动全局动作而不让关闭永久忙碌() {
+fn automatically_accept_pre_panic_sync_termination_of_manual_global_actions_without_leaving_shutdown_permanently_busy()
+ {
     let gate = Arc::new(Gate::default());
     let (_root, store, _) = fixture(&gate);
     let mut session = store.start_session(Default::default()).unwrap();

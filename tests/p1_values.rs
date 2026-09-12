@@ -1,11 +1,11 @@
-//! 只验证拥有型编码与槽计划；尚不构造页保护许可。
+//! Only verify owned codes and slot plans;Page protection permission not constructed yet.
 use raster::schema::{
     builtin::{AtomicU64Value, ByteValueCodec, SerializedValue, U64ValueCodec},
     value::{PreparedValue, ValueCodec, ValuePlan},
 };
 
 #[test]
-fn 普通字节值覆盖空值非文本及变长槽() {
+fn ordinary_byte_values_overwrite_null_values_non_text_and_variable_length_slots() {
     let layout = SerializedValue::new(ByteValueCodec);
     for value in [vec![], vec![0, 255, 128], vec![42; 65537]] {
         let prepared = layout.prepare(&value).unwrap();
@@ -19,7 +19,7 @@ fn 普通字节值覆盖空值非文本及变长槽() {
     }
 }
 #[test]
-fn 普通及原子整数固定小端逻辑编码() {
+fn ordinary_and_atomic_integer_fixed_little_endian_logic_encoding() {
     let normal = SerializedValue::new(U64ValueCodec);
     let atomic = AtomicU64Value;
     assert_ne!(normal.format_id(), atomic.format_id());
@@ -49,7 +49,7 @@ fn 普通及原子整数固定小端逻辑编码() {
     }
 }
 #[test]
-fn 活跃和编码尺寸均受限且分配布局不溢出() {
+fn both_active_and_coded_sizes_are_limited_and_allocation_layout_does_not_overflow() {
     let p = PreparedValue::new(vec![0; 16], 8, 8).unwrap();
     assert_eq!(p.plan().capacity, 16);
     assert!(p.fits(15, 8).is_err());
@@ -80,7 +80,7 @@ fn 活跃和编码尺寸均受限且分配布局不溢出() {
     );
 }
 #[test]
-fn 解码失败释放临时拥有值且不产生槽许可() {
+fn decoding_failure_releases_the_temporary_owned_value_and_does_not_generate_a_slot_license() {
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -98,16 +98,16 @@ fn 解码失败释放临时拥有值且不产生槽许可() {
             raster::types::FormatId([1; 16])
         }
         fn encode(&self, _: &Temporary) -> Result<Vec<u8>, raster::types::Error> {
-            Err(raster::types::Error::Codec("编码失败"))
+            Err(raster::types::Error::Codec("Encoding failed"))
         }
         fn decode(&self, _: &[u8]) -> Result<Temporary, raster::types::Error> {
             let _temporary = Temporary(self.0.clone());
-            Err(raster::types::Error::Codec("解码失败"))
+            Err(raster::types::Error::Codec("Decoding failed"))
         }
     }
     let drops = Arc::new(AtomicUsize::new(0));
     let layout = SerializedValue::new(Failing(drops.clone()));
-    assert!(layout.decode_owned("损坏".as_bytes()).is_err());
+    assert!(layout.decode_owned("damaged".as_bytes()).is_err());
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     let value = Temporary(drops.clone());
     assert!(layout.prepare(&value).is_err());

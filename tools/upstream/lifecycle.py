@@ -1,4 +1,4 @@
-"""在原生 Linux 严格比较三种检查点与超内存生命周期；任何返回差异均失败。"""
+"""in native Linux Rigorous comparison of three types of checkpointing and hypermemory lifecycle;Any return difference fails."""
 import argparse
 import hashlib
 import json
@@ -12,7 +12,7 @@ from scenarios import small, large
 
 
 def clean(text):
-    return text.replace(str(Path.cwd()), "工作树").replace(str(Path.home()), "用户目录")
+    return text.replace(str(Path.cwd()), "worktree").replace(str(Path.home()), "user_directory")
 
 
 def run(command, log, env=None):
@@ -22,11 +22,11 @@ def run(command, log, env=None):
         def decoded(value):
             return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
         log.write_text(clean(decoded(error.stdout) + decoded(error.stderr)))
-        raise RuntimeError(f"执行超过预设 1200 秒，见 {log.name}") from error
+        raise RuntimeError(f"Execute beyond default 1200 seconds,see {log.name}") from error
     text = result.stdout + result.stderr
     log.write_text(clean(text))
     if result.returncode:
-        raise RuntimeError(f"执行失败，退出码 {result.returncode}，见 {log.name}")
+        raise RuntimeError(f"Execution failed,exit_code {result.returncode},see {log.name}")
     return result.stdout
 
 
@@ -62,18 +62,18 @@ def main():
         if key.startswith("RASTER_UPSTREAM_"):
             env.pop(key)
     env.update(CARGO_TERM_COLOR="never", RUST_BACKTRACE="0", RASTER_UPSTREAM_TIMEOUT="600")
-    # 大输入的协议解码与业务均使用发布模式；门槛在执行前固定。
+    # Both protocol decoding and services for large inputs use release mode.;The threshold is fixed before execution.
     built = run(["cargo", "test", "--locked", "--all-features", "--release", "--test", "p9_upstream", "--no-run", "--message-format=json"], output / "rust-build.txt", env)
     artifacts = [json.loads(line) for line in built.splitlines() if line.startswith("{")]
     executables = [a["executable"] for a in artifacts if a.get("reason") == "compiler-artifact" and a.get("executable") and a["target"]["name"] == "p9_upstream"]
     if len(executables) != 1:
-        raise RuntimeError("Rust 执行器不唯一")
+        raise RuntimeError("Rust The executor is not unique")
     summaries = []
     for name in ["full", "pair", "large"]:
         if args.case not in ("all", name):
             continue
         source = output / (name + ".trace")
-        print(f"生成 {name} 轨迹", flush=True)
+        print(f"generate {name} trajectory", flush=True)
         details = (large if name == "large" else small)(source)
         details.update(case=name, trace_sha256=digest(source))
         (output / (name + "-input.json")).write_text(json.dumps(details, ensure_ascii=False, indent=2))
@@ -81,42 +81,42 @@ def main():
         rust_result, cpp_result = output / (name + ".rust.results"), output / (name + ".cpp.results")
         root = Path(tempfile.mkdtemp(prefix="raster-lifecycle-"))
         try:
-            # 大轨迹保留同样的页窗口和业务输入；32 MiB 段避免 128 个句柄预算耗尽。
+            # Large tracks retain the same page window and business input;32 MiB segment avoidance 128 handle budget exhausted.
             env["RASTER_UPSTREAM_SEGMENT_BYTES"] = str(33554432 if name == "large" else 1048576)
             env["RASTER_UPSTREAM_TRACE"] = str(source)
             env["RASTER_UPSTREAM_RESULT"] = str(rust_result)
             env["RASTER_UPSTREAM_ROOT"] = str(root / "rust")
             env["RASTER_UPSTREAM_SPLIT"] = str(details["split"])
             env["RASTER_UPSTREAM_CHECKPOINT"] = kind
-            print(f"{name}：Rust 执行 {details['steps']} 步并恢复", flush=True)
-            rust_log = run([executables[0], "--exact", "同一拥有型轨迹输出真实引擎结果供上游对照", "--nocapture"], output / (name + ".rust.log"), env)
-            print(f"{name}：C++ 执行相同输入并恢复", flush=True)
+            print(f"{name}:Rust execute {details['steps']} step and resume", flush=True)
+            rust_log = run([executables[0], "--exact", "the_same_ownership_trajectory_outputs_real_engine_results_for_upstream_comparison", "--nocapture"], output / (name + ".rust.log"), env)
+            print(f"{name}:C++ Execute same input and restore", flush=True)
             cpp_log = run([str(args.cpp.resolve()), str(source), str(cpp_result), "--disk", str(root / "cpp"), "--split", str(details["split"]), "--checkpoint", kind], output / (name + ".cpp.log"))
         except Exception:
-            print(f"失败材料保留在本次临时目录 {root.name}", flush=True)
+            print(f"Failed materials remain in this temporary directory {root.name}", flush=True)
             raise
         mismatches = compare(rust_result, cpp_result, output / (name + "-differences.json"))
         label = "Index+Log" if kind == "pair" else "Full"
-        if f"Rust 轨迹边界恢复通过：模式 {label}，3 个会话续接" not in rust_log or f"上游轨迹边界恢复通过：模式 {label}，3 个会话续接" not in cpp_log:
-            raise RuntimeError(f"{name} 缺少实际恢复和三个会话续接证据")
-        pending = re.search(r"上游四操作 Pending：\[(\d+),(\d+),(\d+),(\d+)\]", cpp_log)
-        span = re.search(r"上游日志边界：\[\d+,\d+\)，跨度 (\d+) 字节", cpp_log)
+        if f"Rust Trajectory boundary recovery passes:mode {label},3 sessions_resumed" not in rust_log or f"Upstream trajectory boundary recovery passes:mode {label},3 sessions_resumed" not in cpp_log:
+            raise RuntimeError(f"{name} Missing evidence of actual recovery and three session continuations")
+        pending = re.search(r"Four upstream operations Pending:\[(\d+),(\d+),(\d+),(\d+)\]", cpp_log)
+        span = re.search(r"upstream log boundary:\[\d+,\d+\),span (\d+) bytes", cpp_log)
         if not pending or not span:
-            raise RuntimeError("缺少真实 Pending 或跨度输出")
+            raise RuntimeError("lack of reality Pending or span output")
         details.update(cpp_pending=list(map(int, pending.groups())), cpp_log_span_bytes=int(span.group(1)), differences=mismatches)
         if name == "large" and (details["cpp_log_span_bytes"] <= 2 * 256 * 1024 * 1024 or not details["cpp_pending"][0] or not details["cpp_pending"][2]):
-            raise RuntimeError("大轨迹没有达到预设跨度或实际冷读/RMW Pending 门槛")
+            raise RuntimeError("The large trajectory does not reach the preset span or actual cold reading/RMW Pending threshold")
         summaries.append(details)
         (output / "lifecycle.json").write_text(json.dumps(summaries, ensure_ascii=False, indent=2))
         if mismatches:
-            raise RuntimeError(f"{name} 有 {mismatches} 处结果差异，未通过生命周期对照")
+            raise RuntimeError(f"{name} Yes {mismatches} Differences in results,Failed life cycle control")
         shutil.rmtree(root)
-        print(f"{name}：逐操作结果、检查点恢复及会话进度通过", flush=True)
+        print(f"{name}:Operation-by-operation results,Checkpoint recovery and session progress passed", flush=True)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print(clean(f"生命周期对照失败：{error}"), flush=True)
+        print(clean(f"Lifecycle comparison failed:{error}"), flush=True)
         raise SystemExit(1)

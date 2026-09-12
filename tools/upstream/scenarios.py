@@ -1,4 +1,4 @@
-"""拥有型生命周期轨迹；提前固定规模，输出同一份输入供两种真实引擎执行。"""
+"""Ownership life cycle trajectory;Fixed scale in advance,Output the same input for execution by two real engines."""
 from pathlib import Path
 
 
@@ -64,8 +64,8 @@ def large(path):
     cold = [b"cold" + i.to_bytes(4, "little") for i in range(12)]
     for i, key in enumerate(cold):
         writer.put(key, bytes([i]) * (16384 + i))
-    # 32768 次完整追加的负载本身已有 512 MiB；记录头和定向 RMW 继续扩大跨度。
-    # 上游日志内存固定 256 MiB，不能用很小的 Rust 页窗口冒充上游磁盘分支。
+    # 32768 The payload itself has been completely appended 512 MiB;Record header and orientation RMW Continue to expand the span.
+    # Upstream log memory fixed 256 MiB,Can't use very small ones Rust Page window impersonates upstream disk branch.
     for i in range(32768):
         key = b"hot" + (i % 256).to_bytes(4, "little")
         writer.put(key, bytes([i % 251]) * (16384 + i % 3 * 8))

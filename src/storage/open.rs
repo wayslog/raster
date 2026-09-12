@@ -1,4 +1,4 @@
-//! 分段文件打开任务；新建绝不静默覆盖现有文件，迟到打开先清理句柄再失败。
+//! Segmented file open task;New never silently overwrites existing files,Late opening first cleans up the handle and then fails.
 use super::SegmentedStorage;
 use crate::{device::*, types::*};
 use std::sync::Arc;
@@ -62,7 +62,7 @@ impl SegmentOpen {
     }
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
         if !Arc::ptr_eq(&self.owner, &storage.identity) {
-            return Err(Error::InvalidState("打开任务属于其他存储"));
+            return Err(Error::InvalidState("Open tasks belonging to other storage"));
         }
         if self.pending.is_some() {
             return Ok(None);
@@ -73,7 +73,7 @@ impl SegmentOpen {
                 path: storage.segment_path(self.number, self.generation),
                 create_new: self.create_new,
             },
-            Stage::Close => IoOperation::Close(self.cleanup.expect("关闭阶段保存句柄")),
+            Stage::Close => IoOperation::Close(self.cleanup.expect("Close phase save handle")),
             Stage::Done => return Ok(None),
         };
         let id = storage
@@ -86,7 +86,10 @@ impl SegmentOpen {
         self.pending = Some(id);
         Ok(Some(id))
     }
-    #[allow(clippy::result_large_err, reason = "错误路由原样归还打开完成")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "The error route is returned as is and the opening is completed."
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -98,7 +101,7 @@ impl SegmentOpen {
         {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("打开任务完成身份不匹配"),
+                reason: Error::InvalidState("Open task completion identity mismatch"),
             });
         }
         self.pending = None;
@@ -120,7 +123,10 @@ impl SegmentOpen {
             (Stage::Close, Ok(IoOutcome::Done)) => {
                 self.cleanup = None;
                 self.stage = Stage::Done;
-                self.result = Some(Err(self.failure.take().expect("保存原绑定错误")));
+                self.result = Some(Err(self
+                    .failure
+                    .take()
+                    .expect("Save original binding error")));
             }
             (_, Err(error)) => {
                 self.stage = Stage::Done;
@@ -128,7 +134,7 @@ impl SegmentOpen {
             }
             _ => {
                 self.stage = Stage::Done;
-                self.result = Some(Err(Error::InvalidState("打开任务完成类型错误")));
+                self.result = Some(Err(Error::InvalidState("Open task completion type error")));
             }
         }
         Ok(())
@@ -168,7 +174,7 @@ mod tests {
         }
     }
     #[test]
-    fn 新建并绑定且已有映射无需重复打开() {
+    fn create_a_new_one_and_bind_it_there_is_no_need_to_open_the_existing_mapping_again() {
         let storage = storage();
         let file = run(
             &storage,
@@ -182,7 +188,7 @@ mod tests {
         assert_eq!(reused.take_result().unwrap().unwrap(), file);
     }
     #[test]
-    fn 打开迟到且代次失效先关闭未绑定句柄() {
+    fn if_the_open_is_late_and_the_generation_expires_the_unbound_handle_must_be_closed_first() {
         let storage = storage();
         let mut task =
             SegmentOpen::new(&storage, 0, Generation(0), true, CompletionRoute(7)).unwrap();
@@ -194,7 +200,7 @@ mod tests {
         let done = complete(&storage);
         let file = match &done.result {
             Ok(IoOutcome::Opened(file)) => *file,
-            _ => panic!("打开"),
+            _ => panic!("open"),
         };
         storage
             .bind(

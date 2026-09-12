@@ -1,4 +1,4 @@
-//! P1.1 的真实类型和键策略验收；不代表存储引擎已可运行。
+//! P1.1 True type and key policy acceptance;It does not mean that the storage engine is ready to run.
 use raster::{
     schema::{
         KeyCodec,
@@ -9,8 +9,8 @@ use raster::{
 use std::{collections::BTreeSet, process::Command};
 
 #[test]
-fn 字节键固定向量与拥有型往返() {
-    // 独立固定 FNV-1a 向量，不从被测实现生成预期。
+fn byte_key_fixed_vector_and_owned_round_trip() {
+    // independent fixation FNV-1a vector,Do not generate expectations from the implementation under test.
     for (key, expected) in [
         (&b""[..], 0xcbf29ce484222325),
         (&b"a"[..], 0xaf63dc4c8601ec8c),
@@ -31,7 +31,7 @@ fn 字节键固定向量与拥有型往返() {
 }
 
 #[test]
-fn 整数边界固定小端编码() {
+fn integer_bounds_fixed_little_endian_encoding() {
     for (value, expected) in [
         (0, 0xa8c7f832281a39c5),
         (1, 0x89cd31291d2aefa4),
@@ -55,7 +55,7 @@ fn 整数边界固定小端编码() {
 }
 
 #[test]
-fn 相同标签的不同键仍须比较编码() {
+fn different_keys_for_the_same_tag_still_have_to_be_compared_for_encoding() {
     let first = 8969_u64;
     let second = 9239_u64;
     assert_eq!(U64Key.hash(&first).tag(), 31722);
@@ -73,7 +73,7 @@ fn 相同标签的不同键仍须比较编码() {
 }
 
 #[test]
-fn 编码长度错误不会修改输出且整数损坏输入被拒绝() {
+fn encoding_length_errors_do_not_modify_the_output_and_integer_corrupted_input_is_rejected() {
     for length in [0, 1, 7, 9, 16] {
         let mut output = vec![0xaa; length];
         assert!(U64Key.encode(&42, &mut output).is_err());
@@ -89,7 +89,7 @@ fn 编码长度错误不会修改输出且整数损坏输入被拒绝() {
 }
 
 #[test]
-fn 算法种子与编码版本分别拒绝变化() {
+fn algorithm_seeds_and_encoded_versions_reject_changes_respectively() {
     let descriptor = ByteKey.hash_descriptor();
     assert_eq!(descriptor.algorithm, FormatId(*b"raster:fnv1a64:1"));
     assert_eq!(
@@ -135,7 +135,7 @@ fn 算法种子与编码版本分别拒绝变化() {
 }
 
 #[test]
-fn 地址校验分页与推进边界() {
+fn address_verification_paging_and_pushing_boundaries() {
     assert!(LogAddress(0).validate().is_ok());
     assert!(LogAddress::INVALID.validate().is_err());
     assert!(CacheAddress::INVALID.validate().is_err());
@@ -165,7 +165,7 @@ fn 地址校验分页与推进边界() {
 }
 
 #[test]
-fn 身份拒绝空值且并发生成不重复() {
+fn identity_rejects_null_values_and_concurrent_generation_does_not_duplicate() {
     assert!(StoreId([0; 16]).validate().is_err());
     assert!(SessionId([0; 16]).validate().is_err());
     assert!(CheckpointToken([0; 16]).validate().is_err());
@@ -194,7 +194,7 @@ fn 身份拒绝空值且并发生成不重复() {
 }
 
 #[test]
-fn 独立进程键指纹() {
+fn independent_process_key_fingerprint() {
     assert_eq!(U64Key.hash(&u64::MAX).0, 0x8cf51a8bfca3883d);
     if std::env::var_os("RASTER_P1_CHILD").is_none() {
         return;
@@ -202,40 +202,44 @@ fn 独立进程键指纹() {
     let mut encoded = [0; 8];
     U64Key.encode(&0x0102030405060708, &mut encoded).unwrap();
     println!(
-        "键指纹：{:02x?}/{:016x}/{:016x}/{:?}/{:?}",
+        "key fingerprint:{:02x?}/{:016x}/{:016x}/{:?}/{:?}",
         encoded,
         U64Key.hash(&u64::MAX).0,
         ByteKey.hash(b"foobar").0,
         ByteKey.format_id(),
         ByteKey.hash_descriptor()
     );
-    println!("新身份：{:02x?}", StoreId::generate().unwrap().0);
+    println!("new identity:{:02x?}", StoreId::generate().unwrap().0);
 }
 
 #[test]
-fn 重启后编码哈希与语义描述一致() {
+fn encoded_hash_consistent_with_semantic_description_after_restart() {
     let run = || {
         let result = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "独立进程键指纹", "--nocapture"])
+            .args([
+                "--exact",
+                "independent_process_key_fingerprint",
+                "--nocapture",
+            ])
             .env("RASTER_P1_CHILD", "1")
             .output()
             .unwrap();
-        assert!(result.status.success(), "子进程失败");
+        assert!(result.status.success(), "Child process failed");
         String::from_utf8(result.stdout).unwrap()
     };
     let first = run();
     let second = run();
     let fingerprint = |text: &str| {
         text.lines()
-            .find(|line| line.starts_with("键指纹："))
+            .find(|line| line.starts_with("key fingerprint:"))
             .unwrap()
             .to_owned()
     };
     assert_eq!(fingerprint(&first), fingerprint(&second));
-    assert!(fingerprint(&first).starts_with("键指纹：[08, 07, 06, 05, 04, 03, 02, 01]/"));
+    assert!(fingerprint(&first).starts_with("key fingerprint:[08, 07, 06, 05, 04, 03, 02, 01]/"));
     let identity = |text: &str| {
         text.lines()
-            .find(|line| line.starts_with("新身份："))
+            .find(|line| line.starts_with("new identity:"))
             .unwrap()
             .to_owned()
     };

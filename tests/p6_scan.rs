@@ -1,4 +1,4 @@
-//! 公开扫描以检查点报告指定范围，验证变长记录、旧版本、墓碑和恢复后的相同物理历史。
+//! Expose scans to checkpoint reports for specified ranges,Verify variable length records,old version,Tombstones and the same physical history after restoration.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{
     RasterKV, Submission,
@@ -125,7 +125,8 @@ fn scan(store: &RasterKV<Schema>, report: &CheckpointReport, mode: Buffering) ->
     out
 }
 #[test]
-fn 三模式返回变长物理历史且重启恢复后保持旧版本和墓碑() {
+fn the_third_mode_returns_to_a_variable_length_physical_history_and_keeps_the_old_version_and_tombstones_after_restarting_and_restoring()
+ {
     let root = Directory(
         std::env::temp_dir().join(format!("raster-scan-{:x?}", StoreId::generate().unwrap().0)),
     );

@@ -14,7 +14,7 @@ env:
   RUST_BACKTRACE: '0'
 jobs:
   check:
-    name: 检查（${{ matrix.os }} / ${{ matrix.features }}）
+    name: Check (${{ matrix.os }} / ${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -23,18 +23,18 @@ jobs:
         os: [ubuntu-24.04, macos-14]
         features: [default, config-toml, all]
     steps:
-      - name: 检出代码
+      - name: Check out source
         uses: actions/checkout@v6
-      - name: 安装固定工具链
+      - name: Install pinned toolchain
         uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
-      - name: 缓存构建产物
+      - name: Cache build artifacts
         uses: actions/cache@v4
         with:
           path: target
           key: ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
-      - name: 记录原生环境
+      - name: Record the native environment
         shell: bash
         run: |
           mkdir -p target/p0-evidence
@@ -43,18 +43,18 @@ jobs:
             rustc -Vv
             cargo -V
             uname -srm
-            echo "镜像：${ImageOS:-未知} ${ImageVersion:-未知}"
-            echo "特性：${{ matrix.features }}"
+            echo "image:${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "features:${{ matrix.features }}"
             if [ "$(uname -s)" = Darwin ]; then
               sw_vers
               diskutil info "$(df -P . | awk 'NR==2 {print $1}')" | sed -n '/File System Personality/p'
             else
               cat /etc/os-release
-              stat -f -c '文件系统：%T' .
+              stat -f -c 'file_system:%T' .
             fi
           } > target/p0-evidence/environment.txt
           cat target/p0-evidence/environment.txt
-      - name: 执行工程检查
+      - name: Run engineering checks
         shell: bash
         env:
           FEATURE_SET: ${{ matrix.features }}
@@ -65,7 +65,7 @@ jobs:
             config-toml) args=(--no-default-features --features config-toml) ;;
             all) args=(--all-features) ;;
           esac
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           export RUSTDOCFLAGS="$RUSTFLAGS -D warnings"
           {
             cargo fmt --all -- --check
@@ -79,8 +79,8 @@ jobs:
             cargo run --locked --release --example disk_lifecycle "${args[@]}"
             cargo run --locked --release --example automatic "${args[@]}"
             python3 scripts/check_examples.py
-          } 2>&1 | python3 -c 'import os,sys; [sys.stdout.write(line.replace(os.environ["GITHUB_WORKSPACE"], "工作树").replace(os.environ["HOME"], "用户目录")) for line in sys.stdin]' | tee target/p0-evidence/checks.txt
-      - name: 保存验收证据
+          } 2>&1 | python3 -c 'import os,sys; [sys.stdout.write(line.replace(os.environ["GITHUB_WORKSPACE"], "worktree").replace(os.environ["HOME"], "user_directory")) for line in sys.stdin]' | tee target/p0-evidence/checks.txt
+      - name: Save evidence of acceptance
         if: always()
         uses: actions/upload-artifact@v4
         with:

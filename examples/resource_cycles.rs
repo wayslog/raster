@@ -1,4 +1,4 @@
-//! 同一进程重复完整磁盘生命周期；在运行前固定资源增长门槛。
+//! Same process repeats full disk life cycle;Fixed resource growth threshold before running.
 #[path = "resources/allocator.rs"]
 mod allocation;
 #[path = "resources/observation.rs"]
@@ -26,7 +26,9 @@ fn cycle(parent: &Path, ordinal: usize) -> Result<()> {
     let root = parent.join(format!("cycle-{ordinal:03}"));
     fs::create_dir(&root)?;
     if let Err(error) = workload::run(root.clone()) {
-        eprintln!("资源循环 {ordinal} 失败，合成材料保留于 cycle-{ordinal:03}");
+        eprintln!(
+            "Resource cycle {ordinal} failed; synthetic materials remain in cycle-{ordinal:03}"
+        );
         return Err(error);
     }
     fs::remove_dir_all(root)?;
@@ -54,7 +56,7 @@ fn row(output: &mut impl Write, cycle: usize, sample: Observation, elapsed: u128
 }
 fn main() -> Result<()> {
     if std::env::args_os().len() != 1 {
-        return Err("资源验收不接收位置参数；输出位置通过 RASTER_RESOURCE_OUTPUT 设置".into());
+        return Err("Resource acceptance does not accept location arguments; set the output path with RASTER_RESOURCE_OUTPUT".into());
     }
     let output = std::env::var_os("RASTER_RESOURCE_OUTPUT")
         .map(std::path::PathBuf::from)
@@ -71,7 +73,7 @@ fn main() -> Result<()> {
     let mut csv = BufWriter::new(file);
     writeln!(
         csv,
-        "轮次,存活分配字节,存活分配数,分配峰值字节,RSS字节,文件描述符,线程,耗时毫秒"
+        "round,Survival allocated bytes,number of live allocations,Allocate peak bytes,RSSbytes,file descriptor,threads,milliseconds taken"
     )?;
     for ordinal in 0..WARMUP {
         cycle(parent, ordinal)?;
@@ -88,13 +90,13 @@ fn main() -> Result<()> {
         csv.flush()?;
         if !within_budget(baseline, sample) {
             return Err(format!(
-                "第 {ordinal} 轮超过预设资源增长门槛；基线 {baseline:?}；当前 {sample:?}"
+                "ordinal {ordinal} The round exceeds the preset resource growth threshold;baseline {baseline:?};current {sample:?}"
             )
             .into());
         }
     }
     println!(
-        "同进程资源循环通过：预热 {WARMUP} 轮，测量 {CYCLES} 轮，每轮完整磁盘生命周期与两次恢复。"
+        "Same-process resource cycle passed: warmup {WARMUP} rounds, measurement {CYCLES} rounds, and a full disk lifecycle with two recoveries per round."
     );
     Ok(())
 }

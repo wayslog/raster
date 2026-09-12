@@ -1,2 +1,2 @@
-//! 复合维护按步骤释放/重新争取全局动作，不能持锁等待自己发起的检查点。
+//! Composite maintenance is released step by step/Re-fight for global action,Cannot hold the lock and wait for a checkpoint initiated by itself.
 pub(crate) mod scan;

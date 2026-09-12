@@ -1,4 +1,4 @@
-//! 仅用公开接口执行超内存、变长值、检查点、恢复续跑、压缩回收和诊断。
+//! Execute hypermemory using public interface only,variable length value,checkpoint,Resume and continue running,Compression recovery and diagnostics.
 mod control;
 mod operation;
 use control::{Result, deadline, report, shutdown, success, take};
@@ -87,7 +87,7 @@ fn fill(session: &mut Session<Schema>, serial: &mut u64) -> Result<Expected> {
         .map_err(|rejected| rejected.reason)?;
     let value = success(take(session, submitted)?)?;
     if value != b"append" {
-        return Err("变长追加结果不匹配".into());
+        return Err("Variable length append result does not match".into());
     }
     expected.insert(Vec::new(), Some(value));
     Ok(expected)
@@ -104,7 +104,7 @@ fn verify(session: &mut Session<Schema>, serial: &mut u64, expected: &Expected) 
         match (take(session, submitted)?, value) {
             (Outcome::Success(actual), Some(expected)) if &actual == expected => {}
             (Outcome::NotFound, None) => {}
-            _ => return Err("恢复或维护后的拥有型值不匹配".into()),
+            _ => return Err("Ownership value mismatch after restoration or maintenance".into()),
         }
     }
     Ok(())
@@ -128,16 +128,18 @@ fn scan(store: &RasterKV<Schema>, checkpoint: &CheckpointReport) -> Result<()> {
         }
         scanner.close()?;
         if records == 0 || tombstones < 5 {
-            return Err("物理扫描没有覆盖记录与墓碑".into());
+            return Err("Physical scan does not cover records and tombstones".into());
         }
-        println!("物理扫描 {buffering:?}：{records} 条记录，{tombstones} 条墓碑；不代表有效键数量");
+        println!(
+            "physical scan {buffering:?}:{records} records,{tombstones} tombstone;Does not represent the number of valid keys"
+        );
     }
     Ok(())
 }
 fn show(store: &RasterKV<Schema>, stage: &str) -> Result<()> {
     let d = store.diagnostics()?;
     println!(
-        "{stage}：日志 [{}..{})，跨度 {} 字节；内存日志 {} 字节；缓存计费 {} 字节；桶数 {}；会话 {}；在途 {}",
+        "{stage}:Log [{}..{}),span {} bytes;memory log {} bytes;Cache billing {} bytes;Number of barrels {};session {};On the way {}",
         d.begin.0,
         d.tail.0,
         d.log_span_bytes,
@@ -159,7 +161,7 @@ fn first(
     if store.diagnostics()?.log_span_bytes
         <= (config.log.page_bytes * config.log.memory_pages) as u64
     {
-        return Err("数据量没有超过内存日志预算".into());
+        return Err("The amount of data does not exceed the memory log budget".into());
     }
     for _ in 0..2 {
         let submitted = session
@@ -171,15 +173,15 @@ fn first(
             .map_err(|rejected| rejected.reason)?;
         let actual = success(take(&mut session, submitted)?)?;
         if expected.get(&key(6)) != Some(&Some(actual)) {
-            return Err("冷读或缓存命中结果不匹配".into());
+            return Err("Cold read or cache hit result mismatch".into());
         }
     }
     let statistics = store.statistics();
     if statistics.reads.io_completions == 0 || statistics.cache.hits == 0 {
-        return Err("没有实际发生磁盘读与缓存命中".into());
+        return Err("No actual disk reads or cache hits occur".into());
     }
     println!(
-        "冷读与缓存命中通过：实际读取 I/O 完成 {}，缓存命中 {}",
+        "Cold reads and cache hits pass:actual read I/O completed {},cache hit {}",
         statistics.reads.io_completions, statistics.cache.hits
     );
     let grown = report(&mut session, &store.maintenance().grow_index()?)?;
@@ -189,23 +191,23 @@ fn first(
         &store.maintenance().checkpoint(CheckpointKind::Index)?,
     )?;
     if !index.sessions.is_empty() {
-        return Err("仅索引检查点错误地声明了会话进度".into());
+        return Err("Index-only checkpoint incorrectly declares session progress".into());
     }
     let log = report(
         &mut session,
         &store.maintenance().checkpoint(CheckpointKind::Log)?,
     )?;
     scan(store, &log)?;
-    show(store, "首次检查点完成")?;
+    show(store, "First checkpoint completed")?;
     let id = session.id();
     let durable = log
         .sessions
         .iter()
         .find(|cut| cut.session == id)
-        .ok_or("日志检查点缺少会话进度")?
+        .ok_or("Log checkpoint missing session progress")?
         .serial;
     if durable != Serial(serial - 1) {
-        return Err("会话检查点序号不匹配".into());
+        return Err("Session checkpoint sequence number mismatch".into());
     }
     session.close(deadline())?;
     Ok((
@@ -228,7 +230,7 @@ fn second(
 ) -> Result<(RecoverySet, Serial)> {
     let resumed = store.continue_session(id)?;
     if resumed.progress.serial != durable {
-        return Err("恢复续会话进度不匹配".into());
+        return Err("Recovery session progress does not match".into());
     }
     let mut session = resumed.session;
     let mut serial = durable.0 + 1;
@@ -245,7 +247,7 @@ fn second(
         .map_err(|rejected| rejected.reason)?;
     let value = success(take(&mut session, submitted)?)?;
     if value != b"append-resumed" {
-        return Err("恢复后追加没有保留旧值".into());
+        return Err("Appending after recovery does not retain the old value".into());
     }
     expected.insert(Vec::new(), Some(value));
     let before = report(
@@ -263,7 +265,7 @@ fn second(
         })?,
     )?;
     if copied.copied == 0 || copied.gc.is_some() || copied.checkpoint.is_some() {
-        return Err("扫描去重压缩结果不符合选项".into());
+        return Err("Scan deduplication and compression results do not comply with options".into());
     }
     let middle = report(
         &mut session,
@@ -282,21 +284,26 @@ fn second(
     let copy_checkpoint = compacted
         .checkpoint
         .as_ref()
-        .ok_or("查索引压缩缺少检查点报告")?;
-    let gc = compacted.gc.as_ref().ok_or("查索引压缩缺少逻辑截断报告")?;
+        .ok_or("Missing checkpoint report for index compression")?;
+    let gc = compacted
+        .gc
+        .as_ref()
+        .ok_or("Query index compression missing logical truncation report")?;
     if compacted.copied == 0 || gc.begin != middle.end {
-        return Err("压缩迁移或逻辑截断未完成".into());
+        return Err("Compression migration or logical truncation not completed".into());
     }
     let gc = report(&mut session, &store.maintenance().shift_begin(gc.begin)?)?;
     if !matches!(gc.physical, PhysicalReclamation::Completed) {
-        return Err("示例的工作段回收仍被保留约束延后".into());
+        return Err(
+            "Example of work segment recycling still deferred by retention constraints".into(),
+        );
     }
     verify(&mut session, &mut serial, expected)?;
     let final_checkpoint = report(
         &mut session,
         &store.maintenance().checkpoint(CheckpointKind::Full)?,
     )?;
-    // 先释放引用索引的旧 Log，随后才可释放其索引；新恢复集始终保留。
+    // First release the old reference index Log,Only then can its index be released;New recovery sets are always retained.
     for token in [
         old.log,
         old.index,
@@ -311,15 +318,15 @@ fn second(
         if released.retirement != CheckpointRetirement::Retired
             || !matches!(released.physical, PhysicalReclamation::Completed)
         {
-            return Err("旧检查点未完成显式释放".into());
+            return Err("Old checkpoint did not complete explicit release".into());
         }
     }
     store.maintenance().stop_auto_compaction()?;
     let auto = session.wait_auto_compaction(deadline())?;
     if !auto.is_quiescent() {
-        return Err("自动维护尚未空闲".into());
+        return Err("Automatic maintenance is not available yet".into());
     }
-    show(store, "压缩与旧检查点释放完成")?;
+    show(store, "Compaction and old checkpoint release completed")?;
     store.write_statistics(&mut std::io::stdout().lock())?;
     println!();
     session.close(deadline())?;
@@ -338,7 +345,9 @@ fn closed<T>(store: RasterKV<Schema>, result: Result<T>) -> Result<T> {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) => Err(error),
         (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(cleanup)) => Err(format!("流程失败：{error}；收尾失败：{cleanup}").into()),
+        (Err(error), Err(cleanup)) => {
+            Err(format!("Process failed:{error};Closing failed:{cleanup}").into())
+        }
     }
 }
 pub(crate) fn run(root: PathBuf) -> Result<()> {
@@ -361,7 +370,7 @@ pub(crate) fn run(root: PathBuf) -> Result<()> {
     let (old, id, durable, mut expected) = closed(store, result)?;
     let (store, recovery) = builder(config.clone()).recover(old.clone())?;
     if recovery.set.store != old.store {
-        return closed(store, Err("持久存储身份变化".into()));
+        return closed(store, Err("Persistent storage of identity changes".into()));
     }
     let result = second(&store, &old, id, durable, &mut expected);
     let (set, durable) = closed(store, result)?;
@@ -369,25 +378,28 @@ pub(crate) fn run(root: PathBuf) -> Result<()> {
     let result = (|| {
         let resumed = store.continue_session(id)?;
         if resumed.progress.serial != durable {
-            return Err("最终恢复的序号不匹配".into());
+            return Err("The final recovered sequence numbers do not match".into());
         }
         let mut session = resumed.session;
         verify(&mut session, &mut (durable.0 + 1), &expected)?;
         session.close(deadline())?;
-        show(&store, "最终恢复校验完成")
+        show(&store, "Final recovery verification completed")
     })();
     closed(store, result)?;
     println!(
-        "磁盘生命周期通过：40 个键的变长值与墓碑，三种检查点，两次恢复续跑，两种压缩，回收与旧检查点释放，真实诊断统计。"
+        "Disk life cycle passed: 40 keys; variable-length values and tombstones; three checkpoint types; two resume runs; two compression algorithms; recycling and old checkpoint release; diagnostic statistics."
     );
     Ok(())
 }
-#[allow(dead_code, reason = "资源验收嵌入此模块并调用 run；独立示例使用此入口")]
+#[allow(
+    dead_code,
+    reason = "Resource acceptance is embedded in this module and called run;Standalone examples use this entry"
+)]
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let root = args.next().map(PathBuf::from);
     if args.next().is_some() {
-        return Err("用法：disk_lifecycle [全新数据目录]".into());
+        return Err("Usage:disk_lifecycle [New data directory]".into());
     }
     let temporary = root.is_none();
     let root = match root {
@@ -397,7 +409,10 @@ fn main() -> Result<()> {
         }
     };
     if root.exists() {
-        return Err("示例要求不存在的新目录；不会覆盖已有数据".into());
+        return Err(
+            "Example requires new directory that does not exist;Will not overwrite existing data"
+                .into(),
+        );
     }
     std::fs::create_dir(&root)?;
     let result = run(root.clone());

@@ -1,8 +1,8 @@
-//! 骨架已实现的基础契约；这些检查不表示存储引擎功能通过。
+//! Skeleton implemented base contract;These checks do not indicate that the storage engine functionality passes.
 use raster::{config::Config, device::AlignedBuffer, schema::value::ValuePlan, types::Error};
 
 #[test]
-fn 默认配置合法且拒绝非有限比例与溢出() {
+fn the_default_configuration_is_legal_and_rejects_non_finite_ratios_and_overflows() {
     let mut config = Config::default();
     assert!(config.validate().is_ok());
     for value in [f64::NAN, f64::INFINITY, -0.1, 1.0] {
@@ -21,7 +21,7 @@ fn 默认配置合法且拒绝非有限比例与溢出() {
 }
 
 #[test]
-fn 容量要求同时覆盖活跃表示和磁盘表示() {
+fn capacity_requirements_cover_both_active_and_disk_representations() {
     let valid = ValuePlan {
         live_bytes: 16,
         encoded_bytes: 8,
@@ -56,7 +56,7 @@ fn 容量要求同时覆盖活跃表示和磁盘表示() {
 }
 
 #[test]
-fn 缓冲移动后仍对齐并保留数据() {
+fn buffers_remain_aligned_and_retain_data_after_being_moved() {
     for alignment in [1, 8, 64, 512, 4096] {
         for length in [1, 17, 4096] {
             let mut buffer = AlignedBuffer::new_zeroed(length, alignment).unwrap();
@@ -70,7 +70,7 @@ fn 缓冲移动后仍对齐并保留数据() {
 }
 
 #[test]
-fn 错误的缓冲参数不会触发分配() {
+fn bad_buffer_parameters_dont_trigger_allocation() {
     assert!(AlignedBuffer::new_zeroed(1, 0).is_err());
     assert!(AlignedBuffer::new_zeroed(1, 3).is_err());
     assert!(AlignedBuffer::new_zeroed(0, 8).is_err());

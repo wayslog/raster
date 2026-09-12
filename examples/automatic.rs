@@ -1,4 +1,5 @@
-//! 使用公开接口启动自动压缩，等待一次真实完成，再停止、检查点和关闭。
+//! Start automatic compression through the public interface, wait for one real
+//! completion, stop it again, then exercise checkpoints and shutdown.
 #[path = "disk_lifecycle/control.rs"]
 mod control;
 #[path = "disk_lifecycle/operation.rs"]
@@ -39,7 +40,7 @@ fn scenario(store: &RasterKV<Schema>) -> Result<()> {
                     if end.expired() {
                         return Err(Error::DeadlineExceeded.into());
                     }
-                    // 这里只重试尚未接受的请求，保留原输入和序号；已接受票据交给 take。
+                    // Only requests that have not yet been accepted are retried here,Keep original input and serial number;Invoice delivery accepted take.
                     request = rejected.request;
                     session.poll(PollBudget::default())?;
                     std::thread::yield_now();
@@ -53,7 +54,7 @@ fn scenario(store: &RasterKV<Schema>) -> Result<()> {
     loop {
         let status = store.maintenance().auto_compaction_status()?;
         if matches!(status.phase, AutoCompactionPhase::Failed) {
-            return Err(format!("自动维护失败：{status:?}").into());
+            return Err(format!("Automatic maintenance failed:{status:?}").into());
         }
         if status.completed_compactions > 0 {
             break;
@@ -70,7 +71,7 @@ fn scenario(store: &RasterKV<Schema>) -> Result<()> {
         || stopped.active.is_some()
         || stopped.failure.is_some()
     {
-        return Err(format!("自动任务未正常停止：{stopped:?}").into());
+        return Err(format!("Automatic task did not stop normally:{stopped:?}").into());
     }
     if stopped
         .last_compaction
@@ -81,7 +82,7 @@ fn scenario(store: &RasterKV<Schema>) -> Result<()> {
             .as_ref()
             .is_some_and(|result| result.is_err())
     {
-        return Err(format!("自动维护终结报告含有错误：{stopped:?}").into());
+        return Err(format!("Automatic maintenance end report contains errors:{stopped:?}").into());
     }
     for (offset, (key, expected)) in expected.iter().enumerate() {
         let submitted = session
@@ -92,7 +93,7 @@ fn scenario(store: &RasterKV<Schema>) -> Result<()> {
             )
             .map_err(|rejected| rejected.reason)?;
         if success(take(&mut session, submitted)?)? != *expected {
-            return Err("自动压缩后最新值不匹配".into());
+            return Err("Latest value does not match after automatic compression".into());
         }
     }
     let checkpoint = report(
@@ -100,10 +101,13 @@ fn scenario(store: &RasterKV<Schema>) -> Result<()> {
         &store.maintenance().checkpoint(CheckpointKind::Full)?,
     )?;
     if checkpoint.sessions.is_empty() || checkpoint.begin == LogAddress(0) {
-        return Err("自动维护没有形成真实截断或检查点进度".into());
+        return Err(
+            "Automatic maintenance does not result in real truncation or checkpoint progress"
+                .into(),
+        );
     }
     println!(
-        "自动维护生命周期通过：完成 {} 次压缩，停止后校验 32 个最新变长值，日志 [{}..{})，显式检查点已提交。",
+        "Automated maintenance lifecycle passes:completed {} sub-compression,Verify after stopping 32 latest variable length value,Log [{}..{}),Explicit checkpoint committed.",
         stopped.completed_compactions, checkpoint.begin.0, checkpoint.end.0
     );
     session.close(deadline())?;
@@ -147,8 +151,9 @@ fn main() -> Result<()> {
         }
         (Err(error), Ok(())) => Err(error),
         (Ok(()), Err(error)) => Err(error),
-        (Err(error), Err(cleanup)) => {
-            Err(format!("自动维护流程失败：{error}；收尾失败：{cleanup}").into())
-        }
+        (Err(error), Err(cleanup)) => Err(format!(
+            "Automatic maintenance process failed:{error};Closing failed:{cleanup}"
+        )
+        .into()),
     }
 }

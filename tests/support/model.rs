@@ -1,4 +1,4 @@
-//! 独立顺序模型，只比较逻辑结果，不模拟页、索引或持久化。
+//! independent sequential model,Compare only logical results,Do not simulate pages,Index or persistence.
 use super::trace::{Operation, Step, Value};
 use std::collections::BTreeMap;
 
@@ -77,8 +77,8 @@ impl Model {
     }
 }
 
-/// 盲删契约的非确定性观察模型。只放宽声明为表示方式相关的两个结果，
-/// 强制墓碑、活跃值、序号拒绝和四操作的逻辑副作用仍精确检查。
+/// Non-deterministic observation model of blind deletion contract.Only relax the two results declared to be related to the representation method,
+/// mandatory tombstone,active value,Sequence number rejection and logical side effects of four operations are still accurately checked.
 #[derive(Default)]
 pub struct ContractModel {
     logical: Model,
@@ -97,7 +97,7 @@ impl ContractModel {
             return if *observed == Submission::Rejected(step) {
                 Ok(())
             } else {
-                Err("非法序号必须拒绝且无副作用".into())
+                Err("Illegal serial numbers must be rejected without side effects".into())
             };
         }
         let live = self
@@ -134,11 +134,11 @@ impl ContractModel {
         };
         if !valid {
             return Err(format!(
-                "契约结果不匹配：{step:?}，观察 {observed:?}，逻辑结果 {expected:?}，墓碑可达性 {visibility:?}"
+                "Contract result does not match:{step:?},observe {observed:?},logical result {expected:?},Tombstone accessibility {visibility:?}"
             ));
         }
         if matches!(step.operation, Operation::Rmw { .. }) {
-            // 不预测物理槽是否经维护清除，只记录盲删可能找到槽的业务来源。
+            // Does not predict whether physical slots will be cleared by maintenance,Only record business sources where blind deletion may find slots.
             self.reserved.insert(step.key.clone());
         }
         match step.operation {

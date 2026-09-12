@@ -1,4 +1,4 @@
-//! Linux/macOS 原生工作线程设备集成验证。
+//! Linux/macOS Native worker thread device integration verification.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{
     device::{thread_pool::ThreadPoolDeviceFactory, *},
@@ -40,7 +40,7 @@ fn collect(device: &dyn Device, count: usize) -> Vec<IoCompletion> {
     let until = deadline();
     let mut out = vec![];
     while out.len() < count {
-        assert!(!until.expired(), "设备完成超时");
+        assert!(!until.expired(), "Device completion timeout");
         device.poll(PollBudget::default(), &mut out).unwrap();
         std::thread::yield_now();
     }
@@ -55,7 +55,8 @@ fn execute(device: &dyn Device, operation: IoOperation) -> IoCompletion {
     done
 }
 #[test]
-fn 原生工作线程偏移写入同步重开与关闭后收取完成() {
+fn native_worker_thread_offset_writing_synchronizes_reopening_and_closing_after_collection_is_completed()
+ {
     let root = Directory::new();
     let factory = ThreadPoolDeviceFactory {
         workers: 3,
@@ -70,13 +71,13 @@ fn 原生工作线程偏移写入同步重开与关闭后收取完成() {
     let IoOutcome::Opened(file) = execute(
         &*device,
         IoOperation::Open {
-            path: "数据".into(),
+            path: "data".into(),
             create_new: true,
         },
     )
     .result
     .unwrap() else {
-        panic!("打开")
+        panic!("open")
     };
     let mut ids = vec![];
     for i in 0..8 {
@@ -122,13 +123,13 @@ fn 原生工作线程偏移写入同步重开与关闭后收取完成() {
     let IoOutcome::Opened(file) = execute(
         &*device,
         IoOperation::Open {
-            path: "数据".into(),
+            path: "data".into(),
             create_new: false,
         },
     )
     .result
     .unwrap() else {
-        panic!("重开")
+        panic!("reopen")
     };
     device
         .submit(request(IoOperation::Read {
@@ -147,7 +148,8 @@ fn 原生工作线程偏移写入同步重开与关闭后收取完成() {
     assert!(device.submit(request(IoOperation::Close(file))).is_err());
 }
 #[test]
-fn 完成未收取仍占队列容量且失败归还原缓冲() {
+fn the_queue_capacity_is_still_occupied_if_the_collection_is_completed_and_the_original_buffer_is_returned_if_it_fails()
+ {
     let root = Directory::new();
     let device = ThreadPoolDeviceFactory {
         workers: 1,
@@ -160,13 +162,13 @@ fn 完成未收取仍占队列容量且失败归还原缓冲() {
     .unwrap();
     device
         .submit(request(IoOperation::Open {
-            path: "数据".into(),
+            path: "data".into(),
             create_new: true,
         }))
         .unwrap();
     assert!(matches!(
         device.submit(request(IoOperation::Open {
-            path: "其他".into(),
+            path: "Others".into(),
             create_new: true
         })),
         Err(RejectedIo {
@@ -194,7 +196,8 @@ fn 完成未收取仍占队列容量且失败归还原缓冲() {
 }
 
 #[test]
-fn 取消与关闭竞争仍逐项归还缓冲并只完成一次() {
+fn canceling_and_closing_competition_still_returns_the_buffer_item_by_item_and_only_completes_it_once()
+ {
     let root = Directory::new();
     let device = ThreadPoolDeviceFactory {
         workers: 2,
@@ -208,13 +211,13 @@ fn 取消与关闭竞争仍逐项归还缓冲并只完成一次() {
     let IoOutcome::Opened(file) = execute(
         &*device,
         IoOperation::Open {
-            path: "竞争".into(),
+            path: "competition".into(),
             create_new: true,
         },
     )
     .result
     .unwrap() else {
-        panic!("打开")
+        panic!("open")
     };
     let mut writes = vec![];
     let mut cancels = vec![];
@@ -232,10 +235,10 @@ fn 取消与关闭竞争仍逐项归还缓冲并只完成一次() {
         writes.push((id, pointer, i as u8));
         cancels.push(device.submit(request(IoOperation::Cancel(id))).unwrap());
     }
-    // 超时不能销毁在途资源；线程已退出时也允许立即成功。
+    // Resources in transit cannot be destroyed after timeout;Immediate success is also allowed when the thread has exited.
     match device.shutdown(Deadline(Instant::now())) {
         Ok(()) | Err(Error::DeadlineExceeded) => {}
-        Err(error) => panic!("关闭返回意外错误：{error:?}"),
+        Err(error) => panic!("Close returns unexpected error:{error:?}"),
     }
     device.shutdown(deadline()).unwrap();
     let out = collect(&*device, 64);
@@ -247,7 +250,7 @@ fn 取消与关闭竞争仍逐项归还缓冲并只完成一次() {
         match &done.result {
             Ok(IoOutcome::Transferred(4)) => {}
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            other => panic!("写入终结错误：{other:?}"),
+            other => panic!("write final error:{other:?}"),
         }
         let buffer = done.buffer.as_ref().unwrap();
         assert_eq!(buffer.as_slice().as_ptr(), pointer);

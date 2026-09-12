@@ -1,4 +1,4 @@
-name: P9 完整性能矩阵
+name: P9 Complete Performance Matrix
 on:
   workflow_dispatch:
 permissions:
@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   benchmark:
-    name: 固定矩阵与恢复（${{ matrix.os }}）
+    name: Fixed matrix and recovery (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -16,11 +16,11 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - name: 检出代码
+      - name: Check out source
         uses: actions/checkout@v6
-      - name: 安装固定工具链
+      - name: Install pinned toolchain
         uses: dtolnay/rust-toolchain@1.98.1
-      - name: 记录原生环境
+      - name: Record the native environment
         shell: bash
         run: |
           mkdir -p target/p9-benchmark-evidence
@@ -29,8 +29,8 @@ jobs:
             rustc -Vv
             cargo -V
             uname -srm
-            echo "镜像：${ImageOS:-未知} ${ImageVersion:-未知}"
-            echo '特性：all；模式：release；完整矩阵：48；每组业务操作：16384'
+            echo "image:${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo 'features:all;mode:release;complete matrix:48;Each group of business operations:16384'
             if [ "$(uname -s)" = Darwin ]; then
               sw_vers
               sysctl -n machdep.cpu.brand_string hw.memsize hw.physicalcpu hw.logicalcpu
@@ -39,27 +39,27 @@ jobs:
               cat /etc/os-release
               lscpu
               sed -n '/MemTotal/p' /proc/meminfo
-              stat -f -c '文件系统：%T' .
+              stat -f -c 'file_system:%T' .
             fi
           } > target/p9-benchmark-evidence/environment.txt
-      - name: 验证计量与运行全部场景
+      - name: Verify metering and run all scenarios
         shell: bash
         run: |
           set -o pipefail
           export CARGO_TERM_COLOR=never
           export RUST_BACKTRACE=0
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           export RASTER_BENCH_OUTPUT=target/p9-benchmark-evidence/matrix
           unset RASTER_BENCH_CASE
           {
             cargo test --locked --all-features --test p9_benchmark_support &&
             cargo run --locked --release --all-features --example benchmark
-          } 2>&1 | sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" |
+          } 2>&1 | sed -e "s|$GITHUB_WORKSPACE|worktree|g" -e "s|$HOME|user_directory|g" |
             tee target/p9-benchmark-evidence/checks.txt
-      - name: 复核矩阵和固定输入
+      - name: Review matrices and fixed inputs
         shell: bash
         run: python3 tools/acceptance/audit_benchmark.py target/p9-benchmark-evidence/matrix
-      - name: 保存性能环境和原始证据
+      - name: Preserve performance environment and original evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:

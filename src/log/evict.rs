@@ -1,4 +1,4 @@
-//! 淘汰只摘除内存地址表；旧租约退出后才释放页槽，不修改磁盘索引链。
+//! Eliminate only the memory address table;The page slot is released after the old lease is exited,Do not modify the disk index chain.
 use super::*;
 impl<V: ValueLayout> HybridLog<V> {
     pub fn evict_next(&self) -> Result<Progress, Error> {
@@ -6,7 +6,7 @@ impl<V: ValueLayout> HybridLog<V> {
             let mut state = self
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             let mut retired = Vec::new();
             if state.reclaim.is_none() {
                 let begin = state.frontiers.head;
@@ -19,30 +19,34 @@ impl<V: ValueLayout> HybridLog<V> {
                 let mut records = self
                     .records
                     .lock()
-                    .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+                    .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
                 let count = records.range(begin..end).count();
                 retired
                     .try_reserve_exact(count)
                     .map_err(|_| Error::OutOfMemory)?;
-                // 地址表移除与 head 发布在同一控制阶段完成；不等待旧租约。
+                // Address table removal and head Publishing is done in the same control phase;No waiting for old lease.
                 while let Some(address) = records
                     .range(begin..end)
                     .next()
                     .map(|(address, _)| *address)
                 {
-                    retired.push(records.remove(&address).expect("地址仍在表内"));
+                    retired.push(
+                        records
+                            .remove(&address)
+                            .expect("The address is still in the table"),
+                    );
                 }
                 state.reclaim = Some((page, generation));
                 state.frontiers.head = end;
             }
             retired
         };
-        // 专家析构不在控制锁内执行；析构失败保留分配并阻止 safe_head 前进。
+        // Expert destruction is not performed within the control lock;Destruction failure retains allocation and blocks safe_head move forward.
         drop(retired);
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let Some((page, generation)) = state.reclaim else {
             return Ok(Progress::default());
         };

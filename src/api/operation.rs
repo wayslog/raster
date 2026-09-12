@@ -1,4 +1,4 @@
-//! 四种安全用户操作协议；计算允许重试，生效修改不能重复执行。
+//! Four Safe User Operation Protocols;Calculation allows retries,Effective modifications cannot be repeated.
 use crate::schema::{KeyOf, OwnedValueOf, Schema, ValueRead, ValueUpdate};
 use crate::types::Error;
 
@@ -16,7 +16,7 @@ pub enum UpdateDecision<T> {
 pub trait UpsertOperation<S: Schema>: Keyed<S> {
     type Output: 'static;
     fn replacement(&mut self) -> Result<(OwnedValueOf<S>, Self::Output), Error>;
-    /// Append 和正常 Err 必须未修改旧值；部分修改失败需要失败关闭。
+    /// Append and normal Err The old value must be unmodified;Some modifications failed and need to be closed on failure.
     fn update_in_place(
         &mut self,
         value: ValueUpdate<'_, S>,
@@ -40,9 +40,9 @@ pub trait DeleteOperation<S: Schema>: Keyed<S> {
 }
 #[derive(Clone, Copy, Debug)]
 pub enum DeleteOutcome {
-    /// 已写入或原地标记可达墓碑；不证明删除前存在活跃值。
+    /// Reachable tombstone written or marked in situ;Does not prove that there was an active value before deletion.
     TombstoneWritten,
-    /// 可变链头已标记墓碑并安全移除索引入口；日志字节仍遵循正常回收协议。
+    /// Variable link heads are tombstoned and index entries safely removed;Log bytes still follow normal recycling protocol.
     IndexRemoved,
 }
 #[derive(Clone, Copy, Debug, Default)]
@@ -62,6 +62,6 @@ impl Default for RmwOptions {
 }
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DeleteOptions {
-    /// 保留可查询墓碑，禁止索引移除；不延长显式截断或后续覆盖后的记录寿命。
+    /// Reserved tombstones can be queried,Disable index removal;Does not extend record life after explicit truncation or subsequent overwriting.
     pub force_tombstone: bool,
 }

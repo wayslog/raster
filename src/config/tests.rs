@@ -1,10 +1,10 @@
-//! 配置解析不执行设备操作；完整映射、默认补全和错误边界使用独立输入验证。
+//! Configuration parsing does not perform device operations;full mapping,Default completion and error bounds use independent input validation.
 use super::*;
 use std::time::Duration;
 
 const FULL: &str = r#"
 [storage]
-root = '相对目录/数据'
+root = 'relative directory/data'
 segment_bytes = 0x10_000
 pre_allocate_log = true
 [index]
@@ -48,7 +48,7 @@ enabled = true
 "#;
 
 #[test]
-fn 空文档采用默认值且全部字段拥有映射结果() {
+fn an_empty_document_uses_default_values_and_all_fields_have_mapping_results() {
     assert_eq!(Config::from_toml_str("").unwrap(), Config::default());
     assert_eq!(
         Config::from_toml_str(include_str!("../../docs/examples/raster.toml")).unwrap(),
@@ -56,7 +56,7 @@ fn 空文档采用默认值且全部字段拥有映射结果() {
     );
     let mut expected = Config {
         storage: StorageConfig {
-            root: "相对目录/数据".into(),
+            root: "relative directory/data".into(),
             segment_bytes: 65536,
             pre_allocate_log: true,
         },
@@ -112,21 +112,25 @@ fn 空文档采用默认值且全部字段拥有映射结果() {
 }
 
 #[test]
-fn 完整语法支持选定子表与带点键但不忽略组内未知项() {
-    let source = "\"旁支\" = [1, 2, 3]\n[\"服务.甲\".raster]\nlog.page_bytes = 4096\nlog.mutable_fraction = +0\nstorage.root = \"多行\\n数据\\u002f目录\"\n";
-    let c = Config::from_toml_str_at(source, &["服务.甲", "raster"]).unwrap();
+fn full_syntax_supports_selected_subtables_and_dotted_keys_but_does_not_ignore_unknown_items_within_the_group()
+ {
+    let source = "\"side branch\" = [1, 2, 3]\n[\"service.A\".raster]\nlog.page_bytes = 4096\nlog.mutable_fraction = +0\nstorage.root = \"multiple lines\\ndata\\u002fdirectory\"\n";
+    let c = Config::from_toml_str_at(source, &["service.A", "raster"]).unwrap();
     assert_eq!(c.log.page_bytes, 4096);
     assert_eq!(c.log.mutable_fraction, 0.0);
-    assert_eq!(c.storage.root, std::path::PathBuf::from("多行\n数据/目录"));
+    assert_eq!(
+        c.storage.root,
+        std::path::PathBuf::from("multiple lines\ndata/directory")
+    );
     assert!(Config::from_toml_str(source).is_err());
-    assert!(Config::from_toml_str_at(source, &["服务", "甲"]).is_err());
-    assert!(Config::from_toml_str_at(source, &["旁支"]).is_err());
+    assert!(Config::from_toml_str_at(source, &["service", "A"]).is_err());
+    assert!(Config::from_toml_str_at(source, &["side branch"]).is_err());
     assert!(Config::from_toml_str_at("[a]\nunknown = 1", &["a"]).is_err());
     assert!(Config::from_toml_str("[scan]\ntimeout_ms = +123").is_ok());
 }
 
 #[test]
-fn 语法类型范围和组合错误明确拒绝且不回显输入() {
+fn syntax_type_range_and_combination_errors_are_explicitly_rejected_and_the_input_is_not_echoed() {
     for input in [
         "[log",
         "[log]\npage_bytes=4096\npage_bytes=8192",
@@ -154,15 +158,18 @@ fn 语法类型范围和组合错误明确拒绝且不回显输入() {
         "[recovery]\nmax_index_bytes = 35",
         "[statistics]\nenabled = 'true'",
     ] {
-        assert!(Config::from_toml_str(input).is_err(), "意外接受：{input}");
+        assert!(
+            Config::from_toml_str(input).is_err(),
+            "unexpected acceptance:{input}"
+        );
     }
     for input in [
-        "[storage]\nroot = \"不应回显的私人值",
-        "[storage]\n\"不应回显的私人键\"=1",
-        "[statistics]\nenabled = '不应回显的私人值'",
+        "[storage]\nroot = \"Private value that should not be echoed",
+        "[storage]\n\"Private keys that should not be echoed\"=1",
+        "[statistics]\nenabled = 'Private value that should not be echoed'",
     ] {
         let error = Config::from_toml_str(input).unwrap_err();
-        assert!(!format!("{error:?} {error}").contains("不应回显"));
+        assert!(!format!("{error:?} {error}").contains("should not be echoed"));
         assert!(matches!(
             error,
             Error::ConfigDocument {
@@ -175,7 +182,7 @@ fn 语法类型范围和组合错误明确拒绝且不回显输入() {
 }
 
 #[test]
-fn 文件入口选择子表并有界拒绝非文本与超限文件() {
+fn file_entry_selects_subtables_and_rejects_non_text_and_over_limit_files_in_a_bounded_manner() {
     struct File(std::path::PathBuf);
     impl Drop for File {
         fn drop(&mut self) {

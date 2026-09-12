@@ -1,4 +1,4 @@
-//! 推进预算与截止时间不包含持久化成功含义。
+//! Promotion budget and deadline do not include persistence success implications.
 
 use std::num::NonZeroUsize;
 use std::time::Instant;
@@ -15,7 +15,7 @@ impl Deadline {
 pub struct PollBudget(pub NonZeroUsize);
 impl Default for PollBudget {
     fn default() -> Self {
-        Self(NonZeroUsize::new(64).expect("固定预算非零"))
+        Self(NonZeroUsize::new(64).expect("Fixed budget is non-zero"))
     }
 }
 #[derive(Clone, Copy, Debug)]

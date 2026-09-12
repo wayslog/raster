@@ -1,4 +1,4 @@
-//! 分段地址、代次绑定与检查点命名；实际 I/O 仍通过设备请求执行。
+//! segment address,Generation binding and checkpoint naming;actual I/O Still request execution via device.
 use crate::{
     device::{Device, FileId, IoOperation},
     types::*,
@@ -25,7 +25,8 @@ struct Binding {
     generation: Generation,
     file: Option<FileId>,
 }
-/// 短期物理读取租约。持有期间不能摘除对应段映射；Drop 不获取存储锁。
+/// A short-lived physical read lease. The corresponding segment mapping cannot be
+/// removed while it is held; Drop must not acquire the storage lock.
 pub(crate) struct SegmentReadLease {
     _bindings: Vec<Arc<()>>,
 }
@@ -41,7 +42,7 @@ impl SegmentedStorage {
         if !segment_bytes.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "storage.segment_bytes",
-                reason: "段大小必须是非零二次幂",
+                reason: "Segment size must be a non-zero power of two",
             });
         }
         Ok(Self {
@@ -52,7 +53,7 @@ impl SegmentedStorage {
             segment_directory: PathBuf::from("segments"),
         })
     }
-    /// 恢复输出使用独立目录，不能覆盖旧工作日志或检查点材料。
+    /// Use separate directory for recovery output,Cannot overwrite old work logs or checkpoint material.
     pub fn recovered(
         device: Arc<dyn Device>,
         segment_bytes: u64,
@@ -71,7 +72,7 @@ impl SegmentedStorage {
         Ok(self
             .segments
             .lock()
-            .map_err(|_| Error::InvalidState("段映射锁中毒"))?
+            .map_err(|_| Error::InvalidState("segment_map_lock_poisoned"))?
             .values()
             .filter_map(|binding| binding.file)
             .collect())
@@ -100,7 +101,7 @@ impl SegmentedStorage {
         let segments = self
             .segments
             .lock()
-            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+            .map_err(|_| Error::InvalidState("segment_map_lock_poisoned"))?;
         Ok(segments
             .get(&number)
             .map_or(Generation(0), |binding| binding.generation))
@@ -113,12 +114,16 @@ impl SegmentedStorage {
         let mut segments = self
             .segments
             .lock()
-            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+            .map_err(|_| Error::InvalidState("segment_map_lock_poisoned"))?;
         match segments.get_mut(&number) {
             Some(binding) if binding.generation == generation && binding.file.is_none() => {
                 binding.file = Some(file)
             }
-            Some(_) => return Err(Error::InvalidState("段代次过期或已经绑定")),
+            Some(_) => {
+                return Err(Error::InvalidState(
+                    "The segment generation has expired or has been bound",
+                ));
+            }
             None => {
                 segments.insert(
                     number,
@@ -137,7 +142,7 @@ impl SegmentedStorage {
         let segments = self
             .segments
             .lock()
-            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+            .map_err(|_| Error::InvalidState("segment_map_lock_poisoned"))?;
         let binding = segments
             .get(&(address.0 / self.segment_bytes))
             .ok_or(Error::RangeTruncated)?;
@@ -147,7 +152,7 @@ impl SegmentedStorage {
             generation: binding.generation,
         })
     }
-    /// 在同一映射锁内保护整个物理读取范围，与 invalidate 原子互斥。
+    /// Protect the entire physical read range within the same mapping lock,and invalidate Atomic mutual exclusion.
     pub fn lease_read(&self, start: u64, length: usize) -> Result<SegmentReadLease, Error> {
         let slices = self.split(LogAddress(start), length as u64)?;
         let mut bindings = Vec::new();
@@ -157,7 +162,7 @@ impl SegmentedStorage {
         let segments = self
             .segments
             .lock()
-            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+            .map_err(|_| Error::InvalidState("segment_map_lock_poisoned"))?;
         for slice in slices {
             let binding = segments.get(&slice.number).ok_or(Error::RangeTruncated)?;
             if binding.file.is_none() {
@@ -184,7 +189,7 @@ impl SegmentedStorage {
         }
         Ok(())
     }
-    /// 先使旧映射失效，再关闭旧句柄；新一代必须使用不同的物理文件名。
+    /// Invalidate the old mapping first,Close the old handle again;New generations must use different physical filenames.
     pub fn invalidate(
         &self,
         number: u64,
@@ -193,7 +198,7 @@ impl SegmentedStorage {
         let mut segments = self
             .segments
             .lock()
-            .map_err(|_| Error::InvalidState("段映射锁中毒"))?;
+            .map_err(|_| Error::InvalidState("segment_map_lock_poisoned"))?;
         let binding = segments.get_mut(&number).ok_or(Error::RangeTruncated)?;
         if binding.generation != generation {
             return Err(Error::RangeTruncated);
@@ -219,7 +224,7 @@ impl SegmentedStorage {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
         {
-            return Err(Error::InvalidFormat("检查点材料名无效"));
+            return Err(Error::InvalidFormat("Checkpoint material name is invalid"));
         }
         let token = token
             .0
@@ -228,8 +233,8 @@ impl SegmentedStorage {
             .collect::<String>();
         Ok(PathBuf::from("checkpoints").join(token).join(object))
     }
-    /// 调用者必须已同步新目录的父目录项，并写入、同步材料、manifest 和 commit.pending。
-    /// 本函数只构造最终重命名与目录同步操作；不能据此声明发布成功。
+    /// The caller must have synchronized the new directory's parent directory entries,and write,sync material,manifest and commit.pending.
+    /// This function only constructs the final rename and directory synchronization operations;It is not possible to declare a successful release based on this.
     pub fn publish_plan(&self, token: CheckpointToken) -> Result<Vec<IoOperation>, Error> {
         let caps = self.device.capabilities();
         if !caps.supports_file_sync
@@ -240,7 +245,10 @@ impl SegmentedStorage {
         }
         let source = self.checkpoint_path(token, "commit.pending")?;
         let destination = self.checkpoint_path(token, "commit")?;
-        let directory = destination.parent().expect("固定目录层级").to_path_buf();
+        let directory = destination
+            .parent()
+            .expect("fixed directory hierarchy")
+            .to_path_buf();
         Ok(vec![
             IoOperation::Rename {
                 source,
@@ -261,7 +269,7 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn 跨段切分边界和溢出拒绝() {
+    fn cross_segment_splitting_boundaries_and_overflow_rejection() {
         let s = storage();
         assert_eq!(
             s.split(LogAddress(15), 18).unwrap(),
@@ -287,7 +295,7 @@ mod tests {
         assert!(s.split(LogAddress(u64::MAX - 1), 2).is_err());
     }
     #[test]
-    fn 新段绑定拒绝迟到完成和旧代次重新打开() {
+    fn new_segment_binding_rejects_late_completion_and_old_generation_reopening() {
         let s = storage();
         let old = FileId {
             slot: 0,
@@ -314,10 +322,10 @@ mod tests {
         );
     }
     #[test]
-    fn 检查点材料名和设备能力检查() {
+    fn checkpoint_material_name_and_equipment_capability_check() {
         let s = storage();
         let token = CheckpointToken([1; 16]);
-        for name in ["../逃逸", "/根", "..", "a/b", ""] {
+        for name in ["../escape", "/root", "..", "a/b", ""] {
             assert!(s.checkpoint_path(token, name).is_err());
         }
         assert!(

@@ -1,4 +1,4 @@
-//! 仅使用公开接口验证空键、变长值、墓碑、重复压缩及释放旧检查点后恢复。
+//! Validate empty keys only using public interface,variable length value,tombstone,Recovery after repeated compression and release of old checkpoints.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{
     RasterKV, Session, Submission,
@@ -97,7 +97,8 @@ impl Drop for Directory {
     }
 }
 #[test]
-fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切分() {
+fn the_two_algorithms_repeatedly_compress_variable_length_data_and_then_checkpoint_recovery_maintains_tombstones_and_session_segmentation()
+ {
     let root = Directory(std::env::temp_dir().join(format!(
         "raster-compaction-{:x?}",
         StoreId::generate().unwrap().0
@@ -209,7 +210,7 @@ fn 两算法重复压缩变长数据再检查点恢复保持墓碑和会话切�
         let actual = match take(&mut session, submission) {
             raster::api::completion::Outcome::Success(value) => Some(value),
             raster::api::completion::Outcome::NotFound => None,
-            _ => panic!("读取结果错误"),
+            _ => panic!("Reading result error"),
         };
         assert_eq!(actual, value);
         serial += 1;

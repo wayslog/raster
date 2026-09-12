@@ -1,4 +1,4 @@
-//! 内建键采用规范编码与稳定哈希；值布局依赖页所有者提供真实许可。
+//! Built-in keys use canonical encoding and stable hashing;Value layout relies on the page owner to provide real permission.
 use super::value::{PreparedValue, ValueCodec};
 use super::{KeyCodec, Schema, ValueLayout};
 use crate::types::{Error, FormatId, HashDescriptor, KeyHash};
@@ -23,10 +23,10 @@ impl<K: KeyCodec, V: ValueLayout> Schema for SchemaPair<K, V> {
     }
 }
 
-/// 原始字节键，包含空键和非 UTF-8 数据；不做 Unicode 归一化。
+/// raw byte key,Contains empty keys and non- UTF-8 data;Don't do it Unicode normalization.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ByteKey;
-/// 固定八字节小端整数键。
+/// Fixed eight-byte little-endian integer keys.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct U64Key;
 
@@ -42,7 +42,7 @@ fn hash_descriptor() -> HashDescriptor {
     }
 }
 
-// 按 FNV-1a 64 位定义逐字节计算；不使用平台默认 Hasher。
+// press FNV-1a 64 Bit definition calculated byte by byte;Do not use platform default Hasher.
 fn stable_hash(bytes: &[u8]) -> KeyHash {
     KeyHash(bytes.iter().fold(OFFSET_BASIS, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
@@ -59,7 +59,7 @@ fn checked_length(length: usize) -> Result<u32, Error> {
 
 fn encode_exact(bytes: &[u8], output: &mut [u8]) -> Result<(), Error> {
     if bytes.len() != output.len() {
-        return Err(Error::Codec("键编码缓冲长度不匹配"));
+        return Err(Error::Codec("Key encoding buffer length mismatch"));
     }
     output.copy_from_slice(bytes);
     Ok(())
@@ -124,18 +124,18 @@ impl KeyCodec for U64Key {
     fn decode_owned(&self, encoded: &[u8]) -> Result<u64, Error> {
         let bytes = encoded
             .try_into()
-            .map_err(|_| Error::Codec("整数键必须恰好八字节"))?;
+            .map_err(|_| Error::Codec("Integer keys must be exactly eight bytes"))?;
         Ok(u64::from_le_bytes(bytes))
     }
 }
-/// 带长度前缀的通用字节槽，访问需要记录独占许可。
+/// Generic byte slot with length prefix,Access requires record exclusive license.
 pub struct SerializedValue<C> {
     codec: C,
 }
-/// 原子整数布局，以逻辑数值编码，访问受页许可约束。
+/// Atomic integer layout,Encoded as a logical value,Access subject to page permission.
 pub struct AtomicU64Value;
 
-/// 原始字节值编码；空值与非 UTF-8 数据均合法。
+/// raw byte value encoding;Null value and not UTF-8 The data is legal.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ByteValueCodec;
 impl ValueCodec for ByteValueCodec {
@@ -156,7 +156,7 @@ impl ValueCodec for ByteValueCodec {
         Ok(value)
     }
 }
-/// 普通 u64 值的八字节小端编码。
+/// Ordinary u64 Eight-byte little-endian encoding of the value.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct U64ValueCodec;
 impl ValueCodec for U64ValueCodec {
@@ -168,11 +168,9 @@ impl ValueCodec for U64ValueCodec {
         Ok(value.to_le_bytes().to_vec())
     }
     fn decode(&self, bytes: &[u8]) -> Result<u64, Error> {
-        Ok(u64::from_le_bytes(
-            bytes
-                .try_into()
-                .map_err(|_| Error::Codec("整数值必须恰好八字节"))?,
-        ))
+        Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+            Error::Codec("The integer value must be exactly eight bytes")
+        })?))
     }
 }
 impl<C: ValueCodec> SerializedValue<C> {
@@ -182,7 +180,7 @@ impl<C: ValueCodec> SerializedValue<C> {
     pub fn format_id(&self) -> FormatId {
         self.codec.format_id()
     }
-    /// 活跃字节槽含八字节长度前缀；稳定编码不包含该进程内前缀。
+    /// Active byte slots have an eight-byte length prefix;Stable encodings do not contain this in-process prefix.
     pub fn prepare(&self, value: &C::Value) -> Result<PreparedValue, Error> {
         let bytes = self.codec.encode(value)?;
         let len = bytes.len().checked_add(8).ok_or(Error::CapacityExceeded)?;
@@ -194,7 +192,7 @@ impl<C: ValueCodec> SerializedValue<C> {
     }
 }
 impl AtomicU64Value {
-    /// 与普通整数编码分离的布局身份；编码内容仍然是逻辑整数。
+    /// Layout identity separate from normal integer encoding;The encoded content is still a logical integer.
     pub fn format_id(&self) -> FormatId {
         FormatId(*b"raster:atomic641")
     }
@@ -215,7 +213,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 键长度边界无需分配巨大缓冲即可验证() {
+    fn key_length_bounds_can_be_verified_without_allocating_huge_buffers() {
         assert_eq!(checked_length(u32::MAX as usize).unwrap(), u32::MAX);
         if let Some(too_large) = (u32::MAX as usize).checked_add(1) {
             assert!(matches!(
@@ -233,7 +231,8 @@ pub use layout::SerializedUpdate;
 mod owned_value_tests {
     use super::*;
     #[test]
-    fn 拥有型值解码与槽位解码一致且不依赖输入生命周期() {
+    fn owned_value_decoding_is_consistent_with_slot_decoding_and_does_not_depend_on_the_input_life_cycle()
+     {
         for value in [0u64, 1, u64::MAX] {
             let bytes = value.to_le_bytes();
             assert_eq!(

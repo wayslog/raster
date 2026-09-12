@@ -1,4 +1,4 @@
-//! 无后备存储的设备：可运行受限内存实例，拒绝所有 I/O，不承诺恢复。
+//! Devices without backing storage:Can run restricted memory instances,reject all I/O,No commitment to restore.
 use super::*;
 #[derive(Clone, Debug, Default)]
 pub struct NullDeviceFactory;

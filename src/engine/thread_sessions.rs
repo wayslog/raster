@@ -1,4 +1,4 @@
-//! 每实例的线程会话名额；失败准备与成功关闭都通过拥有型租约归还，不使用全局 TLS。
+//! Thread session quota per instance;Failure preparation and successful closing are both returned through ownership leases,Do not use global TLS.
 use crate::types::Error;
 use std::{
     sync::{Arc, Mutex},
@@ -20,7 +20,7 @@ impl ThreadSessions {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| Error::InvalidState("线程会话名额锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Thread session quota lock poisoning"))?;
         if active.len() >= self.limit {
             return Err(Error::CapacityExceeded);
         }
@@ -41,7 +41,7 @@ pub(crate) struct ThreadSession {
 }
 impl Drop for ThreadSession {
     fn drop(&mut self) {
-        // 名额锁内没有用户代码；异常收尾仍归还原线程身份，不依赖 Drop 的调用线程。
+        // There is no user code in the quota lock;Abnormal ending still returns the identity of the original thread,not dependent on Drop the calling thread.
         let mut active = self
             .registry
             .active

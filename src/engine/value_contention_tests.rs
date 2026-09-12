@@ -1,4 +1,4 @@
-//! 用真实值许可制造刷页同类争用；通过公开 Session/Ticket 验证等待与用户错误的边界。
+//! Creating page flush contention with real value permissions;by public Session/Ticket Validation wait and user error boundaries.
 use crate::{
     RasterKV, Submission,
     api::{Outcome, completion::TicketState, operation::*},
@@ -130,7 +130,7 @@ fn contention(mode: Mode) {
     }
     let entry = store.inner.index.prepare(U64Key.hash(&1)).unwrap();
     let crate::index::IndexHead::Log(address) = entry.head else {
-        panic!("已有日志记录")
+        panic!("Already logged")
     };
     let calls = Rc::new(Cell::new(0));
     let (submission, pending, before, failed) = std::thread::scope(|scope| {
@@ -138,7 +138,7 @@ fn contention(mode: Mode) {
         let (release_tx, release_rx) = mpsc::sync_channel(1);
         let owner = &store;
         let holder = scope.spawn(move || {
-            // 与刷页的稳定编码一样，独占值许可不占用业务条带锁。
+            // Same as the stable encoding of brush page,Exclusive value license does not occupy business stripe lock.
             let lease = owner.inner.log.lease(address).unwrap();
             lease
                 .read(|_| {
@@ -171,10 +171,13 @@ fn contention(mode: Mode) {
     });
     assert!(
         pending,
-        "内部许可争用必须保留原请求等待，不能作为业务 Busy 终结"
+        "Internal license contention must keep original request pending,Cannot be used as a business Busy end"
     );
     assert_eq!(before, 0);
-    assert!(!failed, "未调用用户代码的争用不能失败关闭");
+    assert!(
+        !failed,
+        "Contention that does not call user code cannot fail to close"
+    );
     let Submission::Pending(mut ticket) = submission.map_err(|r| r.reason).unwrap() else {
         unreachable!()
     };
@@ -193,23 +196,24 @@ fn contention(mode: Mode) {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 冻结源读取争用使读改写等待且释放后只计算一次() {
+fn freeze_source_read_contention_makes_reads_modifications_and_writes_wait_and_only_count_once_after_release()
+ {
     contention(Mode::RmwCopy)
 }
 #[test]
-fn 驻留读取争用不返回业务繁忙错误() {
+fn resident_read_contention_does_not_return_business_busy_error() {
     contention(Mode::Read)
 }
 #[test]
-fn 原地写入许可争用不错误失败关闭() {
+fn in_place_write_permission_contention_fails_to_close_without_error() {
     contention(Mode::Upsert)
 }
 #[test]
-fn 原地读改写许可争用不错误失败关闭() {
+fn in_place_read_modify_write_permission_contention_without_error_failed_to_close() {
     contention(Mode::Rmw)
 }
 #[test]
-fn 用户读取和复制回调的繁忙错误终结一次且不重放() {
+fn busy_errors_for_user_read_and_copy_callbacks_terminate_once_and_not_replayed() {
     for mode in [Mode::Read, Mode::RmwCopy] {
         let (store, mut session) = setup();
         if matches!(mode, Mode::RmwCopy) {
@@ -321,7 +325,7 @@ fn owned_result(discard: bool) {
     ));
     let entry = store.inner.index.prepare(U64Key.hash(&1)).unwrap();
     let crate::index::IndexHead::Log(address) = entry.head else {
-        panic!("应有驻留值")
+        panic!("should have a dwell value")
     };
     let counts = Rc::new(DropCounts::default());
     let ticket = std::thread::scope(|scope| {
@@ -354,7 +358,7 @@ fn owned_result(discard: bool) {
         release_tx.send(()).unwrap();
         holder.join().unwrap();
         let Submission::Pending(ticket) = submitted else {
-            panic!("真实许可争用必须建立挂起票据")
+            panic!("A real license contention must establish a pending ticket")
         };
         ticket
     });
@@ -383,7 +387,7 @@ fn owned_result(discard: bool) {
     let next = if let Some(ticket) = ticket.as_mut() {
         let rejected = match session.upsert(Serial(2), next) {
             Err(rejected) => rejected,
-            Ok(_) => panic!("未收取结果必须保留名额"),
+            Ok(_) => panic!("Unreceived results must reserve a spot"),
         };
         assert!(matches!(rejected.reason, Error::Busy));
         assert_eq!(session.last_accepted(), Some(Serial(1)));
@@ -391,7 +395,7 @@ fn owned_result(discard: bool) {
         assert_eq!(next_counts.calls.get(), 0);
         assert_eq!(next_counts.requests.get(), 0);
         let TicketState::Ready(Ok(Outcome::Success(output))) = ticket.try_take().unwrap() else {
-            panic!("应取得唯一拥有型结果")
+            panic!("should obtain unique owned results")
         };
         assert_eq!(output.value, 20);
         assert!(ticket.try_take().is_err());
@@ -405,7 +409,7 @@ fn owned_result(discard: bool) {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("预算释放后驻留写入应同步返回")
+        panic!("Resident writes should return synchronously after budget is released")
     };
     assert_eq!(output.value, 30);
     assert_eq!(next_counts.calls.get(), 1);
@@ -424,7 +428,7 @@ fn owned_result(discard: bool) {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("仍持有同步输出不应占用结果预算")
+        panic!("Still holding synchronized outputs should not occupy the result budget")
     };
     assert_eq!(last_output.value, 40);
     assert_eq!(last_counts.calls.get(), 1);
@@ -458,10 +462,11 @@ fn owned_result(discard: bool) {
     assert_eq!(last_counts.outputs.get(), 1);
 }
 #[test]
-fn 挂起写入的拥有型结果收取才释放预算且可跨关闭存活() {
+fn owning_results_of_pending_writes_are_charged_to_free_up_budget_and_survive_shutdown() {
     owned_result(false)
 }
 #[test]
-fn 放弃挂起写入票据不取消生效且结果只析构一次() {
+fn abandoning_the_pending_write_ticket_does_not_take_effect_and_the_result_is_only_destroyed_once()
+{
     owned_result(true)
 }

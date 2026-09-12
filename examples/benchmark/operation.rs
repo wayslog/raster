@@ -1,4 +1,4 @@
-//! 基准请求直接调用公开接口；整数和变长布局分别保留真实更新路径。
+//! The benchmark request directly calls the public interface;Integer and variable-length layouts retain the true update path respectively.
 use crate::{model::ResultValue, trace::Value};
 use raster::{
     api::operation::*,
@@ -28,7 +28,7 @@ impl Kind for Fixed {
     fn owned(value: &Value) -> Result<u64, Error> {
         match value {
             Value::Number(n) => Ok(*n),
-            _ => Err(Error::Codec("基准整数类型不匹配")),
+            _ => Err(Error::Codec("Base integer type mismatch")),
         }
     }
     fn read(view: ValueRead<'_, Schema<Self>>) -> Result<Value, Error> {
@@ -63,7 +63,7 @@ impl Kind for Variable {
     fn owned(value: &Value) -> Result<Vec<u8>, Error> {
         match value {
             Value::Bytes(bytes) => Ok(bytes.clone()),
-            _ => Err(Error::Codec("基准字节类型不匹配")),
+            _ => Err(Error::Codec("base byte type mismatch")),
         }
     }
     fn read(view: ValueRead<'_, Schema<Self>>) -> Result<Value, Error> {
@@ -148,7 +148,7 @@ impl<K: Kind> RmwOperation<Schema<K>> for Request<K> {
                 old.extend_from_slice(bytes);
                 Value::Bytes(old)
             }
-            _ => return Err(Error::Codec("基准 RMW 类型不匹配")),
+            _ => return Err(Error::Codec("benchmark RMW type mismatch")),
         };
         Ok((K::owned(&next)?, ResultValue::Value(next)))
     }

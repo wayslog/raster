@@ -1,4 +1,4 @@
-//! Linux io_uring 工厂骨架；feature 不代表内核驱动已经接入。
+//! Linux io_uring Factory skeleton;feature It does not mean that the kernel driver has been connected.
 use super::*;
 
 #[derive(Clone, Debug)]

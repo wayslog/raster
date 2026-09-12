@@ -1,4 +1,4 @@
-//! 真实冷页请求展示异构票据、跳号、拒绝归还、超时续等和会话关闭后的结果所有权。
+//! Real cold page requests show heterogeneous tickets,Jump number,refuse to return,Result ownership after timeout and session closure.
 use raster::{
     RasterKV, Session, Submission,
     api::{Outcome, TicketState, operation::*},
@@ -67,7 +67,7 @@ impl ReadOperation<Schema> for Text {
     type Output = String;
     fn read(&mut self, value: ValueRead<'_, Schema>) -> std::result::Result<String, Error> {
         self.0.callbacks.set(self.0.callbacks.get() + 1);
-        Ok(format!("值为{}", value.view()))
+        Ok(format!("the_value_is{}", value.view()))
     }
 }
 fn take<T: 'static>(
@@ -86,7 +86,7 @@ fn demo(store: &RasterKV<Schema>) -> Result<()> {
             .upsert(Serial(n), Put(n))
             .map_err(|rejected| rejected.reason)?;
         if !matches!(take(&mut session, submitted)?, Outcome::Success(())) {
-            return Err("初始化写入失败".into());
+            return Err("Initial write failed".into());
         }
     }
     let callbacks = Rc::new(Cell::new(0));
@@ -111,7 +111,9 @@ fn demo(store: &RasterKV<Schema>) -> Result<()> {
         )
         .map_err(|rejected| rejected.reason)?;
     let (Submission::Pending(mut number), Submission::Pending(mut text)) = (number, text) else {
-        return Err("小内存配置没有产生预期的两次冷页挂起".into());
+        return Err(
+            "Small memory configuration does not produce the expected two cold page hangs".into(),
+        );
     };
     let rejected = match session.read(
         Serial(405),
@@ -122,27 +124,29 @@ fn demo(store: &RasterKV<Schema>) -> Result<()> {
         ReadOptions::default(),
     ) {
         Err(rejected) => rejected,
-        Ok(_) => return Err("倒退序号被意外接受".into()),
+        Ok(_) => return Err("Backward sequence number unexpectedly accepted".into()),
     };
     if rejected.request.key != 99
         || session.last_accepted() != Some(Serial(410))
         || callbacks.get() != 0
     {
-        return Err("拒绝没有完整归还请求或改变了接受进度".into());
+        return Err(
+            "Rejecting an incomplete return request or changing the acceptance schedule".into(),
+        );
     }
-    // 已经过期的截止时间不消费仍在途票据，也不重新提交读取。
+    // Expired deadlines do not consume bills that are still in transit.,nor resubmit the read.
     if !matches!(
         session.wait(&mut number, Deadline(Instant::now())),
         Err(Error::DeadlineExceeded)
     ) {
-        return Err("预期有界等待超时".into());
+        return Err("Expected bounded wait timeout".into());
     }
     if !matches!(number.try_take(), Ok(TicketState::Pending)) {
-        return Err("超时改变了票据状态".into());
+        return Err("Timeout changed ticket status".into());
     }
     let before = store.diagnostics()?;
     if before.pending_requests != 2 {
-        return Err("诊断中的挂起数量不匹配".into());
+        return Err("Number of hangs in diagnostics does not match".into());
     }
     session.refresh()?;
     let _progress = session.complete_pending(WaitMode::Once)?;
@@ -150,33 +154,35 @@ fn demo(store: &RasterKV<Schema>) -> Result<()> {
     drop(session);
     let number = match number
         .try_take()
-        .map_err(|e| format!("数字票据错误：{e:?}"))?
+        .map_err(|e| format!("Digital ticket error:{e:?}"))?
     {
         TicketState::Ready(result) => result?,
-        TicketState::Pending => return Err("会话关闭后请求仍未完成".into()),
+        TicketState::Pending => return Err("Request not completed after session closed".into()),
     };
     let output = match text
         .try_take()
-        .map_err(|e| format!("文本票据错误：{e:?}"))?
+        .map_err(|e| format!("Text ticket error:{e:?}"))?
     {
         TicketState::Ready(result) => result?,
-        TicketState::Pending => return Err("会话关闭后文本仍未完成".into()),
+        TicketState::Pending => {
+            return Err("Text remains unfinished after session is closed".into());
+        }
     };
     if !matches!(number, Outcome::Success(0))
-        || !matches!(output, Outcome::Success(ref value) if value == "值为1")
+        || !matches!(output, Outcome::Success(ref value) if value == "the_value_is1")
         || callbacks.get() != 2
     {
-        return Err("异构结果或回调次数不匹配".into());
+        return Err("Heterogeneous results or callback number mismatch".into());
     }
     if !matches!(text.try_take(), Err(TicketError::AlreadyTaken)) {
-        return Err("同一票据被重复收取".into());
+        return Err("The same bill was collected repeatedly".into());
     }
     let after = store.diagnostics()?;
     if after.active_sessions != 0 || after.active_requests != 0 {
-        return Err("关闭后仍有活跃会话或请求".into());
+        return Err("There are still active sessions or requests after closing".into());
     }
     println!(
-        "公开票据生命周期通过：两次异构 Pending，跳号接受，倒退拒绝，超时不取消，关闭后收取拥有型结果，每个回调一次。"
+        "Public ticket life cycle passed:Twice isomerism Pending,Jump number accepted,Backward rejection,No cancellation after timeout,Receive owned results after closing,Once per callback."
     );
     Ok(())
 }
@@ -196,6 +202,8 @@ fn main() -> Result<()> {
         (Ok(()), Ok(_)) => Ok(()),
         (Err(error), Ok(_)) => Err(error),
         (Ok(()), Err(error)) => Err(error.into()),
-        (Err(error), Err(cleanup)) => Err(format!("示例失败：{error}；收尾失败：{cleanup}").into()),
+        (Err(error), Err(cleanup)) => {
+            Err(format!("Example fails:{error};Closing failed:{cleanup}").into())
+        }
     }
 }

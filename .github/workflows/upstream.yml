@@ -1,4 +1,4 @@
-name: P9 上游契约及生命周期对照
+name: P9 Upstream contract and life cycle comparison
 on:
   push:
     branches: [main]
@@ -11,26 +11,26 @@ concurrency:
   cancel-in-progress: true
 jobs:
   upstream:
-    name: 固定上游、强制墓碑契约及生命周期
+    name: Fixed upstream, forced tombstone contract, and lifecycle
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: 检出 RasterKV
+      - name: Check out RasterKV
         uses: actions/checkout@v6
-      - name: 检出固定上游
+      - name: Checkout fixed upstream
         uses: actions/checkout@v6
         with:
           repository: microsoft/FASTER
           ref: 321d872eabda6a0345c8bd76419f89723ed864ae
           path: target/upstream-source
           persist-credentials: false
-      - name: 安装固定 Rust 工具链
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
-      - name: 安装上游基础构建依赖
+      - name: Install upstream base build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends g++ libaio-dev libtbb-dev uuid-dev
-      - name: 记录原生环境
+      - name: Record the native environment
         shell: bash
         run: |
           mkdir -p target/p9-upstream-evidence
@@ -42,35 +42,35 @@ jobs:
             g++ --version
             uname -srm
             cat /etc/os-release
-            stat -f -c '文件系统：%T' .
+            stat -f -c 'file_system:%T' .
           } > target/p9-upstream-evidence/environment.txt
-      - name: 构建原始上游核心和行为执行器
+      - name: Build the original upstream core and behavioral executors
         shell: bash
         run: |
           set -o pipefail
           sh tools/upstream/build.sh target/upstream-source target/p9-build 2>&1 |
-            sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" |
+            sed -e "s|$GITHUB_WORKSPACE|worktree|g" -e "s|$HOME|user_directory|g" |
             tee target/p9-upstream-evidence/build.txt
-      - name: 验证运行环境并保存原始返回差异
+      - name: Verify the running environment and save the original return difference
         shell: bash
         run: |
           set -o pipefail
           export CARGO_TERM_COLOR=never
           export RUST_BACKTRACE=0
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           python3 tools/upstream/probe.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-upstream-evidence |
             tee target/p9-upstream-evidence/checks.txt
-      - name: Null 与文件后端固定种子契约对照
+      - name: Null Compare with file backend fixed seed contract
         shell: bash
         run: |
           set -o pipefail
           export CARGO_TERM_COLOR=never
           export RUST_BACKTRACE=0
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           cp target/p9-build/forced-tombstone.diff target/p9-build/forced-tombstone.json target/p9-upstream-evidence/
           python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-upstream-evidence/random-null
           python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-upstream-evidence/random-file --disk
-      - name: 三种检查点与超内存生命周期对照
+      - name: Compare checkpoint modes and over-memory lifecycle
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
@@ -78,10 +78,10 @@ jobs:
           set -o pipefail
           export CARGO_TERM_COLOR=never
           export RUST_BACKTRACE=0
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           python3 -B tools/upstream/lifecycle.py --cpp target/p9-build/faster-replay --output target/p9-lifecycle-evidence |
             tee target/p9-lifecycle.log
-      - name: 保存生命周期原始证据
+      - name: Preserve original evidence of life cycle
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -90,14 +90,14 @@ jobs:
             target/p9-lifecycle-evidence
             target/p9-lifecycle.log
           if-no-files-found: warn
-      - name: 保存失败的合成存储材料
+      - name: Save failed synthetic storage material
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: p9-upstream-failure-materials
           path: ${{ runner.temp }}/raster-lifecycle-*
           if-no-files-found: ignore
-      - name: 保存上游环境证据
+      - name: Preserve upstream environmental evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:

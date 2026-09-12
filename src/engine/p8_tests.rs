@@ -1,9 +1,10 @@
-//! 真实引擎诊断、采样边界、预分配与恢复；指标必须与操作结果及资源生命周期相符。
+//! Real engine diagnostics,sampling boundary,Preallocation and restoration;Metrics must be consistent with operational results and resource lifecycle.
 use super::*;
 use crate::api::{Outcome, TicketState};
 
 #[test]
-fn 预分配创建和恢复都保留页容量但不提前推进逻辑尾部() {
+fn both_preallocation_creation_and_recovery_reserve_page_capacity_but_do_not_advance_the_logical_tail_early()
+ {
     for preallocate in [false, true] {
         let root = Directory(std::env::temp_dir().join(format!(
             "raster-preallocate-{:x?}",
@@ -115,7 +116,7 @@ impl crate::api::operation::RmwOperation<Schema> for Modify {
         old: crate::schema::ValueRead<'_, Schema>,
     ) -> Result<(u64, ()), Error> {
         if self.1 {
-            return Err(Error::Codec("测试计算失败"));
+            return Err(Error::Codec("Test calculation failed"));
         }
         Ok((old.view().wrapping_add(1), ()))
     }
@@ -142,11 +143,12 @@ impl Keyed<Schema> for Delete {
 impl crate::api::operation::DeleteOperation<Schema> for Delete {
     type Output = ();
     fn complete(self, _: crate::api::operation::DeleteOutcome) {
-        assert!(!self.1, "测试删除生效后的输出恐慌");
+        assert!(!self.1, "Test the output panic after deletion takes effect");
     }
 }
 #[test]
-fn 四操作统计区分缺失中止失败与删除生效后的恐慌且拒绝不计入() {
+fn the_four_operation_statistics_distinguish_between_missing_abort_failure_and_panic_after_deletion_takes_effect_and_refuse_to_be_counted()
+ {
     let (_root, store) = setup(None);
     store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -208,7 +210,7 @@ fn 四操作统计区分缺失中止失败与删除生效后的恐慌且拒绝�
         .delete(Serial(8), Delete(9, true), Default::default())
         .unwrap()
     else {
-        panic!("输出恐慌应返回操作失败");
+        panic!("Output panic should return operation failed");
     };
     assert_eq!(failure.effect, Effect::Applied);
     let stats = store.statistics();
@@ -235,7 +237,7 @@ fn 四操作统计区分缺失中止失败与删除生效后的恐慌且拒绝�
 
 #[cfg(feature = "config-toml")]
 #[test]
-fn 配置文件驱动原生创建预分配缓存统计并关闭实例() {
+fn profile_driven_native_creation_of_pre_allocated_cache_statistics_and_shutdown_of_instances() {
     let root = Directory(std::env::temp_dir().join(format!(
         "raster-config-engine-{:x?}",
         StoreId::generate().unwrap().0
@@ -270,7 +272,8 @@ fn 配置文件驱动原生创建预分配缓存统计并关闭实例() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 采样关闭不隐藏在途请求且已有请求统计完整终结并可输出() {
+fn sampling_is_turned_off_without_hiding_in_transit_requests_and_existing_request_statistics_are_completely_completed_and_can_be_output()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     for key in 0..400 {
@@ -282,7 +285,7 @@ fn 采样关闭不隐藏在途请求且已有请求统计完整终结并可输�
         .read(Serial(400), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("冷读取应挂起");
+        panic!("Cold reads should be suspended");
     };
     let active = store.diagnostics().unwrap();
     assert_eq!(active.active_requests, 1);
@@ -321,12 +324,15 @@ fn 采样关闭不隐藏在途请求且已有请求统计完整终结并可输�
     let mut text = Vec::new();
     store.write_statistics(&mut text).unwrap();
     let text = String::from_utf8(text).unwrap();
-    assert!(text.contains("每请求 I/O 完成") && text.contains("统计采集：true"));
+    assert!(
+        text.contains("per request I/O completed") && text.contains("Statistics collection:true")
+    );
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 扩容进行中诊断保留两张表的真实分布且观察不会改变统计() {
+fn diagnosis_during_expansion_retains_the_true_distribution_of_the_two_tables_and_observations_will_not_change_the_statistics()
+ {
     let (_root, store) = setup(None);
     store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -379,7 +385,8 @@ fn 扩容进行中诊断保留两张表的真实分布且观察不会改变统�
 }
 
 #[test]
-fn 同步回调执行中可以跨线程观察真实会话和请求数量() {
+fn the_actual_number_of_sessions_and_requests_can_be_observed_across_threads_during_synchronous_callback_execution()
+ {
     use std::sync::mpsc;
     struct Blocked {
         key: u64,
@@ -419,7 +426,7 @@ fn 同步回调执行中可以跨线程观察真实会话和请求数量() {
                     },
                     Default::default(),
                 )
-                .unwrap_or_else(|_| panic!("同步读取被拒绝"));
+                .unwrap_or_else(|_| panic!("Synchronous read rejected"));
             assert!(matches!(result, Submission::Ready(Ok(Outcome::Success(7)))));
             reader.close(deadline()).unwrap();
         });
@@ -457,7 +464,8 @@ fn 同步回调执行中可以跨线程观察真实会话和请求数量() {
 }
 
 #[test]
-fn 原子修改后恐慌记录未知影响一次且失败关闭不再接收统计() {
+fn after_the_atomic_modification_the_panic_record_has_an_unknown_impact_once_and_fails_to_close_and_no_longer_receives_statistics()
+ {
     #[derive(Debug)]
     struct Panic(u64);
     impl Keyed<Schema> for Panic {
@@ -468,7 +476,7 @@ fn 原子修改后恐慌记录未知影响一次且失败关闭不再接收统�
     impl UpsertOperation<Schema> for Panic {
         type Output = ();
         fn replacement(&mut self) -> Result<(u64, ()), Error> {
-            panic!("预期原地路径");
+            panic!("Expected path in place");
         }
         fn update_in_place(
             &mut self,
@@ -477,7 +485,7 @@ fn 原子修改后恐慌记录未知影响一次且失败关闭不再接收统�
             value
                 .view_mut()
                 .store(99, std::sync::atomic::Ordering::SeqCst);
-            panic!("测试原子值修改后恐慌");
+            panic!("Panic after testing atomic value modification");
         }
     }
     let (_root, store) = setup(None);
@@ -485,7 +493,7 @@ fn 原子修改后恐慌记录未知影响一次且失败关闭不再接收统�
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
     let Submission::Ready(Err(error)) = session.upsert(Serial(1), Panic(7)).unwrap() else {
-        panic!("应为修改后失败");
+        panic!("It should be a failure after modification.");
     };
     assert_eq!(error.effect, Effect::Unknown);
     assert!(session.upsert(Serial(2), Put(8)).is_err());

@@ -1,4 +1,4 @@
-//! 完成路由、重试与阶段推进的统一接口；不能用最大完成序号代替持久化进度。
+//! Complete routing,Unified interface for retry and stage advancement;The maximum completion sequence number cannot be used instead of persistence progress.
 use crate::types::*;
 
 impl<S: crate::schema::Schema> super::Engine<S> {
@@ -80,12 +80,12 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                     .previous
                     .as_mut()
                     .and_then(|previous| previous.tasks.get_mut(&key))
-                    .expect("已收集任务存在")
+                    .expect("Collected tasks exist")
             };
             let step = match self.io.take(task.id()) {
                 Ok(Some(completion)) => match task.on_io(completion) {
                     Ok(()) => task.step(PollBudget(
-                        std::num::NonZeroUsize::new(1).expect("固定预算"),
+                        std::num::NonZeroUsize::new(1).expect("fixed budget"),
                     )),
                     Err(cause) => TaskStep::Failed(OperationError {
                         cause,
@@ -93,7 +93,7 @@ impl<S: crate::schema::Schema> super::Engine<S> {
                     }),
                 },
                 Ok(None) => task.step(PollBudget(
-                    std::num::NonZeroUsize::new(1).expect("固定预算"),
+                    std::num::NonZeroUsize::new(1).expect("fixed budget"),
                 )),
                 Err(cause) => TaskStep::Failed(OperationError {
                     cause,

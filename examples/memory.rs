@@ -1,4 +1,4 @@
-//! 运行受限内存计数器，并记录单线程热点 RMW 的初始基线。
+//! Run the bounded memory counter and record the single-threaded hotspot RMW baseline.
 use raster::{
     RasterKV, Submission,
     api::{completion::Outcome, operation::*, session::SessionOptions},
@@ -51,7 +51,7 @@ fn ready<T: 'static>(result: Submission<T>) -> Result<T, Box<dyn std::error::Err
     match result {
         Submission::Ready(Ok(Outcome::Success(value))) => Ok(value),
         Submission::Ready(Err(error)) => Err(error.into()),
-        _ => Err(Error::InvalidState("示例预期立即成功").into()),
+        _ => Err(Error::InvalidState("Example expects immediate success").into()),
     }
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -90,9 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Deadline(Instant::now() + Duration::from_secs(5));
     session.close(deadline)?;
     store.shutdown(deadline)?;
-    println!("内存计数器生命周期通过：{count} 次 RMW，读取校验、删除、关闭成功");
     println!(
-        "单线程热点基线：{:.0} 操作/秒，P50={}ns P95={}ns P99={}ns",
+        "Memory counter life cycle passes:{count} times RMW,Read verification,delete,Closed successfully"
+    );
+    println!(
+        "Single-threaded hotspot baseline:{:.0} operation/seconds,P50={}ns P95={}ns P99={}ns",
         count as f64 / elapsed.as_secs_f64(),
         latencies[count as usize / 2],
         latencies[count as usize * 95 / 100],

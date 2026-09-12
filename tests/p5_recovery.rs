@@ -1,4 +1,4 @@
-//! 使用公开入口验证变长键值恢复、继续读改写及再次检查点。
+//! Verify variable length key recovery using public portal,Continue to read, rewrite and checkpoint again.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{
     RasterKV, Submission,
@@ -53,13 +53,15 @@ impl ReadOperation<Schema> for Context {
 struct UnreadableKey;
 impl Keyed<Schema> for UnreadableKey {
     fn key(&self) -> &[u8] {
-        panic!("拒绝恢复会话的非法序号前不得读取用户键")
+        panic!(
+            "User keys must not be read before refusing to restore an illegal sequence number for a session"
+        )
     }
 }
 impl ReadOperation<Schema> for UnreadableKey {
     type Output = Vec<u8>;
     fn read(&mut self, _: ValueRead<'_, Schema>) -> Result<Vec<u8>, Error> {
-        panic!("拒绝请求不得执行读取回调")
+        panic!("Rejecting requests must not execute read callbacks")
     }
 }
 impl RmwOperation<Schema> for Context {
@@ -89,7 +91,7 @@ fn outcome(session: &mut Session<Schema>, submission: Submission<Vec<u8>>) -> Ve
     };
     match result.unwrap() {
         Outcome::Success(value) => value,
-        _ => panic!("预期成功结果"),
+        _ => panic!("expected successful outcome"),
     }
 }
 fn builder(config: Config) -> raster::Builder<Schema> {
@@ -104,15 +106,18 @@ fn builder(config: Config) -> raster::Builder<Schema> {
     }))
 }
 #[test]
-fn 变长字节键值恢复后读改写扩展且重新恢复保持结果() {
+fn after_the_variable_length_byte_key_value_is_restored_the_read_modify_write_extension_is_restored_and_the_retention_result_is_restored()
+ {
     scenario(false);
 }
 #[test]
-fn 启用读缓存的变长字节值命中后可读改写并再次恢复() {
+fn after_the_variable_length_byte_value_of_the_read_cache_is_enabled_it_can_be_read_written_and_restored_again_after_a_hit()
+ {
     scenario(true);
 }
 #[test]
-fn 恢复会话线程名额覆盖关闭重续且序号不退回检查点() {
+fn the_resume_session_thread_quota_is_overwritten_and_resumed_and_the_sequence_number_is_not_returned_to_the_checkpoint()
+ {
     let root = std::env::temp_dir().join(format!(
         "raster-resume-thread-{:x?}",
         StoreId::generate().unwrap().0
@@ -175,13 +180,13 @@ fn 恢复会话线程名额覆盖关闭重续且序号不退回检查点() {
         assert!(matches!(
             resumed.read(serial, UnreadableKey, Default::default()),
             Err(Rejected {
-                reason: Error::InvalidState("操作序号必须严格递增"),
+                reason: Error::InvalidState("operation_serial_must_increase_strictly"),
                 ..
             })
         ));
         assert_eq!(resumed.last_accepted(), Some(Serial(20)));
     }
-    // 旧对象虽然与新会话身份相同，关闭后也不能读取用户键或接受更大的序号。
+    // The old object though has the same identity as the new session,Even after it is closed, it cannot read user keys or accept larger serial numbers..
     assert!(
         session
             .read(Serial(999), UnreadableKey, Default::default())
@@ -300,7 +305,7 @@ fn scenario(cache: bool) {
     if cache {
         assert!(
             matches!(&submission, Submission::Ready(_)),
-            "第二次读取应命中缓存"
+            "The second read should hit the cache"
         );
     }
     assert_eq!(outcome(&mut session, submission), vec![7; 1300]);

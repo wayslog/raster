@@ -1,4 +1,4 @@
-//! 使用真实文件后端注入拒绝/完成错误；格式层固定样例不冒充引擎快照。
+//! Inject denial using real file backend/completion error;Format layer fixed samples do not pretend to be engine snapshots.
 use super::{
     directory::{DirectoryPrepare, PreparedDirectory},
     material::{MaterialWrite, SyncedFile},
@@ -66,7 +66,7 @@ impl Device for Controlled {
             IoOperation::SyncFile { file, .. } => (format!("sync:{}", file_name(file)), None),
             IoOperation::Close(file) => (format!("close:{}", file_name(file)), None),
             IoOperation::Rename { .. } => (String::from("rename"), None),
-            _ => panic!("发布任务不应执行该操作"),
+            _ => panic!("Publishing a task should not do this"),
         };
         trace.events.push(tag.clone());
         let fault = if trace
@@ -87,7 +87,7 @@ impl Device for Controlled {
         if matches!(fault, Some(FaultMode::Reject)) {
             return Err(RejectedIo {
                 request,
-                reason: std::io::Error::other(format!("注入拒绝 {tag}")).into(),
+                reason: std::io::Error::other(format!("Injection rejection {tag}")).into(),
             });
         }
         let id = self.inner.submit(request)?;
@@ -110,7 +110,7 @@ impl Device for Controlled {
             }
             if matches!(fail, Some(FaultMode::Complete)) {
                 completion.result =
-                    Err(std::io::Error::other(format!("注入完成失败 {tag}")).into());
+                    Err(std::io::Error::other(format!("Injection completion failed {tag}")).into());
             }
         }
         Ok(())
@@ -167,7 +167,7 @@ impl Fixture {
     fn completion(&self) -> IoCompletion {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            assert!(Instant::now() < deadline, "原生发布 I/O 超时");
+            assert!(Instant::now() < deadline, "native publishing I/O timeout");
             let mut out = vec![];
             self.device.poll(PollBudget::default(), &mut out).unwrap();
             if !out.is_empty() {
@@ -231,7 +231,10 @@ task!(
 fn drive<T: Task>(fixture: &Fixture, task: &mut T) -> Result<T::Output, Error> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        assert!(Instant::now() < deadline, "发布任务没有终结");
+        assert!(
+            Instant::now() < deadline,
+            "The publishing task is not finished"
+        );
         if let Some(result) = task.result() {
             return result;
         }
@@ -287,7 +290,7 @@ fn materials(fixture: &Fixture, manifest: &Manifest) -> Vec<SyncedFile> {
         .collect()
 }
 #[test]
-fn 目录预留同步父目录且已预留的令牌不能复用() {
+fn directory_reservation_synchronizes_the_parent_directory_and_reserved_tokens_cannot_be_reused() {
     let fixture = Fixture::new();
     let _directory = prepare(&fixture).unwrap();
     let token = "02".repeat(16);
@@ -320,7 +323,8 @@ fn 目录预留同步父目录且已预留的令牌不能复用() {
     assert_eq!(fixture.read("owner"), owner);
 }
 #[test]
-fn 原生发布写清单和提交后重命名且最后同步完成才成功() {
+fn native_publishing_requires_writing_a_manifest_and_renaming_after_submission_and_the_final_synchronization_is_completed_only_successfully()
+ {
     let fixture = Fixture::new();
     let directory = prepare(&fixture).unwrap();
     let manifest = manifest();
@@ -397,7 +401,7 @@ fn 原生发布写清单和提交后重命名且最后同步完成才成功() {
     assert_eq!(fixture.read("manifest"), bytes);
 }
 #[test]
-fn 目录创建或同步失败不产生预留凭据() {
+fn directory_creation_or_synchronization_failure_does_not_generate_reserved_credentials() {
     for tag in [
         "mkdir:checkpoints".to_string(),
         "syncdir:.".into(),
@@ -426,7 +430,8 @@ fn 目录创建或同步失败不产生预留凭据() {
     }
 }
 #[test]
-fn 发布各阶段错误不报告成功且重命名后失败保留可能可见状态() {
+fn errors_at_each_stage_of_publishing_are_not_reported_successfully_and_may_remain_visible_after_failure_after_renaming()
+ {
     for tag in [
         "open:manifest".to_string(),
         "write:manifest".into(),
@@ -479,7 +484,7 @@ fn 发布各阶段错误不报告成功且重命名后失败保留可能可见�
     assert!(!fixture.read("commit").is_empty());
 }
 #[test]
-fn 缺失或错误材料凭据在写清单前拒绝() {
+fn missing_or_incorrect_material_credentials_rejected_before_writing_list() {
     for bad_digest in [false, true] {
         let fixture = Fixture::new();
         let directory = prepare(&fixture).unwrap();
@@ -507,7 +512,8 @@ fn 缺失或错误材料凭据在写清单前拒绝() {
 }
 
 #[test]
-fn 其他存储令牌名称或清单身份不能冒用同步材料凭据() {
+fn other_storage_token_names_or_manifest_identities_cannot_be_used_to_impersonate_sync_material_credentials()
+ {
     for case in 0..4 {
         let fixture = Fixture::new();
         let directory = prepare(&fixture).unwrap();
@@ -583,7 +589,8 @@ fn 其他存储令牌名称或清单身份不能冒用同步材料凭据() {
     }
 }
 #[test]
-fn 目录及发布的错误身份和重复完成不推动当前状态() {
+fn misidentification_and_duplicate_completion_of_directories_and_releases_do_not_advance_the_current_state()
+ {
     let fixture = Fixture::new();
     let other = SegmentedStorage::new(fixture.device.clone(), 4096).unwrap();
     let mut directory = DirectoryPrepare::new(
@@ -680,7 +687,7 @@ fn 目录及发布的错误身份和重复完成不推动当前状态() {
     assert!(drive(&fixture, &mut task).is_ok());
 }
 #[test]
-fn 繁忙拒绝可重试且重命名未被接受时不标记可见() {
+fn busy_rejection_is_retryable_and_not_marked_visible_when_rename_is_not_accepted() {
     let fixture = Fixture::new();
     fixture.reset(Some(("mkdir:checkpoints".into(), FaultMode::Busy)));
     let mut prepare = DirectoryPrepare::new(
@@ -716,7 +723,7 @@ fn 繁忙拒绝可重试且重命名未被接受时不标记可见() {
                 .map_err(|r| r.reason)
                 .unwrap(),
             Ok(None) => {}
-            Err(error) => panic!("意外拒绝：{error}"),
+            Err(error) => panic!("unexpected rejection:{error}"),
         }
     }
     assert!(!task.may_be_visible());
@@ -741,7 +748,7 @@ fn 繁忙拒绝可重试且重命名未被接受时不标记可见() {
 }
 
 #[test]
-fn 真实索引与日志记录导出材料后可同步发布并精确读取() {
+fn real_indexing_and_logging_can_be_synchronized_and_accurately_read_after_exporting_materials() {
     use crate::{
         config::{IndexConfig, LogConfig},
         index::{IndexHead, MemIndex, PublishResult},
@@ -767,7 +774,7 @@ fn 真实索引与日志记录导出材料后可同步发布并精确读取() {
         let previous = match expected.head {
             IndexHead::Log(address) => Some(address),
             IndexHead::Empty => None,
-            IndexHead::Cache(_) => panic!("此测试没有缓存"),
+            IndexHead::Cache(_) => panic!("There is no cache for this test"),
         };
         let address = log
             .finish_initialization(
@@ -911,8 +918,9 @@ fn log_material_task(
     .unwrap()
 }
 #[test]
-fn 原生日志材料复制保留混合版本和页填充并取得同步凭据() {
-    // 292 字节页帧跨越两个 256 字节物理段。
+fn native_log_material_replication_preserves_mixed_versions_and_page_fills_and_obtains_sync_credentials()
+ {
+    // 292 Byte page frame spans two 256 Byte physical segment.
     let fixture = Fixture::with_segment_bytes(256);
     let log = frozen_log(&fixture);
     let _directory = prepare(&fixture).unwrap();
@@ -920,7 +928,7 @@ fn 原生日志材料复制保留混合版本和页填充并取得同步凭据()
         .encode_page(PageId(0), CheckpointVersion(22))
         .unwrap()
         .bytes;
-    // 移除驻留记录并释放页后，材料仍须从已写日志读出，不能依赖内存页。
+    // After removing the resident record and freeing the page,Material must still be read from the written log,Cannot rely on memory pages.
     let frame = crate::format::PageFrame::decode(&expected, PageId(0), 256).unwrap();
     for (address, _) in frame.records().unwrap() {
         log.retire(address).unwrap();
@@ -950,7 +958,8 @@ fn 原生日志材料复制保留混合版本和页填充并取得同步凭据()
     );
 }
 #[test]
-fn 日志材料读写失败不返回凭据且忙拒绝可继续() {
+fn log_material_read_and_write_failure_does_not_return_credentials_and_busy_rejection_can_continue()
+{
     for (event, mode, success) in [
         (
             "read:0000000000000000-0000000000000000.log",
@@ -990,7 +999,7 @@ fn 日志材料读写失败不返回凭据且忙拒绝可继续() {
     }
 }
 #[test]
-fn 日志材料错误路由和存储不会消费在途读取() {
+fn log_material_incorrectly_routed_and_stored_will_not_be_consumed_while_being_read() {
     let fixture = Fixture::new();
     let other = Fixture::new();
     let log = frozen_log(&fixture);
@@ -1016,7 +1025,8 @@ fn 日志材料错误路由和存储不会消费在途读取() {
 }
 
 #[test]
-fn 日志材料拒绝帧损坏及外壳校验正确但内部记录损坏() {
+fn log_material_reject_frame_is_damaged_and_shell_check_is_correct_but_internal_record_is_damaged()
+{
     for repair_frame in [false, true] {
         let fixture = Fixture::new();
         let log = frozen_log(&fixture);
@@ -1056,7 +1066,7 @@ fn 日志材料拒绝帧损坏及外壳校验正确但内部记录损坏() {
     }
 }
 #[test]
-fn 日志材料拒绝尚未冻结或尚未写完的源页() {
+fn log_material_rejects_source_pages_that_have_not_been_frozen_or_have_not_been_written_yet() {
     use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
     let fixture = Fixture::new();
     let log = HybridLog::new(
@@ -1122,7 +1132,8 @@ fn read_task(fixture: &Fixture, bytes: u64) -> super::read::MaterialRead {
     .unwrap()
 }
 #[test]
-fn 恢复文件分块与短读精确返回且空文件必须通过结束探测() {
+fn recovery_file_chunking_and_short_reads_are_returned_exactly_and_empty_files_must_pass_end_detection()
+ {
     for payload in [
         vec![],
         (0..1047).map(|i| (i % 251) as u8).collect::<Vec<_>>(),
@@ -1143,7 +1154,8 @@ fn 恢复文件分块与短读精确返回且空文件必须通过结束探测()
     }
 }
 #[test]
-fn 恢复读取拒绝截断尾随和超限声明且不创建缺失文件() {
+fn resume_reading_rejects_truncated_trailing_and_overrun_declarations_and_does_not_create_missing_files()
+ {
     for expected in [0, 4, 6] {
         let fixture = Fixture::new();
         recovery_file(&fixture, b"abcde");
@@ -1190,7 +1202,8 @@ fn 恢复读取拒绝截断尾随和超限声明且不创建缺失文件() {
     );
 }
 #[test]
-fn 恢复读取错误路由不消费请求且关闭失败保留资源状态() {
+fn recovery_read_error_routing_does_not_consume_requests_and_fails_to_close_retaining_resource_status()
+ {
     let fixture = Fixture::new();
     let other = Fixture::new();
     recovery_file(&fixture, b"abcde");
@@ -1214,7 +1227,7 @@ fn 恢复读取错误路由不消费请求且关闭失败保留资源状态() {
     assert!(task.submit_next(&fixture.storage).unwrap().is_none());
 }
 #[test]
-fn 恢复文件读失败仍关闭且忙拒绝不终结() {
+fn the_recovery_file_fails_to_read_and_is_still_closed_and_the_busy_rejection_does_not_terminate() {
     for mode in [FaultMode::Busy, FaultMode::Reject, FaultMode::Complete] {
         let fixture = Fixture::new();
         recovery_file(&fixture, b"abcde");
@@ -1262,7 +1275,8 @@ fn manifest_reader(fixture: &Fixture, store: StoreId) -> super::manifest_read::M
     .unwrap()
 }
 #[test]
-fn 恢复清单先验证提交再读取且只在关闭后返回完整描述() {
+fn recovery_manifest_verifies_submission_before_reading_and_returns_full_description_only_after_closing()
+ {
     let fixture = Fixture::new();
     let expected = published_fixture(&fixture);
     fixture.reset(None);
@@ -1285,7 +1299,7 @@ fn 恢复清单先验证提交再读取且只在关闭后返回完整描述() {
     assert_eq!(trace.events.last().unwrap(), "close:manifest");
 }
 #[test]
-fn 恢复拒绝错身份损坏清单和未发布提交() {
+fn recovery_rejects_wrong_identity_corrupted_manifests_and_unpublished_commits() {
     let fixture = Fixture::new();
     let expected = published_fixture(&fixture);
     fixture.reset(None);
@@ -1334,7 +1348,8 @@ fn 恢复拒绝错身份损坏清单和未发布提交() {
     assert!(drive(&fixture, &mut manifest_reader(&fixture, expected.store)).is_err());
 }
 #[test]
-fn 恢复清单解析阶段仍拒绝其他存储且损坏提交不会触发清单分配() {
+fn recovery_inventory_parsing_phase_still_rejects_additional_storage_and_corrupt_commits_do_not_trigger_inventory_allocations()
+ {
     let fixture = Fixture::new();
     let other = Fixture::new();
     let expected = published_fixture(&fixture);
@@ -1367,7 +1382,7 @@ fn 恢复清单解析阶段仍拒绝其他存储且损坏提交不会触发清�
 }
 
 #[test]
-fn 冷日志继续追加和刷盘不覆盖已安装的旧页帧() {
+fn cold_logs_continue_to_be_appended_and_flushed_without_overwriting_old_installed_page_frames() {
     use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
     let fixture = Fixture::new();
     let old = frozen_log(&fixture);

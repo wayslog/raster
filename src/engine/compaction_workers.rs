@@ -1,4 +1,4 @@
-//! 每次压缩的一组持久工作线程；槽中保留在途请求，空闲线程只保存弱存储引用。
+//! A set of persistent worker threads per compaction;Keep requests in transit in slots,Idle threads only hold weak storage references.
 use super::{ConditionalCopy, CopyResult, Engine};
 use crate::{schema::Schema, types::*};
 use std::{
@@ -33,7 +33,7 @@ impl Shared {
         }
     }
     fn fail(&self, error: Error) {
-        // 错误槽只保存拥有型错误，没有用户代码在该锁内执行。
+        // The error slot only saves owned errors,No user code is executed within this lock.
         self.error
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -88,7 +88,7 @@ impl Workers {
             let shared = result.shared.clone();
             let lane = shared.lanes[index].clone();
             match thread::Builder::new()
-                .name(format!("raster压缩-{index}"))
+                .name(format!("rastercompaction-{index}"))
                 .spawn(move || {
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         run(&weak, &shared, &lane)
@@ -96,7 +96,7 @@ impl Workers {
                     let error = match outcome {
                         Ok(Ok(())) => None,
                         Ok(Err(error)) => Some(error),
-                        Err(_) => Some(Error::InvalidState("压缩工作线程恐慌")),
+                        Err(_) => Some(Error::InvalidState("Compaction worker thread panics")),
                     };
                     if let Some(error) = error {
                         if let Some(engine) = weak.upgrade() {
@@ -108,7 +108,7 @@ impl Workers {
                 Ok(handle) => result.threads.push(Some(handle)),
                 Err(error) => {
                     result.abort();
-                    // 尚未接收任何请求，已启动线程只需退出空闲等待。
+                    // No requests have been received yet,The started thread only needs to exit idle waiting.
                     for handle in &mut result.threads {
                         if let Some(handle) = handle.take() {
                             let _ = handle.join();
@@ -122,7 +122,7 @@ impl Workers {
     }
     #[allow(
         clippy::result_large_err,
-        reason = "繁忙时原样归还尚未投递的拥有型复制请求"
+        reason = "Return undelivered owned copy requests unchanged during busy times"
     )]
     pub fn submit(&mut self, copy: ConditionalCopy) -> Result<(), Rejected<ConditionalCopy>> {
         if self.shared.abort.load(Ordering::SeqCst) || self.shared.closing.load(Ordering::SeqCst) {
@@ -144,12 +144,12 @@ impl Workers {
                 Err(_) => {
                     return Err(Rejected {
                         request: copy,
-                        reason: Error::InvalidState("压缩工作槽中毒"),
+                        reason: Error::InvalidState("Compression work tank poisoning"),
                     });
                 }
             };
             if slot.copy.is_none() {
-                // 工作者可能在首次检查后已经因停止位退出；在槽锁内重查才能避免孤立投递。
+                // The worker may have exited due to the stop bit after the first check;Recheck within the slot lock to avoid orphaned delivery.
                 if self.shared.abort.load(Ordering::SeqCst)
                     || self.shared.closing.load(Ordering::SeqCst)
                 {
@@ -183,9 +183,10 @@ impl Workers {
         for handle in &mut self.threads {
             if let Some(thread) = handle {
                 if thread.is_finished() {
-                    if handle.take().expect("已完成线程").join().is_err() {
+                    if handle.take().expect("Thread completed").join().is_err() {
                         engine.failed.store(true, Ordering::SeqCst);
-                        self.shared.fail(Error::InvalidState("压缩线程异常退出"));
+                        self.shared
+                            .fail(Error::InvalidState("Compression thread exits abnormally"));
                     }
                 } else {
                     finished = false;
@@ -198,7 +199,8 @@ impl Workers {
                 Err(TryLockError::WouldBlock) => finished = false,
                 Err(TryLockError::Poisoned(error)) => {
                     engine.failed.store(true, Ordering::SeqCst);
-                    self.shared.fail(Error::InvalidState("压缩工作槽中毒"));
+                    self.shared
+                        .fail(Error::InvalidState("Compression work tank poisoning"));
                     self.known_copied[index] = error.into_inner().copied;
                 }
             }
@@ -207,13 +209,15 @@ impl Workers {
             total.checked_add(n).ok_or(Error::CapacityExceeded)
         })?;
         if copied > self.issued {
-            return Err(Error::InvalidState("压缩计数超过已投递请求"));
+            return Err(Error::InvalidState(
+                "Compression count exceeds delivered requests",
+            ));
         }
         let failure = self
             .shared
             .error
             .lock()
-            .map_err(|_| Error::InvalidState("压缩错误槽中毒"))?
+            .map_err(|_| Error::InvalidState("Compression error slot poisoning"))?
             .take();
         Ok(Progress {
             copied,
@@ -224,7 +228,7 @@ impl Workers {
 }
 impl Drop for Workers {
     fn drop(&mut self) {
-        // 正常报告前已经 join；异常丢弃只请求停止，不阻塞析构或等待当前线程自身。
+        // Already before normal reporting join;Exception discard only requests stop,Does not block destruction or wait for the current thread itself.
         self.abort();
     }
 }
@@ -245,16 +249,16 @@ fn run<S: Schema>(weak: &Weak<Engine<S>>, shared: &Shared, lane: &Lane) -> Resul
         let mut slot = lane
             .slot
             .lock()
-            .map_err(|_| Error::InvalidState("压缩工作槽中毒"))?;
+            .map_err(|_| Error::InvalidState("Compression work tank poisoning"))?;
         while slot.copy.is_none() {
             if shared.abort.load(Ordering::SeqCst) || shared.closing.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            // 有界等待同时观察停止位，避免通知先于 wait 的交错丢失停机信号。
+            // Bounded wait while observing stop bit,Avoid notifications preceded by wait The staggered loss of shutdown signal.
             slot = lane
                 .wake
                 .wait_timeout(slot, Duration::from_millis(10))
-                .map_err(|_| Error::InvalidState("压缩工作等待锁中毒"))?
+                .map_err(|_| Error::InvalidState("Compression job wait lock poisoning"))?
                 .0;
         }
         let Some(engine) = weak.upgrade() else {
@@ -266,7 +270,7 @@ fn run<S: Schema>(weak: &Weak<Engine<S>>, shared: &Shared, lane: &Lane) -> Resul
         }
         let outcome =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<bool, Error> {
-                // 先预检计数；停止后不提交新读取，仅收取已接受完成。
+                // preflight count;Do not commit new reads after stopping,Only charges accepted completions.
                 slot.copied.checked_add(1).ok_or(Error::CapacityExceeded)?;
                 engine
                     .io
@@ -278,11 +282,11 @@ fn run<S: Schema>(weak: &Weak<Engine<S>>, shared: &Shared, lane: &Lane) -> Resul
                     return slot
                         .copy
                         .as_mut()
-                        .expect("槽请求存在")
+                        .expect("Slot request exists")
                         .drain(&engine.storage);
                 }
                 let step = engine.conditional_copy(
-                    slot.copy.as_mut().expect("槽请求存在"),
+                    slot.copy.as_mut().expect("Slot request exists"),
                     PollBudget::default(),
                 )?;
                 Ok(matches!(step, CopyResult::Copied(_) | CopyResult::Obsolete))
@@ -304,7 +308,7 @@ fn run<S: Schema>(weak: &Weak<Engine<S>>, shared: &Shared, lane: &Lane) -> Resul
             Err(_) => {
                 account(&mut slot)?;
                 engine.failed.store(true, Ordering::SeqCst);
-                shared.fail(Error::InvalidState("压缩工作步骤恐慌"));
+                shared.fail(Error::InvalidState("Compression work step panic"));
             }
         }
         let active = slot.copy.is_some();

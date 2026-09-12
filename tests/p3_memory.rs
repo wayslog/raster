@@ -1,4 +1,4 @@
-//! 公开内存四操作、墓碑选项和并发更新验证。
+//! Expose memory four operations,Tombstone option and concurrent update verification.
 use raster::{
     RasterKV, Submission,
     api::{completion::Outcome, operation::*, session::SessionOptions},
@@ -47,7 +47,7 @@ impl UpsertOperation<Schema> for Put {
         }
         v.view_mut().store(self.value, Ordering::SeqCst);
         if self.fail {
-            return Err(Error::Codec("修改后故障"));
+            return Err(Error::Codec("Fault after modification"));
         }
         Ok(UpdateDecision::Updated(self.value))
     }
@@ -69,7 +69,7 @@ fn store() -> RasterKV<Schema> {
 fn outcome<T: 'static>(s: Submission<T>) -> Outcome<T> {
     match s {
         Submission::Ready(Ok(o)) => o,
-        _ => panic!("预期同步业务结果"),
+        _ => panic!("Expected synchronization business results"),
     }
 }
 
@@ -77,45 +77,46 @@ fn outcome<T: 'static>(s: Submission<T>) -> Outcome<T> {
 struct UnreadableKey(u8);
 impl Keyed<Schema> for UnreadableKey {
     fn key(&self) -> &u64 {
-        panic!("非法序号不得读取用户键")
+        panic!("Illegal serial numbers must not read user keys")
     }
 }
 impl ReadOperation<Schema> for UnreadableKey {
     type Output = ();
     fn read(&mut self, _: ValueRead<'_, Schema>) -> Result<(), Error> {
-        panic!("拒绝请求不得执行读取回调")
+        panic!("Rejecting requests must not execute read callbacks")
     }
 }
 impl UpsertOperation<Schema> for UnreadableKey {
     type Output = ();
     fn replacement(&mut self) -> Result<(u64, ()), Error> {
-        panic!("拒绝请求不得计算替换值")
+        panic!("Rejection request must not calculate replacement value")
     }
     fn update_in_place(&mut self, _: ValueUpdate<'_, Schema>) -> Result<UpdateDecision<()>, Error> {
-        panic!("拒绝请求不得原地更新")
+        panic!("Rejected requests may not be updated in place")
     }
 }
 impl RmwOperation<Schema> for UnreadableKey {
     type Output = ();
     fn initial(&mut self) -> Result<(u64, ()), Error> {
-        panic!("拒绝请求不得计算初始值")
+        panic!("Rejection request must not calculate initial value")
     }
     fn copy_update(&mut self, _: ValueRead<'_, Schema>) -> Result<(u64, ()), Error> {
-        panic!("拒绝请求不得复制更新")
+        panic!("Rejecting requests may not copy updates")
     }
     fn update_in_place(&mut self, _: ValueUpdate<'_, Schema>) -> Result<UpdateDecision<()>, Error> {
-        panic!("拒绝请求不得原地读改写")
+        panic!("Rejection of requests cannot be read or rewritten in place.")
     }
 }
 impl DeleteOperation<Schema> for UnreadableKey {
     type Output = ();
     fn complete(self, _: DeleteOutcome) {
-        panic!("拒绝请求不得通知删除完成")
+        panic!("Rejection of a request shall not notify completion of deletion")
     }
 }
 
 #[test]
-fn 四操作非法序号在用户键之前拒绝且之后仍可接受跳号() {
+fn four_operation_illegal_sequence_numbers_are_rejected_before_the_user_key_and_jump_numbers_are_still_acceptable_afterward()
+ {
     let store = store();
     let mut session = store.start_session(Default::default()).unwrap();
     assert!(matches!(
@@ -136,11 +137,11 @@ fn 四操作非法序号在用户键之前拒绝且之后仍可接受跳号() {
         ];
         for (ordinal, result) in rejected.into_iter().enumerate() {
             let Err(rejected) = result else {
-                panic!("非法序号必须在接受前拒绝")
+                panic!("Illegal serial numbers must be rejected before accepted")
             };
             assert!(matches!(
                 rejected.reason,
-                Error::InvalidState("操作序号必须严格递增")
+                Error::InvalidState("operation_serial_must_increase_strictly")
             ));
             assert_eq!(usize::from(rejected.request.0), ordinal + 1);
             assert_eq!(session.last_accepted(), Some(Serial(10)));
@@ -169,7 +170,7 @@ fn 四操作非法序号在用户键之前拒绝且之后仍可接受跳号() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 空存储插入原地更新与追加替换可读() {
+fn empty_storage_inserts_in_place_update_and_append_replacement_readable() {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     assert!(matches!(
@@ -202,7 +203,7 @@ fn 空存储插入原地更新与追加替换可读() {
     ));
 }
 #[test]
-fn 可能修改的错误失败关闭且不重复执行() {
+fn errors_that_may_be_modified_fail_to_close_and_are_not_repeated() {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     s.upsert(Serial(1), put(1, 1))
@@ -222,7 +223,7 @@ fn 可能修改的错误失败关闭且不重复执行() {
     assert!(store.start_session(SessionOptions::default()).is_err());
 }
 #[test]
-fn 同标签不同键通过公开接口分别读取() {
+fn different_keys_of_the_same_tag_are_read_separately_through_the_public_interface() {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     s.upsert(Serial(1), put(8969, 17))
@@ -283,7 +284,7 @@ impl DeleteOperation<Schema> for Delete {
     }
 }
 #[test]
-fn 四操作墓碑条件创建及复制更新闭环() {
+fn four_operation_tombstone_condition_creation_and_copy_update_closed_loop() {
     use raster::api::completion::AbortReason;
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
@@ -422,7 +423,7 @@ fn 四操作墓碑条件创建及复制更新闭环() {
     ));
 }
 #[test]
-fn 多会话同键累加不会丢更新() {
+fn accumulation_of_the_same_key_across_multiple_sessions_will_not_lose_updates() {
     let store = store();
     std::thread::scope(|scope| {
         for _ in 0..4 {

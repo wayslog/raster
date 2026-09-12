@@ -1,4 +1,4 @@
-//! 真实内存设备接口的接受、终结和缓冲归还。
+//! Acceptance of real memory device interfaces,Finalization and buffered return.
 use raster::{
     device::{memory::MemoryDevice, *},
     types::*,
@@ -27,7 +27,7 @@ fn open(device: &MemoryDevice) -> FileId {
     match complete(
         device,
         IoOperation::Open {
-            path: "数据".into(),
+            path: "data".into(),
             create_new: true,
         },
     )
@@ -35,11 +35,11 @@ fn open(device: &MemoryDevice) -> FileId {
     .unwrap()
     {
         IoOutcome::Opened(file) => file,
-        _ => panic!("应打开文件"),
+        _ => panic!("File should be opened"),
     }
 }
 #[test]
-fn 读写短读和错误均归还原缓冲且终结一次() {
+fn read_and_write_short_reads_and_errors_are_returned_to_the_original_buffer_and_terminated_once() {
     let device = MemoryDevice::new(8, 128).unwrap();
     let file = open(&device);
     let mut buffer = AlignedBuffer::new_zeroed(3, 8).unwrap();
@@ -87,17 +87,18 @@ fn 读写短读和错误均归还原缓冲且终结一次() {
     assert!(output.is_empty());
 }
 #[test]
-fn 队列满拒绝原样归还且不消费请求编号() {
+fn if_the_queue_is_full_the_request_number_will_not_be_returned_and_the_request_number_will_not_be_consumed()
+ {
     let device = MemoryDevice::new(1, 128).unwrap();
     let first = device
         .submit(request(IoOperation::Open {
-            path: "一".into(),
+            path: "one".into(),
             create_new: true,
         }))
         .unwrap();
     let rejected = device
         .submit(request(IoOperation::Open {
-            path: "二".into(),
+            path: "two".into(),
             create_new: true,
         }))
         .unwrap_err();
@@ -109,11 +110,11 @@ fn 队列满拒绝原样归还且不消费请求编号() {
     assert_eq!(second.0, first.0 + 1);
 }
 #[test]
-fn 关闭排空但仍可收取完成且超时保留推进() {
+fn turn_off_draining_but_still_collect_completion_and_timeout_to_preserve_advancement() {
     let device = MemoryDevice::new(8, 128).unwrap();
     device
         .submit(request(IoOperation::Open {
-            path: "一".into(),
+            path: "one".into(),
             create_new: true,
         }))
         .unwrap();
@@ -124,7 +125,7 @@ fn 关闭排空但仍可收取完成且超时保留推进() {
     assert!(
         device
             .submit(request(IoOperation::Open {
-                path: "二".into(),
+                path: "two".into(),
                 create_new: true
             }))
             .is_err()
@@ -141,7 +142,7 @@ fn 关闭排空但仍可收取完成且超时保留推进() {
     assert!(output.is_empty());
 }
 #[test]
-fn 文件代次关闭容量和持久化能力拒绝() {
+fn file_generation_closure_capacity_and_persistence_denied() {
     let device = MemoryDevice::new(8, 4).unwrap();
     let file = open(&device);
     assert!(!device.capabilities().supports_file_sync);
@@ -174,7 +175,7 @@ fn 文件代次关闭容量和持久化能力拒绝() {
     assert!(result.buffer.is_some());
 }
 #[test]
-fn 可控短写短读和失败保持缓冲与数据边界() {
+fn controlled_short_writes_short_reads_and_failures_to_maintain_buffering_and_data_boundaries() {
     use raster::device::memory::MemoryFault;
     let device = MemoryDevice::new(8, 128).unwrap();
     let file = open(&device);
@@ -227,7 +228,8 @@ fn 可控短写短读和失败保持缓冲与数据边界() {
     assert_eq!(done.buffer.unwrap().as_slice(), [b'a', b'b', 0, 0]);
 }
 #[test]
-fn 反向执行取消待执行请求与迟到取消都只终结一次() {
+fn reverse_execution_cancellation_of_pending_requests_and_late_cancellation_are_terminated_only_once()
+ {
     let device = MemoryDevice::new(8, 128).unwrap();
     let file = open(&device);
     device.set_reverse(true).unwrap();
@@ -264,12 +266,13 @@ fn 反向执行取消待执行请求与迟到取消都只终结一次() {
     assert!(matches!(done.result, Ok(IoOutcome::Transferred(0))));
 }
 #[test]
-fn 拒绝不消耗下一次故障且多个请求反序归还() {
+fn rejection_does_not_consume_the_next_failure_and_multiple_requests_are_returned_in_reverse_order()
+{
     use raster::device::memory::MemoryFault;
     let device = MemoryDevice::new(1, 128).unwrap();
     device
         .submit(request(IoOperation::Open {
-            path: "数据".into(),
+            path: "data".into(),
             create_new: true,
         }))
         .unwrap();
@@ -278,7 +281,7 @@ fn 拒绝不消耗下一次故障且多个请求反序归还() {
         .unwrap();
     let rejected = device
         .submit(request(IoOperation::Open {
-            path: "其他".into(),
+            path: "Others".into(),
             create_new: true,
         }))
         .unwrap_err();
@@ -295,13 +298,13 @@ fn 拒绝不消耗下一次故障且多个请求反序归还() {
     device.set_reverse(true).unwrap();
     let a = device
         .submit(request(IoOperation::Open {
-            path: "甲".into(),
+            path: "A".into(),
             create_new: true,
         }))
         .unwrap();
     let b = device
         .submit(request(IoOperation::Open {
-            path: "乙".into(),
+            path: "B".into(),
             create_new: true,
         }))
         .unwrap();
@@ -310,9 +313,9 @@ fn 拒绝不消耗下一次故障且多个请求反序归还() {
     assert_eq!(output.iter().map(|c| c.id).collect::<Vec<_>>(), vec![b, a]);
 }
 #[test]
-fn 重命名覆盖与删除不改变已有句柄的文件身份() {
+fn renaming_overwriting_and_deletion_do_not_change_the_file_identity_of_the_existing_handle() {
     let device = MemoryDevice::new(16, 128).unwrap();
-    complete(&device, IoOperation::CreateDirectory("目录".into()))
+    complete(&device, IoOperation::CreateDirectory("directory".into()))
         .result
         .unwrap();
     let make = |path: &str| match complete(
@@ -326,10 +329,10 @@ fn 重命名覆盖与删除不改变已有句柄的文件身份() {
     .unwrap()
     {
         IoOutcome::Opened(file) => file,
-        _ => panic!("预期文件"),
+        _ => panic!("expected file"),
     };
-    let a = make("目录/甲");
-    let b = make("目录/乙");
+    let a = make("directory/A");
+    let b = make("directory/B");
     for (file, value) in [(a, 1), (b, 2)] {
         let mut buffer = AlignedBuffer::new_zeroed(1, 1).unwrap();
         buffer.as_mut_slice()[0] = value;
@@ -347,8 +350,8 @@ fn 重命名覆盖与删除不改变已有句柄的文件身份() {
     complete(
         &device,
         IoOperation::Rename {
-            source: "目录/甲".into(),
-            destination: "目录/乙".into(),
+            source: "directory/A".into(),
+            destination: "directory/B".into(),
         },
     )
     .result
@@ -364,14 +367,14 @@ fn 重命名覆盖与删除不改变已有句柄的文件身份() {
         );
         assert_eq!(done.buffer.unwrap().as_slice(), [expected]);
     }
-    complete(&device, IoOperation::RemoveFile("目录/乙".into()))
+    complete(&device, IoOperation::RemoveFile("directory/B".into()))
         .result
         .unwrap();
     assert!(
         complete(
             &device,
             IoOperation::Open {
-                path: "目录/乙".into(),
+                path: "directory/B".into(),
                 create_new: false
             }
         )
@@ -393,11 +396,11 @@ fn 重命名覆盖与删除不改变已有句柄的文件身份() {
         [1]
     );
     assert!(
-        complete(&device, IoOperation::SyncDirectory("目录".into()))
+        complete(&device, IoOperation::SyncDirectory("directory".into()))
             .result
             .is_err()
     );
-    for path in ["../外部", "/绝对", "缺父/文件"] {
+    for path in ["../external", "/Absolutely", "Missing father/file"] {
         assert!(
             complete(
                 &device,
@@ -412,7 +415,7 @@ fn 重命名覆盖与删除不改变已有句柄的文件身份() {
     }
 }
 #[test]
-fn 删除的开放对象仍计入预算直到最后句柄关闭() {
+fn deleted_open_objects_are_still_included_in_the_budget_until_the_last_handle_is_closed() {
     let device = MemoryDevice::new(8, 4).unwrap();
     let old = open(&device);
     complete(
@@ -424,7 +427,7 @@ fn 删除的开放对象仍计入预算直到最后句柄关闭() {
     )
     .result
     .unwrap();
-    complete(&device, IoOperation::RemoveFile("数据".into()))
+    complete(&device, IoOperation::RemoveFile("data".into()))
         .result
         .unwrap();
     let new = open(&device);
@@ -451,7 +454,7 @@ fn 删除的开放对象仍计入预算直到最后句柄关闭() {
     .unwrap();
 }
 #[test]
-fn 取消与执行竞争保留两个独立的一次终结() {
+fn cancellation_and_execution_competition_preserve_two_independent_finalizations() {
     for _ in 0..32 {
         let device = MemoryDevice::new(8, 128).unwrap();
         let file = open(&device);
@@ -495,10 +498,10 @@ fn 取消与执行竞争保留两个独立的一次终结() {
     }
 }
 #[test]
-fn 空设备拒绝原样归还且不承诺恢复() {
+fn empty_equipment_refuses_to_be_returned_as_is_and_no_promise_is_made_to_restore_it() {
     let device = raster::device::null::NullDeviceFactory
         .open(DeviceOpenOptions {
-            root: "不使用".into(),
+            root: "Not used".into(),
             create_new: true,
         })
         .unwrap();
@@ -515,7 +518,7 @@ fn 空设备拒绝原样归还且不承诺恢复() {
         }))
         .unwrap_err();
     let IoOperation::Write { buffer, .. } = rejected.request.operation else {
-        panic!("应归还写请求")
+        panic!("Write request should be returned")
     };
     assert_eq!(buffer.as_slice().as_ptr(), pointer);
     assert!(!device.capabilities().supports_file_sync);

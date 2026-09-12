@@ -1,4 +1,4 @@
-//! 有界线性化检查：真实调用区间加业务结果，独立枚举合法顺序。
+//! Bounded linearization check:Real calling interval plus business results,Independent enumeration legal order.
 use raster::{
     RasterKV, Submission,
     api::{completion::Outcome, operation::*, session::SessionOptions},
@@ -16,7 +16,7 @@ fn linearizable(events: &[Event]) -> bool {
     history::linearizable_from(events, None)
 }
 #[test]
-fn 检查器接受合法重叠但拒绝错误结果及实时顺序违例() {
+fn checker_accepts_legal_overlaps_but_rejects_incorrect_results_and_live_order_violations() {
     let first = Event {
         start: 0,
         end: 3,
@@ -79,7 +79,7 @@ fn 检查器接受合法重叠但拒绝错误结果及实时顺序违例() {
     ]));
 }
 #[test]
-fn 三会话四操作混合历史可线性化() {
+fn three_session_four_operation_mixed_history_linearizable() {
     for round in 0..32 {
         let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
             .device(Box::new(raster::device::null::NullDeviceFactory))
@@ -142,7 +142,7 @@ fn 三会话四操作混合历史可线性化() {
                                     let reply = match result {
                                         Submission::Ready(Ok(Outcome::Success(reply))) => reply,
                                         Submission::Ready(Ok(Outcome::NotFound)) => Reply::Missing,
-                                        _ => panic!("意外的终结结果"),
+                                        _ => panic!("unexpected end result"),
                                     };
                                     history.lock().unwrap().push(Event {
                                         start,
@@ -160,6 +160,6 @@ fn 三会话四操作混合历史可线性化() {
         });
         let events = history.into_inner().unwrap();
         assert_eq!(events.len(), 9);
-        assert!(linearizable(&events), "轮次 {round} 历史 {events:?}");
+        assert!(linearizable(&events), "round {round} history {events:?}");
     }
 }

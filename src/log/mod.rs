@@ -1,8 +1,8 @@
-//! 混合日志的页状态、访问许可与分配接口；不直接调用用户操作。
+//! Mixed log page status,Access permission and allocation interface;Do not directly invoke user operations.
 use crate::{config::LogConfig, schema::value::ValueLayout, types::*};
 use std::{collections::BTreeMap, marker::PhantomData, rc::Rc, sync::Arc};
 
-/// Contended 只表示尚未取得值访问许可；布局的 read/update 或操作错误不能转为此状态。
+/// Contended It only means that the value access permission has not been obtained yet;Layout read/update Or the operation error cannot be transferred to this state..
 pub(crate) enum ValueAccess<T> {
     Ready(T),
     Contended,
@@ -18,7 +18,7 @@ pub(crate) struct Frontiers {
     pub flushed_until: LogAddress,
     pub tail: LogAddress,
 }
-/// 同一控制锁维护边界快照与未发布预留，避免观察到互相矛盾的边界。
+/// Maintaining boundary snapshots and unreleased reservations for the same control lock,Avoid observing conflicting boundaries.
 #[derive(Default)]
 struct LogState {
     frontiers: Frontiers,
@@ -29,16 +29,19 @@ struct LogState {
 struct ReservationActivity<'a>(&'a crate::sync::Mutex<LogState>);
 impl Drop for ReservationActivity<'_> {
     fn drop(&mut self) {
-        let mut state = self.0.lock().expect("预留计数锁未中毒");
+        let mut state = self
+            .0
+            .lock()
+            .expect("The reservation count lock is not poisoned");
         state.reservations -= 1;
     }
 }
-/// 所有字节已独立编码，不含页面引用或用户视图，可以交给设备线程。
+/// All bytes are independently encoded,Does not contain page references or user views,Can be handed over to the device thread.
 pub(crate) struct EncodedPage {
     pub generation: Generation,
     pub bytes: Vec<u8>,
 }
-/// 原始记录槽尚未消费拥有值，不能直接发布。
+/// The original record slot has not yet consumed the owned value,cannot be published directly.
 pub(crate) struct RecordAllocation<'a, V: ValueLayout> {
     owner: &'a HybridLog<V>,
     value: value::PageValue<V>,
@@ -53,7 +56,7 @@ impl<'a, V: ValueLayout> RecordAllocation<'a, V> {
         })
     }
 }
-/// 已完成值初始化但未进入地址表；丢弃即放弃，不发布半记录。
+/// Value initialization completed but not entered into address table;To throw away means to give up,Not publishing half records.
 pub(crate) struct RecordReservation<'a, V: ValueLayout> {
     owner: &'a HybridLog<V>,
     value: value::PageValue<V>,
@@ -69,7 +72,7 @@ impl<V: ValueLayout> RecordReservation<'_, V> {
         self.value.address()
     }
 }
-/// 拥有记录引用，短期视图仍由 PageValue 的仲裁许可限制。
+/// Have a record reference,The short-term view remains PageValue Limitations on license to arbitrate.
 pub(crate) struct RecordLease<V: ValueLayout> {
     value: Arc<value::PageValue<V>>,
     local: PhantomData<Rc<()>>,
@@ -164,7 +167,7 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn memory_usage(&self) -> Result<(usize, usize), Error> {
         self.pool.memory_usage()
     }
-    /// 调用者须先验证并安装旧日志材料；这里只建立冷日志边界，不执行恢复 I/O。
+    /// The caller must first verify and install the old log material;Only cold log boundaries are established here,Do not perform recovery I/O.
     pub fn from_checkpoint(
         config: LogConfig,
         layout: Arc<V>,
@@ -175,7 +178,9 @@ impl<V: ValueLayout> HybridLog<V> {
         end.validate()?;
         if begin > end || config.page_bytes == 0 || !end.0.is_multiple_of(config.page_bytes as u64)
         {
-            return Err(Error::InvalidFormat("恢复日志范围或尾部对齐无效"));
+            return Err(Error::InvalidFormat(
+                "Invalid recovery log range or tail alignment",
+            ));
         }
         let pool = page::PagePool::new_at(
             config.page_bytes,
@@ -205,22 +210,24 @@ impl<V: ValueLayout> HybridLog<V> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         state.reservations = state
             .reservations
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
         Ok(ReservationActivity(&self.state))
     }
-    /// 调用者已验证记录边界且取得全部业务写入仲裁；逻辑截断不声明物理删除。
+    /// The caller has verified record boundaries and obtained all business write quorum;Logical truncation does not declare physical deletion.
     pub fn publish_begin(&self, begin: LogAddress) -> Result<(), Error> {
         begin.validate()?;
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if begin < state.frontiers.begin || begin > self.pool.tail()? {
-            return Err(Error::InvalidFormat("逻辑 begin 不能倒退或越过尾部"));
+            return Err(Error::InvalidFormat(
+                "logic begin Cannot go backwards or over the tail",
+            ));
         }
         if state.reservations != 0 {
             return Err(Error::Busy);
@@ -228,13 +235,13 @@ impl<V: ValueLayout> HybridLog<V> {
         state.frontiers.begin = begin;
         Ok(())
     }
-    /// 调用者已停止新刷盘并排空既有写入；完整旧页已经逻辑作废，无需为了回收再写出。
-    /// 跳过的刷盘范围位于 begin 之前，不构成被丢弃数据的持久化凭据。
+    /// The caller has stopped new flushes and drained existing writes;The complete old page has been logically invalidated,No need to rewrite it for recycling.
+    /// The skipped brush range is located in begin before,Persistent credentials that do not constitute discarded data.
     pub fn discard_prefix(&self) -> Result<(), Error> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let floor =
             LogAddress(state.frontiers.begin.0 / self.page_bytes as u64 * self.page_bytes as u64);
         if state.flush.is_some() {
@@ -249,7 +256,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let mut result = state.frontiers;
         result.tail = self.pool.tail()?;
         Ok(result)
@@ -321,16 +328,16 @@ impl<V: ValueLayout> HybridLog<V> {
         mut head: Option<LogAddress>,
     ) -> Result<Option<RecordLease<V>>, Error> {
         while let Some(address) = head {
-            // 可变性仅依赖这三个边界；不为未使用的 tail 串行化页分配。
+            // Mutability relies only on these three boundaries;not for unused tail Serialized page allocation.
             let frontiers = {
                 let state = self
                     .state
                     .lock()
-                    .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+                    .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
                 self.pool.ensure_healthy()?;
                 state.frontiers
             };
-            // 页内逻辑截断可以领先于只读边界，不能沿存活链头更新已失效的旧键。
+            // Intra-page logical truncation can lead to read-only boundaries,Cannot update expired old keys along the surviving chain head.
             if address < frontiers.begin.max(frontiers.read_only).max(frontiers.head) {
                 return Ok(None);
             }
@@ -344,7 +351,9 @@ impl<V: ValueLayout> HybridLog<V> {
             }
             head = lease.previous();
             if head.is_some_and(|previous| previous >= address) {
-                return Err(Error::InvalidFormat("日志前驱形成非法回路"));
+                return Err(Error::InvalidFormat(
+                    "The log precursor forms an illegal loop",
+                ));
             }
         }
         Ok(None)
@@ -383,7 +392,9 @@ impl<V: ValueLayout> HybridLog<V> {
             }
             head = lease.previous();
             if head.is_some_and(|previous| previous >= address) {
-                return Err(Error::InvalidFormat("日志前驱形成非法回路"));
+                return Err(Error::InvalidFormat(
+                    "The log precursor forms an illegal loop",
+                ));
             }
         }
         Ok(None)
@@ -394,27 +405,29 @@ impl<V: ValueLayout> HybridLog<V> {
     ) -> Result<LogAddress, Error> {
         self.with_initialization(reservation, Ok)
     }
-    /// 同步发布闭包结束之前保留预留计数；扫描不会借出尚未完成发布判定的目标记录。
+    /// Preserve reservation count until synchronous release closure ends;Scanning will not lend target records that have not yet completed release determinations..
     pub fn with_initialization<R>(
         &self,
         reservation: RecordReservation<'_, V>,
         publish: impl FnOnce(LogAddress) -> Result<R, Error>,
     ) -> Result<R, Error> {
         if !std::ptr::eq(self, reservation.owner) {
-            return Err(Error::InvalidState("预留属于其他日志"));
+            return Err(Error::InvalidState("Reserve other logs"));
         }
         let address = reservation.value.address()?;
         {
             let mut records = self
                 .records
                 .lock()
-                .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
             if records.contains_key(&address) {
-                return Err(Error::InvalidState("记录地址重复发布"));
+                return Err(Error::InvalidState(
+                    "Record address is published repeatedly",
+                ));
             }
             records.insert(address, Arc::new(reservation.value));
         }
-        // 调用者处理 CAS 冲突时可摘除目标；此处不能持有记录表锁。
+        // Caller handling CAS Targets can be removed in case of conflict;Record table lock cannot be held here.
         let result = publish(address);
         drop(reservation._activity);
         result
@@ -424,7 +437,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let records = self
             .records
             .lock()
-            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         let value = records.get(&address).ok_or(Error::RangeTruncated)?.clone();
         Ok(RecordLease {
             value,
@@ -446,19 +459,19 @@ impl<V: ValueLayout> HybridLog<V> {
     #[cfg(test)]
     pub fn abandon(&self, reservation: RecordReservation<'_, V>) -> Result<(), Error> {
         if !std::ptr::eq(self, reservation.owner) {
-            return Err(Error::InvalidState("预留属于其他日志"));
+            return Err(Error::InvalidState("Reserve other logs"));
         }
         drop(reservation);
         Ok(())
     }
-    /// 上层须先摘除索引可见性；旧租约保留值，禁止直接释放其分配。
+    /// The upper layer must first remove the index visibility;Old lease retention value,Disallow direct release of its allocation.
     pub fn retire(&self, address: LogAddress) -> Result<(), Error> {
         let mut records = self
             .records
             .lock()
-            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         records.get(&address).ok_or(Error::RangeTruncated)?.seal()?;
-        let value = records.remove(&address).expect("已确认记录存在");
+        let value = records.remove(&address).expect("Confirmed record exists");
         drop(records);
         drop(value);
         Ok(())
@@ -467,13 +480,13 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn release_page(&self, page: PageId, generation: Generation) -> Result<(), Error> {
         self.pool.release(page, generation)
     }
-    /// 取得页对齐的检查点尾部；调用者须保存返回边界，再推进只读及刷盘。
-    /// 拒绝存在预留的时刻；新请求随后只能在下一页追加，不会回填该页尾。
+    /// Get page-aligned checkpoint tail;The caller must save the return bounds,Then promote read-only and disk flushing.
+    /// Deny the existence of reserved moments;New requests can then only be appended to the next page,The footer of this page will not be backfilled.
     pub fn pad_tail(&self) -> Result<LogAddress, Error> {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if state.reservations != 0 {
             return Err(Error::Busy);
         }
@@ -482,32 +495,36 @@ impl<V: ValueLayout> HybridLog<V> {
     pub fn advance_read_only(&self, target: LogAddress) -> Result<(), Error> {
         target.validate()?;
         if !target.0.is_multiple_of(self.page_bytes as u64) {
-            return Err(Error::InvalidFormat("只读边界必须对齐到页"));
+            return Err(Error::InvalidFormat(
+                "Read-only boundaries must be aligned to the page",
+            ));
         }
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if target < state.frontiers.read_only || target > self.pool.tail()? {
-            return Err(Error::InvalidState("只读边界不能倒退或超过尾部"));
+            return Err(Error::InvalidState(
+                "Read-only boundaries cannot go backwards or past the end",
+            ));
         }
-        // 包括正在初始化、初始化完毕但尚未发布的预留。不能仅检查地址表。
+        // including initializing,Reservations that have been initialized but not yet released.Can't just check the address table.
         if state.reservations != 0 {
             return Err(Error::Busy);
         }
         let records = self
             .records
             .lock()
-            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         state.frontiers.read_only = target;
         for (_, value) in records.range(..target) {
             value.seal()?;
         }
-        // 每条记录的 seal 与更新许可仲裁；失败时保留目标，但不推进安全边界。
+        // of each record seal Arbitration with updated licenses;Keep target on failure,but does not push the boundaries of security.
         state.frontiers.safe_read_only = target;
         Ok(())
     }
-    /// 仅允许复制已冻结且完整写入普通日志的页；上层维护动作须排斥 GC/截断。
+    /// Only pages that are frozen and completely written to the normal log are allowed to be copied;Upper level maintenance actions must be excluded GC/Truncate.
     pub fn checkpoint_page(
         &self,
         page: PageId,
@@ -542,7 +559,7 @@ impl<V: ValueLayout> HybridLog<V> {
             let state = self
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             if end <= state.frontiers.begin {
                 return Err(Error::RangeTruncated);
             }
@@ -553,7 +570,7 @@ impl<V: ValueLayout> HybridLog<V> {
             let records = self
                 .records
                 .lock()
-                .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
             let mut values = Vec::new();
             for (address, value) in records.range(begin.max(state.frontiers.begin)..end) {
                 values.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
@@ -561,7 +578,7 @@ impl<V: ValueLayout> HybridLog<V> {
             }
             (generation, values)
         };
-        // 专家布局回调执行期间不持有日志控制锁或记录表锁。
+        // Log control lock or record table lock is not held during expert layout callback execution.
         let mut payload = Vec::new();
         payload
             .try_reserve_exact(self.page_bytes)
@@ -576,7 +593,7 @@ impl<V: ValueLayout> HybridLog<V> {
                 .ok_or(Error::CapacityExceeded)?;
             payload
                 .get_mut(offset..end)
-                .ok_or(Error::InvalidFormat("记录越过逻辑页"))?
+                .ok_or(Error::InvalidFormat("Record past logical page"))?
                 .copy_from_slice(&encoded);
         }
         let bytes = crate::format::PageFrame {
@@ -607,7 +624,7 @@ mod tests {
         drops: Arc<std::sync::atomic::AtomicUsize>,
         destructors: Arc<std::sync::atomic::AtomicUsize>,
     }
-    // SAFETY: 测试布局只在独占许可下读写对齐的 Box；失败初始化自行清理，成功由 drop_value 清理。
+    // SAFETY: Test layout is read-write aligned only under exclusive license Box;Failed initialization cleans itself up,success by drop_value clean up.
     unsafe impl ValueLayout for ResourceLayout {
         type Owned = bool;
         type Read<'a> = ();
@@ -625,13 +642,13 @@ mod tests {
         }
         fn decode_owned(&self, bytes: &[u8]) -> Result<bool, Error> {
             if bytes != [0] {
-                return Err(Error::Codec("资源编码损坏"));
+                return Err(Error::Codec("Resource encoding is corrupted"));
             }
             Ok(false)
         }
         fn plan_decode(&self, bytes: &[u8]) -> Result<crate::schema::value::ValuePlan, Error> {
             if bytes != [0] {
-                return Err(Error::Codec("资源编码损坏"));
+                return Err(Error::Codec("Resource encoding is corrupted"));
             }
             self.plan(&false)
         }
@@ -646,12 +663,12 @@ mod tests {
                 0
             );
             let pointer = p.as_ptr().cast::<Box<Resource>>().as_ptr();
-            // SAFETY: 许可独占且尺寸对齐已检查，槽未初始化。
+            // SAFETY: License exclusive and size alignment checked,Slot not initialized.
             unsafe { pointer.write(Box::new(Resource(self.drops.clone()))) };
             if fail {
-                // SAFETY: 刚初始化的 Box 仍由本次调用独占；取走后槽恢复未初始化状态。
+                // SAFETY: Just initialized Box Still exclusive to this call;After being removed, the slot returns to its uninitialized state..
                 drop(unsafe { pointer.read() });
-                return Err(Error::Codec("部分初始化后失败"));
+                return Err(Error::Codec("Failed after partial initialization"));
             }
             Ok(())
         }
@@ -673,7 +690,7 @@ mod tests {
             output: &mut [u8],
         ) -> Result<(), Error> {
             if output.len() != 1 {
-                return Err(Error::Codec("长度不符"));
+                return Err(Error::Codec("Length does not match"));
             }
             output[0] = 0;
             Ok(())
@@ -684,20 +701,21 @@ mod tests {
             p: crate::schema::value::InitPermit<'_>,
         ) -> Result<(), Error> {
             if bytes != [0] {
-                return Err(Error::Codec("编码损坏"));
+                return Err(Error::Codec("Corrupted encoding"));
             }
             self.initialize(p, false)
         }
         fn drop_value(&self, p: crate::schema::value::DropPermit<'_>) -> Result<(), Error> {
             self.destructors
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            // SAFETY: 仅对成功初始化的 Box 调用，最后所有者持有销毁许可。
+            // SAFETY: Only for successfully initialized Box call,Last owner holds permission to destroy.
             unsafe { std::ptr::drop_in_place(p.as_ptr().cast::<Box<Resource>>().as_ptr()) };
             Ok(())
         }
     }
     #[test]
-    fn 原始记录槽放弃不销毁未初始化值且成功初始化仅销毁一次() {
+    fn the_original_record_slot_is_discarded_without_destroying_the_uninitialized_value_and_is_only_destroyed_once_after_successful_initialization()
+     {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let drops = Arc::new(AtomicUsize::new(0));
         let destructors = Arc::new(AtomicUsize::new(0));
@@ -729,7 +747,7 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
     #[test]
-    fn 临时解码不占日志页且资源只销毁一次() {
+    fn temporary_decoding_does_not_occupy_log_pages_and_resources_are_only_destroyed_once() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let log = log();
         for value in 0..8 {
@@ -758,7 +776,7 @@ mod tests {
         assert_eq!(destructors.load(Ordering::SeqCst), 1);
     }
     #[test]
-    fn 冷恢复日志边界一致且拒绝无效尾部() {
+    fn cold_recovery_log_bounds_are_consistent_and_invalid_tails_are_rejected() {
         let config = LogConfig {
             page_bytes: 256,
             memory_pages: 2,
@@ -810,7 +828,8 @@ mod tests {
         );
     }
     #[test]
-    fn 检查点填充尾页不创建记录且后续分配不回填() {
+    fn checkpoint_filling_last_page_does_not_create_records_and_subsequent_allocations_do_not_backfill()
+     {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 256,
@@ -853,7 +872,7 @@ mod tests {
         assert_eq!(log.frontiers().unwrap().safe_read_only, boundary);
     }
     #[test]
-    fn 活跃预留拒绝尾页填充且不改变分配边界() {
+    fn active_reservations_reject_tail_page_filling_and_do_not_change_allocation_boundaries() {
         let log = log();
         let pending = log.reserve(11).unwrap();
         let before = log.frontiers().unwrap().tail;
@@ -866,7 +885,7 @@ mod tests {
         assert_eq!(log.frontiers().unwrap().safe_read_only, end);
     }
     #[test]
-    fn 冻结页编码覆盖对齐间隙和已放弃预留() {
+    fn freeze_page_encoding_covers_alignment_gaps_and_abandoned_reservations() {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 256,
@@ -883,7 +902,7 @@ mod tests {
         let second = log
             .finish_initialization(log.reserve_record(b"b", Some(first), 22).unwrap())
             .unwrap();
-        // 第四条占槽进入第二页，第一页尾部保留零填充。
+        // The fourth slot is entered into the second page.,Leave zero padding at the end of the first page.
         let _next = log
             .finish_initialization(log.reserve_record(b"next", Some(second), 33).unwrap())
             .unwrap();
@@ -902,7 +921,7 @@ mod tests {
         assert_eq!(log.frontiers().unwrap().flushed_until, LogAddress(0));
     }
     #[test]
-    fn 未发布预留阻止冻结且放弃后可以推进() {
+    fn unreleased_reservations_prevent_freezing_and_can_be_advanced_after_abandonment() {
         let log = log();
         let pending = log.reserve(1).unwrap();
         for value in 2..=8 {
@@ -929,7 +948,7 @@ mod tests {
         assert!(lease.update(|_| Ok(())).is_err());
     }
     #[test]
-    fn 正在更新时冻结不推进安全边界且重试可完成() {
+    fn freezing_while_updating_does_not_advance_security_boundaries_and_retry_completes() {
         use std::sync::Barrier;
         let log = log();
         for value in 0..8 {
@@ -963,7 +982,8 @@ mod tests {
         assert_eq!(log.frontiers().unwrap().safe_read_only, LogAddress(64));
     }
     #[test]
-    fn 部分初始化失败自行清理且成功值仅销毁一次() {
+    fn partial_initialization_failure_is_cleaned_up_by_itself_and_the_success_value_is_only_destroyed_once()
+     {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let drops = Arc::new(AtomicUsize::new(0));
         let destructors = Arc::new(AtomicUsize::new(0));
@@ -994,7 +1014,7 @@ mod tests {
         log.release_page(PageId(0), Generation(0)).unwrap();
     }
     #[test]
-    fn 可变查找尊重页内截断和冻结且旧租约无法更新() {
+    fn variable_lookups_respect_in_page_truncation_and_freezing_and_old_leases_cannot_be_updated() {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 256,
@@ -1033,7 +1053,7 @@ mod tests {
         assert_eq!(lease.read(|v| v).unwrap(), 22);
     }
     #[test]
-    fn 可变查找区分冷历史与缺失记录() {
+    fn variable_lookup_distinguishes_cold_history_from_missing_records() {
         let log = HybridLog::from_checkpoint(
             LogConfig {
                 page_bytes: 256,
@@ -1082,7 +1102,7 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn 预留不可见且放弃不留下地址记录() {
+    fn the_reservation_is_invisible_and_the_discard_leaves_no_address_record() {
         let log = log();
         let reservation = log.reserve(7).unwrap();
         let address = reservation.address().unwrap();
@@ -1092,7 +1112,7 @@ mod tests {
         log.release_page(PageId(0), Generation(0)).unwrap();
     }
     #[test]
-    fn 发布后可租用且旧租约阻止销毁() {
+    fn can_be_leased_after_release_and_old_lease_prevents_destruction() {
         let log = log();
         let address = log.finish_initialization(log.reserve(7).unwrap()).unwrap();
         let lease = log.lease(address).unwrap();
@@ -1107,7 +1127,7 @@ mod tests {
         log.release_page(PageId(0), Generation(0)).unwrap();
     }
     #[test]
-    fn 租约比日志存活更久但预留不能跨日志发布() {
+    fn lease_outlives_log_but_reservation_cannot_be_released_across_logs() {
         let first = log();
         let second = log();
         assert!(

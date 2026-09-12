@@ -1,4 +1,4 @@
-//! 维护轮询只推进设备和全局屏障，不执行其他会话的用户回调。
+//! Maintenance polling only advances devices and global barriers,Do not execute user callbacks for other sessions.
 use super::Engine;
 use crate::{coordination::Phase, schema::Schema, types::*};
 use std::sync::atomic::Ordering;
@@ -18,7 +18,7 @@ impl<S: Schema> Engine<S> {
                 && state.phase != Phase::Failed
             {
                 self.coordinator
-                    .fail_action(id, Error::InvalidState("维护推进失败"))?;
+                    .fail_action(id, Error::InvalidState("Maintenance promotion failed"))?;
             }
         }
         result
@@ -26,7 +26,9 @@ impl<S: Schema> Engine<S> {
     fn maintenance_step(&self, budget: PollBudget) -> Result<Progress, Error> {
         if self.failed.load(Ordering::SeqCst) || self.coordinator.snapshot()?.phase == Phase::Failed
         {
-            return Err(Error::InvalidState("引擎或维护动作已失败"));
+            return Err(Error::InvalidState(
+                "Engine or maintenance action has failed",
+            ));
         }
         self.io.poll(&*self.storage.device, budget)?;
         self.progress_scans()?;
@@ -52,7 +54,7 @@ impl<S: Schema> Engine<S> {
             let Some(id) = state.id else {
                 break;
             };
-            // 这里只跨过参与者屏障；索引快照、刷盘和发布必须由实际材料驱动者完成。
+            // Only the participant barrier is crossed here;index snapshot,Brushing and publishing must be done by actual material drivers.
             if !matches!(
                 state.phase,
                 Phase::PrepareIndex
@@ -76,7 +78,7 @@ impl<S: Schema> Engine<S> {
         }
         let state = self.coordinator.snapshot()?;
         if state.phase == Phase::Failed {
-            return Err(Error::InvalidState("维护动作已失败"));
+            return Err(Error::InvalidState("Maintenance action failed"));
         }
         Ok(Progress {
             completed,

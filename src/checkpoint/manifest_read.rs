@@ -1,4 +1,4 @@
-//! 提交证据驱动清单读取；成功仅表示清单可信，材料仍须逐项验证。
+//! Submit evidence-driven inventory reading;Success only means the list is credible,Materials still need to be verified item by item.
 use super::read::{MaterialRead, ReadSpec};
 use crate::{
     device::{CompletionRoute, IoCompletion},
@@ -61,9 +61,11 @@ impl ManifestRead {
         })
     }
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
-        // 每次都校验读取者的存储身份，包括无 I/O 的解析阶段。
+        // Verify the stored identity of the reader every time,Including none I/O parsing stage.
         if !self.read.belongs_to(storage) {
-            return Err(Error::InvalidState("清单读取属于其他存储"));
+            return Err(Error::InvalidState(
+                "Manifest reads belong to other storage",
+            ));
         }
         if self.done {
             return Ok(None);
@@ -84,9 +86,11 @@ impl ManifestRead {
         } else {
             let commit = Commit::decode(&bytes)?;
             if commit.store != self.store || commit.token != self.token {
-                return Err(Error::InvalidFormat("提交身份与请求的恢复点不匹配"));
+                return Err(Error::InvalidFormat(
+                    "Submit identity does not match requested recovery point",
+                ));
             }
-            // Commit::decode 已限制清单长度，拒绝损坏的超大分配声明。
+            // Commit::decode List length limited,Reject corrupted oversized allocation declaration.
             let length =
                 usize::try_from(commit.manifest_bytes).map_err(|_| Error::CapacityExceeded)?;
             self.read = MaterialRead::new(
@@ -104,7 +108,10 @@ impl ManifestRead {
         }
         Ok(())
     }
-    #[allow(clippy::result_large_err, reason = "错误完成原样归还缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Error completion returns buffer intact"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,

@@ -1,4 +1,4 @@
-//! 公开释放入口验证真实磁盘依赖、保留集合延后和持久化重试。
+//! Public release entry to verify real disk dependencies,Preserved collection defer and persistent retries.
 use super::*;
 use crate::api::maintenance::{CheckpointReleaseReport, PhysicalReclamation, RecoverySet};
 fn checkpoint(
@@ -36,7 +36,8 @@ fn set(store: &RasterKV<Schema>, checkpoint: &CheckpointReport) -> RecoverySet {
     }
 }
 #[test]
-fn 释放旧完整检查点仅删除其材料且保留新集合及活跃数据() {
+fn releasing_the_old_full_checkpoint_deletes_only_its_material_and_retains_the_new_collection_and_active_data()
+ {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -91,7 +92,8 @@ fn 释放旧完整检查点仅删除其材料且保留新集合及活跃数据()
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 磁盘中的两个日志引用使旧索引延后且释放引用后可再回收() {
+fn two_log_references_in_the_disk_make_the_old_index_deferred_and_can_be_reclaimed_after_the_references_are_released()
+ {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -114,7 +116,7 @@ fn 磁盘中的两个日志引用使旧索引延后且释放引用后可再回�
             .unwrap()
             .retained
             .references_token(base.token),
-        "恢复实例缓存不知道旧引用"
+        "Restoring instance cache doesn't know about old references"
     );
     let mut session = store.start_session(Default::default()).unwrap();
     let result = release(&store, &mut session, base.token);
@@ -122,7 +124,7 @@ fn 磁盘中的两个日志引用使旧索引延后且释放引用后可再回�
     assert_eq!(report.retirement, CheckpointRetirement::NotAttempted);
     assert_eq!(report.confirmed_absent_materials, 0);
     let PhysicalReclamation::DeferredByRecoverySet { blockers, .. } = &report.physical else {
-        panic!("应按恢复集延后")
+        panic!("Should be postponed by recovery set")
     };
     let actual: std::collections::BTreeSet<_> = blockers
         .iter()
@@ -134,7 +136,7 @@ fn 磁盘中的两个日志引用使旧索引延后且释放引用后可再回�
         .collect();
     assert_eq!(actual, [log1.token, log2.token].into_iter().collect());
     assert!(object(&store, base.token, "commit").exists());
-    // 延后报告不能仅靠文件仍在来证明：两个受保护集合都必须实际恢复。
+    // Delayed reporting cannot be justified solely by the fact that the documents are still available:Both protected collections must actually be restored.
     for (log, expected) in [(log1.token, None), (log2.token, Some(8))] {
         let (reader, _) = recover_store(
             config.clone(),
@@ -151,7 +153,7 @@ fn 磁盘中的两个日志引用使旧索引延后且释放引用后可再回�
         read.close(deadline()).unwrap();
         reader.shutdown(deadline()).unwrap();
     }
-    // 延后终结本次动作，之后仍可检查点并显式释放依赖。
+    // Delay the end of this action,It is still possible to checkpoint and release dependencies explicitly later.
     checkpoint(&store, &mut session, CheckpointKind::Full);
     release(&store, &mut session, log1.token)
         .as_ref()
@@ -189,7 +191,8 @@ fn 磁盘中的两个日志引用使旧索引延后且释放引用后可再回�
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 目录锁竞争终结本次释放且显式重试前不自动失效() {
+fn directory_lock_competition_terminates_this_release_and_does_not_automatically_expire_before_explicitly_retrying()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
@@ -225,19 +228,25 @@ fn refused(result: &crate::api::maintenance::SharedReport<CheckpointReleaseRepor
     );
 }
 #[test]
-fn 未知目录损坏清单和缺失材料描述不能授权删除其他检查点() {
+fn unknown_directory_corruption_list_and_missing_material_description_cannot_authorize_deletion_of_other_checkpoints()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
     let target = checkpoint(&store, &mut session, CheckpointKind::Full);
     let other = checkpoint(&store, &mut session, CheckpointKind::Full);
     let target_commit = object(&store, target.token, "commit");
-    let unknown = store.inner.config.storage.root.join("checkpoints/未知目录");
+    let unknown = store
+        .inner
+        .config
+        .storage
+        .root
+        .join("checkpoints/unknown directory");
     std::fs::create_dir(&unknown).unwrap();
-    std::fs::write(unknown.join("保留文件"), b"keep").unwrap();
+    std::fs::write(unknown.join("Keep files"), b"keep").unwrap();
     refused(&release(&store, &mut session, target.token));
     assert!(target_commit.exists());
-    assert!(unknown.join("保留文件").exists());
+    assert!(unknown.join("Keep files").exists());
     std::fs::remove_dir_all(&unknown).unwrap();
     let path = object(&store, other.token, "manifest");
     let bytes = std::fs::read(&path).unwrap();
@@ -277,7 +286,8 @@ fn 未知目录损坏清单和缺失材料描述不能授权删除其他检查�
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 目录和元数据预算超限整体拒绝且未提交目录默认保留() {
+fn catalog_and_metadata_budget_exceeded_overall_rejection_and_unsubmitted_catalog_retained_by_default()
+ {
     for (tokens, bytes) in [(1, 64 * 1024 * 1024), (4096, 1), (4096, 512)] {
         let root = Directory(std::env::temp_dir().join(format!(
             "raster-release-budget-{:x?}",
@@ -397,7 +407,9 @@ mod failure {
             if inject && self.control.before {
                 return Err(RejectedIo {
                     request,
-                    reason: Error::Io(std::io::Error::other("注入释放操作接受前失败")),
+                    reason: Error::Io(std::io::Error::other(
+                        "Injection release operation failed before acceptance",
+                    )),
                 });
             }
             let id = self.inner.submit(request)?;
@@ -412,7 +424,7 @@ mod failure {
                 if self.control.pending.lock().unwrap().remove(&completion.id) {
                     assert!(matches!(completion.result, Ok(IoOutcome::Done)));
                     completion.result = Err(Error::Io(std::io::Error::other(
-                        "释放操作已执行，完成报告失败",
+                        "Release operation has been performed,Completion report failed",
                     )));
                 }
             }
@@ -423,7 +435,8 @@ mod failure {
         }
     }
     #[test]
-    fn 失效删除及同步前后失败均保留真实影响且只由显式动作重试() {
+    fn invalid_deletions_and_pre_and_post_synchronization_failures_retain_the_true_impact_and_are_only_retried_by_explicit_actions()
+     {
         for point in [
             Point::Rename,
             Point::RetirementSync,
@@ -473,10 +486,17 @@ mod failure {
                 for _ in 0..16 {
                     store.maintenance().poll(PollBudget::default()).unwrap();
                 }
-                assert_eq!(*control.counts.lock().unwrap(), counts, "失败不会自动重试");
+                assert_eq!(
+                    *control.counts.lock().unwrap(),
+                    counts,
+                    "Failure will not automatically retry"
+                );
                 assert!(!store.inner.failed.load(Ordering::SeqCst));
                 if matches!(point, Point::Rename | Point::RetirementSync) {
-                    assert_eq!(counts[1], 0, "未确认失效之前不能删除材料");
+                    assert_eq!(
+                        counts[1], 0,
+                        "Material cannot be deleted before invalidation is confirmed"
+                    );
                 }
                 checkpoint(&store, &mut session, CheckpointKind::Full);
                 let result = release(&store, &mut session, old.token);

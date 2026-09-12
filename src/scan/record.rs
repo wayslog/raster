@@ -1,4 +1,4 @@
-//! 按 Schema 解码物理记录；无效槽的值不具有用户值语义，不能调用值解码器。
+//! press Schema Decoding physical records;The value of an invalid slot does not have user value semantics,Cannot call value decoder.
 use crate::{
     api::scan::ScannedRecord,
     format::Record,
@@ -19,7 +19,9 @@ pub(crate) fn decode_record<S: Schema>(
         .previous
         .is_some_and(|previous| previous >= address)
     {
-        return Err(Error::InvalidFormat("扫描记录前驱必须位于更低地址"));
+        return Err(Error::InvalidFormat(
+            "The scan record predecessor must be at a lower address",
+        ));
     }
     let (key, _) = decode_canonical(schema.key_codec(), record.key)?;
     let value = if record.header.tombstone || record.header.invalid {
@@ -29,7 +31,7 @@ pub(crate) fn decode_record<S: Schema>(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 schema.value_layout().decode_owned(record.value)
             }))
-            .map_err(|_| Error::InvalidState("扫描值解码恐慌"))??,
+            .map_err(|_| Error::InvalidState("Scan value decoding panic"))??,
         )
     };
     Ok(ScannedRecord {
@@ -69,7 +71,7 @@ mod tests {
         out
     }
     #[test]
-    fn 扫描解码拥有空键变长值和整数边界() {
+    fn scan_decoding_has_null_key_variable_length_values_and_integer_boundaries() {
         let schema = SchemaPair::new(ByteKey, SerializedValue::new(ByteValueCodec));
         for key in [vec![], vec![0, 255]] {
             for value in [vec![], vec![0, 255, 128], vec![42; 1500]] {
@@ -97,14 +99,14 @@ mod tests {
             ByteValueCodec.format_id()
         }
         fn encode(&self, _: &Vec<u8>) -> Result<Vec<u8>, Error> {
-            panic!("不应编码")
+            panic!("should not be encoded")
         }
         fn decode(&self, _: &[u8]) -> Result<Vec<u8>, Error> {
-            panic!("注入解码恐慌")
+            panic!("Inject decoding panic")
         }
     }
     #[test]
-    fn 墓碑无效槽保留键和标志且不调用值解码器() {
+    fn tombstone_invalid_slot_preserves_keys_and_flags_and_does_not_call_the_value_decoder() {
         let schema = SchemaPair::new(ByteKey, SerializedValue::new(PanicCodec));
         for (value, tombstone, invalid) in [
             (&b""[..], true, false),
@@ -127,7 +129,7 @@ mod tests {
         ));
     }
     #[test]
-    fn 非法键值损坏槽与地址溢出均拒绝而非跳过() {
+    fn illegal_key_value_corruption_slots_and_address_overflows_are_rejected_instead_of_skipped() {
         let schema = SchemaPair::new(U64Key, AtomicU64Value);
         assert!(decode_record(&schema, LogAddress(0), &bytes(b"short", b"", false, true)).is_err());
         assert!(

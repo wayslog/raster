@@ -1,4 +1,4 @@
-//! 创建和恢复完成全部组件后才发布实例；持久会话须显式继续。
+//! Release the instance only after all components have been created and restored.;Persistent sessions must be explicitly continued.
 use super::{
     maintenance::{Maintenance, RecoveryReport, RecoverySet},
     scan::{RecordScanner, ScanOptions},
@@ -10,8 +10,8 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// 共享的键空间、索引、混合日志和维护历史；Clone 共享同一实例。
-/// 每个线程通过自己的 Session 执行业务。恢复与创建入口见 Builder。
+/// shared keyspace,Index,Mixed logs and maintenance history;Clone Share the same instance.
+/// Each thread passes its own Session Execute business.Restoration and creation portal see Builder.
 pub struct RasterKV<S: Schema> {
     pub(crate) inner: Arc<Engine<S>>,
 }
@@ -22,14 +22,14 @@ impl<S: Schema> Clone for RasterKV<S> {
         }
     }
 }
-/// 收集配置与真实设备工厂；只有全部资源准备或恢复成功才返回 RasterKV。
+/// Collect configuration and real device factory;Return only if all resources are successfully prepared or restored. RasterKV.
 pub struct Builder<S: Schema> {
     schema: S,
     config: Config,
     device: Option<Box<dyn DeviceFactory>>,
 }
-/// 可续跑的本线程会话及检查点持久化进度；新序号必须大于会话当前 last_accepted。
-/// 同实例关闭后再次续接时，当前接受进度可能已经超过检查点的 progress.serial。
+/// Resumable thread session and checkpoint persistence progress;The new sequence number must be greater than the current session number last_accepted.
+/// When the same instance is closed and then connected again,The current acceptance progress may have exceeded the checkpoint progress.serial.
 pub struct ResumedSession<S: Schema> {
     pub session: Session<S>,
     pub progress: super::maintenance::DurableProgress,
@@ -40,7 +40,7 @@ pub struct ShutdownReport {
 }
 
 impl<S: Schema> RasterKV<S> {
-    /// 持久存储身份，用于组装恢复集；恢复后保持不变。
+    /// Persistent storage of identities,Used to assemble recovery sets;Remain unchanged after restore.
     pub fn id(&self) -> StoreId {
         self.inner.id
     }
@@ -52,11 +52,11 @@ impl<S: Schema> RasterKV<S> {
             device: None,
         }
     }
-    /// 在调用线程注册会话；同一线程与存储只能有一个活跃会话。
-    /// 显式身份重复、容量不足或实例失败时拒绝，恢复身份使用 continue_session。
+    /// Register the session on the calling thread;There can only be one active session for the same thread and storage.
+    /// explicit identity duplication,Reject on insufficient capacity or instance failure,Restoration of identity continue_session.
     pub fn start_session(&self, options: SessionOptions) -> Result<Session<S>, Error> {
         if self.inner.failed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(Error::InvalidState("引擎已失败关闭"));
+            return Err(Error::InvalidState("engine_failed_closed"));
         }
         let thread_session = self.inner.thread_sessions.enter()?;
         let id = match options.id {
@@ -81,11 +81,11 @@ impl<S: Schema> RasterKV<S> {
             local: std::marker::PhantomData,
         })
     }
-    /// 续接恢复报告中的身份；未知、仍活跃或同线程已有会话时拒绝。
-    /// 关闭后可再次续接，last_accepted 保留本实例已经接受的最新序号。
+    /// Continue the identity in the recovery report;unknown,Reject if still active or if there is already a session on the same thread.
+    /// Can be resumed after closing,last_accepted Keep the latest serial number accepted by this instance.
     pub fn continue_session(&self, id: SessionId) -> Result<ResumedSession<S>, Error> {
         if self.inner.failed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(Error::InvalidState("引擎已失败关闭"));
+            return Err(Error::InvalidState("engine_failed_closed"));
         }
         let thread_session = self.inner.thread_sessions.enter()?;
         let (version, serial, durable_version) = self.inner.coordinator.resume(id)?;
@@ -118,7 +118,7 @@ impl<S: Schema> RasterKV<S> {
             inner: Arc::clone(&self.inner),
         }
     }
-    /// 读取真实组件状态；并发字段不构成事务快照，跨度与桶占用不等于有效键数。
+    /// Read real component status;Concurrent fields do not constitute transaction snapshots,Span and bucket occupancy are not equal to the number of valid keys.
     pub fn diagnostics(&self) -> Result<Diagnostics, Error> {
         let frontiers = self.inner.log.frontiers()?;
         let (table, growing_index, migrated_buckets, retired_index_retained) =
@@ -132,7 +132,7 @@ impl<S: Schema> RasterKV<S> {
                 .tail
                 .0
                 .checked_sub(frontiers.begin.0)
-                .ok_or(Error::InvalidState("日志跨度倒置"))?,
+                .ok_or(Error::InvalidState("Log span inversion"))?,
             begin: frontiers.begin,
             tail: frontiers.tail,
             active_sessions: active_session_ids.len(),
@@ -162,29 +162,30 @@ impl<S: Schema> RasterKV<S> {
                 .load(std::sync::atomic::Ordering::SeqCst),
         })
     }
-    /// 启用后续请求和内部事件采样，不清空已有计数。
+    /// Enable subsequent requests and internal event sampling,Do not clear existing counts.
     pub fn enable_stats_collection(&self) {
         self.inner.metrics.enable(true);
     }
-    /// 停止新请求采样；已有采样请求记录到终结，实时资源诊断保持启用。
+    /// Stop sampling new requests;The sampling request record has been terminated,Real-time resource diagnostics remain enabled.
     pub fn disable_stats_collection(&self) {
         self.inner.metrics.enable(false);
     }
-    /// 返回拥有型历史计数，创建或恢复新实例时归零，不进入检查点。
+    /// Return owned historical counters, zeroed when creating or restoring a new instance,
+    /// without entering a checkpoint.
     pub fn statistics(&self) -> crate::diagnostics::Statistics {
         self.inner.metrics.snapshot()
     }
-    /// 调用者选择输出位置；本库不安装全局日志订阅器。
+    /// Let the caller choose the output location; this library does not install a global log subscriber.
     pub fn write_statistics(&self, output: &mut impl std::io::Write) -> Result<(), Error> {
         write!(output, "{}", self.statistics()).map_err(Error::Io)
     }
     pub fn scan(&self, options: ScanOptions) -> Result<RecordScanner<S>, Error> {
         RecordScanner::open(self.inner.clone(), options)
     }
-    /// 先停止并排空自动维护；活跃会话、扫描或手动任务仍返回 Busy，可推进后重试。
-    /// 停止并排空自动维护及设备；成功不自动创建检查点。
-    /// 活跃会话或手动维护导致 Busy；diagnostics 提供活跃会话身份列表。
-    /// 应先关闭会话并推进原维护票据；超时可续调用。
+    /// Stop and drain automatic maintenance first;active session,Scan or manual tasks still return Busy,Can be pushed forward and tried again.
+    /// Stop and drain automatic maintenance and equipment;Success does not automatically create a checkpoint.
+    /// Active sessions or manual maintenance caused Busy;diagnostics Provides a list of active session identities.
+    /// The session should be closed first and the original maintenance ticket pushed forward;Renewable call after timeout.
     pub fn shutdown(&self, deadline: Deadline) -> Result<ShutdownReport, Error> {
         let mut done = self
             .inner
@@ -192,13 +193,13 @@ impl<S: Schema> RasterKV<S> {
             .try_lock()
             .map_err(|error| match error {
                 std::sync::TryLockError::WouldBlock => Error::Busy,
-                std::sync::TryLockError::Poisoned(_) => Error::InvalidState("关闭锁中毒"),
+                std::sync::TryLockError::Poisoned(_) => Error::InvalidState("Close lock poisoning"),
             })?;
         if !*done {
-            // 先禁止自动接受并排空已接受任务；即使稍后因活跃会话返回 Busy，停止请求仍有效。
+            // First disable automatic acceptance and clear accepted tasks;Even if you return later with an active session Busy,Stop request still valid.
             self.inner.auto_compaction.request_stop()?;
             self.maintenance().wait_auto_compaction(deadline)?;
-            // 注册扫描与关闭共享关闭锁；活跃扫描立即拒绝，已放弃扫描按截止时间排空。
+            // Register Scan and Close Shared Close Lock;Active scan rejected immediately,Abandoned scans are drained by deadline.
             let scan_failure = match self.inner.drain_scans(deadline) {
                 Ok(()) => None,
                 Err(error @ (Error::Busy | Error::DeadlineExceeded)) => return Err(error),
@@ -209,14 +210,14 @@ impl<S: Schema> RasterKV<S> {
                     Some(error)
                 }
             };
-            // 复合任务在两个全局动作之间也仍未终结，不能让关闭越过该间隙。
+            // Composite tasks are not yet terminated between two global actions,Cannot allow closure to cross this gap.
             let compaction = self
                 .inner
                 .compaction
                 .try_lock()
                 .map_err(|error| match error {
                     std::sync::TryLockError::WouldBlock => Error::Busy,
-                    _ => Error::InvalidState("关闭遇到压缩任务锁中毒"),
+                    _ => Error::InvalidState("Close encounter compression task lock poisoning"),
                 })?;
             if compaction.is_active()
                 && !self.inner.failed.load(std::sync::atomic::Ordering::SeqCst)
@@ -265,14 +266,14 @@ impl<S: Schema> Builder<S> {
         self.device = Some(device);
         self
     }
-    /// 创建全新存储。必须提供设备工厂；文件根目录中已有存储材料时拒绝覆盖。
-    /// 配置与内存准备在设备打开前校验，设备/格式错误原样返回。
+    /// Create new storage.Equipment factory must be provided;Refuse to overwrite when there is already stored material in the file root directory.
+    /// Configuration and memory preparation are verified before turning on the device,Equipment/Format errors are returned as is.
     pub fn create(self) -> Result<RasterKV<S>, Error> {
         self.config.validate()?;
         if self.device.is_none() {
             return Err(Error::InvalidConfig {
                 field: "device",
-                reason: "必须提供设备工厂",
+                reason: "Equipment factory must be provided",
             });
         }
         let id = StoreId::generate()?;
@@ -296,13 +297,12 @@ impl<S: Schema> Builder<S> {
         let mut cache = crate::cache::ReadCache::new(self.config.cache.clone());
         cache.set_metrics(metrics.clone());
         cache.preallocate()?;
-        let device =
-            self.device
-                .expect("设备工厂已检查")
-                .open(crate::device::DeviceOpenOptions {
-                    root: self.config.storage.root.clone(),
-                    create_new: true,
-                })?;
+        let device = self.device.expect("Equipment factory inspected").open(
+            crate::device::DeviceOpenOptions {
+                root: self.config.storage.root.clone(),
+                create_new: true,
+            },
+        )?;
         let storage = crate::storage::SegmentedStorage::new(
             Arc::from(device),
             self.config.storage.segment_bytes,
@@ -342,21 +342,21 @@ impl<S: Schema> Builder<S> {
         Ok(store)
     }
 
-    /// 校验配对检查点、Schema 身份和材料后恢复到独立工作目录，成功才发布实例。
-    /// 桶数须与索引材料一致；恢复报告中的身份经 continue_session 才成为活跃会话。
-    /// 仅索引检查点不形成完整恢复集；不会读取 C++ 的磁盘字节格式。
+    /// Verification Pairing Checkpoint,Schema Restore identities and materials to separate working directories,Publish instance only after success.
+    /// The number of barrels must be consistent with the index material;Identity experience in recovery report continue_session to become an active session.
+    /// Index checkpoints alone do not form a complete recovery set;Will not read C++ disk byte format.
     pub fn recover(self, set: RecoverySet) -> Result<(RasterKV<S>, RecoveryReport), Error> {
         self.config.validate()?;
         if self.device.is_none() {
             return Err(Error::InvalidConfig {
                 field: "device",
-                reason: "必须提供设备工厂",
+                reason: "Equipment factory must be provided",
             });
         }
         super::recover::recover(
             self.config,
             self.schema,
-            self.device.expect("设备工厂已检查"),
+            self.device.expect("Equipment factory inspected"),
             set,
         )
     }

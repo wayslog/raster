@@ -1,4 +1,4 @@
-//! 将已冻结且写完的日志页复制为独立同步材料，内存开销限制为单页。
+//! Copy frozen and completed log pages as independent sync material,Memory overhead is limited to a single page.
 use super::material::{MaterialWrite, SyncedFile};
 use crate::{
     device::{CompletionRoute, IoCompletion},
@@ -35,7 +35,7 @@ pub(crate) struct LogMaterialWrite {
     result: Option<Result<LogMaterialFile, Error>>,
 }
 impl LogMaterialWrite {
-    /// 父目录先由 DirectoryPrepare 预留。整个复制期由维护动作排斥日志截断。
+    /// The parent directory is first DirectoryPrepare reserved.Entire replication period truncated by maintenance action exclusion log.
     pub fn new<V: ValueLayout>(
         storage: &SegmentedStorage,
         log: &HybridLog<V>,
@@ -48,10 +48,10 @@ impl LogMaterialWrite {
         if spec.chunk == 0 || !caps.memory_alignment.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "checkpoint.chunk",
-                reason: "块大小须非零且设备内存对齐有效",
+                reason: "Block size must be non-zero and device memory alignment must be valid",
             });
         }
-        // 在读取源文件前验证目标身份与路径。
+        // Verify target identity and path before reading source file.
         storage.checkpoint_path(
             spec.token,
             &SegmentedStorage::checkpoint_material_name(spec.id, Generation(0)),
@@ -76,7 +76,7 @@ impl LogMaterialWrite {
     }
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
         if !Arc::ptr_eq(&self.owner, &storage.identity) {
-            return Err(Error::InvalidState("日志材料属于其他存储"));
+            return Err(Error::InvalidState("Log material belongs to other storage"));
         }
         if self.ended {
             return Ok(None);
@@ -87,7 +87,7 @@ impl LogMaterialWrite {
             Err(error) => {
                 self.ended = true;
                 self.result = Some(Err(error));
-                // 材料关闭失败时保留任务内句柄，由设备关闭流程回收。
+                // Keep intra-task handle when material close fails,Recycling by device shutdown process.
                 if !self.has_resources() {
                     self.stage = Stage::Done;
                 }
@@ -138,7 +138,10 @@ impl LogMaterialWrite {
             Stage::Done => Ok(None),
         }
     }
-    #[allow(clippy::result_large_err, reason = "错误完成原样归还缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Error completion returns buffer intact"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -147,7 +150,7 @@ impl LogMaterialWrite {
         if !Arc::ptr_eq(&self.owner, &storage.identity) || self.ended {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("日志材料完成身份不匹配"),
+                reason: Error::InvalidState("Log material completion identity mismatch"),
             });
         }
         match &mut self.stage {
@@ -155,7 +158,7 @@ impl LogMaterialWrite {
             Stage::Write(write) => write.accept(storage, completion),
             Stage::Done => Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("日志材料已结束"),
+                reason: Error::InvalidState("Log material has ended"),
             }),
         }
     }

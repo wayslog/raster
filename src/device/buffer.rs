@@ -1,4 +1,4 @@
-//! 安全的零初始化对齐缓冲；通过额外分配调整切片起点，当前不使用裸分配器。
+//! Safe zero-initialized alignment buffer;Adjust slice start points with additional allocations,The naked allocator is not currently used.
 
 use crate::types::Error;
 
@@ -13,7 +13,7 @@ impl AlignedBuffer {
         if length == 0 || !alignment.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "buffer",
-                reason: "长度须非零，对齐须为二次幂",
+                reason: "The length must be non-zero,Alignment must be a power of two",
             });
         }
         let total = length

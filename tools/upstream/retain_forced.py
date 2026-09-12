@@ -1,4 +1,4 @@
-"""在构建副本中仅补上强制墓碑保护条件；保存完整差异及哈希，不改固定上游检出。"""
+"""Only add mandatory tombstone protection conditions in the build copy;Save full difference and hash,Do not change fixed upstream checkout."""
 import difflib
 import hashlib
 import json
@@ -15,15 +15,15 @@ def prepare(source, destination):
     old = "if(hash_index_.IsSync() && expected_entry.address() == address) {"
     new = "if(!force_tombstone && hash_index_.IsSync() && expected_entry.address() == address) {"
     if original.count(old) != 1:
-        raise RuntimeError("上游删除优化条件不唯一，拒绝生成参考修正")
+        raise RuntimeError("Upstream deletion optimization conditions are not unique,Refuse to generate reference fixes")
     corrected = original.replace(old, new)
     header.write_text(corrected)
     patch = "".join(difflib.unified_diff(
         original.splitlines(True), corrected.splitlines(True),
-        fromfile="原始上游/cc/src/core/faster.h", tofile="强制墓碑修正/cc/src/core/faster.h"))
+        fromfile="original upstream/cc/src/core/faster.h", tofile="Forced tombstone fix/cc/src/core/faster.h"))
     (destination.parent / "forced-tombstone.diff").write_text(patch)
     (destination.parent / "forced-tombstone.json").write_text(json.dumps({
-        "contract": "force_tombstone 禁止索引消除",
+        "contract": "force_tombstone Disable index elimination",
         "changed_files": ["cc/src/core/faster.h"],
         "original_sha256": hashlib.sha256(original.encode()).hexdigest(),
         "corrected_sha256": hashlib.sha256(corrected.encode()).hexdigest(),

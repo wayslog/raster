@@ -1,4 +1,4 @@
-//! 上游对照的 Rust 执行端：相同轨迹逐操作验证模型，再输出真实返回值。
+//! upstream control Rust Execution end:Verify the model operation by operation on the same trajectory,Then output the real return value.
 #[path = "support/actor.rs"]
 mod actor;
 #[path = "support/replay.rs"]
@@ -52,7 +52,10 @@ type Sessions = BTreeMap<u64, actor::Actor<raster::Session<replay::Schema>>>;
 fn deadline() -> Deadline {
     let seconds =
         std::env::var("RASTER_UPSTREAM_TIMEOUT").map_or(60, |value| value.parse::<u64>().unwrap());
-    assert!((1..=600).contains(&seconds), "轨迹等待预算越界");
+    assert!(
+        (1..=600).contains(&seconds),
+        "Trajectory Waiting for Budget to Cross Boundaries"
+    );
     Deadline(Instant::now() + Duration::from_secs(seconds))
 }
 fn builder(config: Config, native: bool) -> raster::Builder<replay::Schema> {
@@ -86,7 +89,7 @@ fn checkpoint(
         if let Some(report) = ticket.try_report().unwrap() {
             return report.as_ref().as_ref().unwrap().clone();
         }
-        assert!(!end.expired(), "轨迹边界检查点超时");
+        assert!(!end.expired(), "Track boundary checkpoint timeout");
         std::thread::yield_now();
     }
 }
@@ -146,14 +149,14 @@ fn recover_boundary(
         );
     }
     println!(
-        "Rust 轨迹边界恢复通过：模式 {}，{} 个会话续接",
+        "Rust Trajectory boundary recovery passes:mode {},{} sessions_resumed",
         if pair { "Index+Log" } else { "Full" },
         sessions.len()
     );
     store
 }
 #[test]
-fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
+fn the_same_ownership_trajectory_outputs_real_engine_results_for_upstream_comparison() {
     let trace = match std::env::var_os("RASTER_UPSTREAM_TRACE") {
         Some(path) => Trace::decode(&std::fs::read_to_string(path).unwrap()).unwrap(),
         None => Trace::decode(include_str!("fixtures/p0.trace")).unwrap(),
@@ -162,7 +165,7 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
         assert_eq!(
             trace,
             Trace::generate(trace.seed, trace.steps.len()),
-            "跨语言轨迹生成与固定算法不一致"
+            "Cross-language trajectory generation is inconsistent with fixed algorithms"
         );
     }
     let mut config = Config::default();
@@ -186,7 +189,7 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
     let pair = match std::env::var("RASTER_UPSTREAM_CHECKPOINT").as_deref() {
         Ok("pair") => true,
         Ok("full") | Err(_) => false,
-        other => panic!("未知检查点模式 {other:?}"),
+        other => panic!("Unknown checkpoint mode {other:?}"),
     };
     let mut store = builder(config.clone(), native).create().unwrap();
     let mut sessions = Sessions::new();
@@ -201,13 +204,13 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
         let input = step.clone();
         let (observed, counts, serial) = session.call(move |session| {
             let mut pending = [0; 4];
-            // 与 C++ 上下文保持相同策略：数字允许原地，普通字节总是追加。
+            // and C++ Context remains the same strategy:Numbers allowed in situ,Ordinary bytes are always appended.
             let observed = replay::actual(session, &input, &mut pending, true);
             (observed, pending, session.last_accepted())
         });
         model
             .verify(step.clone(), &observed)
-            .unwrap_or_else(|error| panic!("种子 {} 步骤 {index}：{error}", trace.seed));
+            .unwrap_or_else(|error| panic!("seeds {} step {index}:{error}", trace.seed));
         assert_eq!(serial.map(|s| s.0), model.last_accepted(step.session));
         for (sum, count) in pending.iter_mut().zip(counts) {
             *sum += count;
@@ -239,7 +242,7 @@ fn 同一拥有型轨迹输出真实引擎结果供上游对照() {
         std::fs::write(path, output).unwrap();
     }
     println!(
-        "Rust 轨迹逐操作通过：种子 {}，{} 次操作，Pending {:?}",
+        "Rust Trajectory passes operation by operation:seeds {},{} operations,Pending {:?}",
         trace.seed,
         trace.steps.len(),
         pending

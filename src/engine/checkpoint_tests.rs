@@ -1,4 +1,4 @@
-//! 公开检查点、恢复和原生材料的贯通验证。
+//! public checkpoint,Through-verification of restored and virgin materials.
 use crate::{
     RasterKV, Submission,
     api::{
@@ -109,13 +109,14 @@ fn manifest(store: &RasterKV<Schema>, report: &CheckpointReport) -> Manifest {
                     .records()
                     .unwrap();
             }
-            Kind::Full => panic!("材料类型错误"),
+            Kind::Full => panic!("Wrong material type"),
         }
     }
     manifest
 }
 #[test]
-fn 公开索引日志及完整检查点依次同步发布且会话切分真实() {
+fn public_index_logs_and_complete_checkpoints_are_published_simultaneously_and_session_segmentation_is_real()
+ {
     let (_root, store) = setup(None);
     assert!(matches!(
         store.maintenance().checkpoint(CheckpointKind::Log),
@@ -175,7 +176,7 @@ fn 公开索引日志及完整检查点依次同步发布且会话切分真实()
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 空存储完整检查点和丢弃票据后推进均可结束() {
+fn empty_storage_complete_checkpoint_and_advance_after_discarding_the_ticket_can_be_ended() {
     let (_root, store) = setup(None);
     let ticket = store
         .maintenance()
@@ -204,7 +205,7 @@ fn 空存储完整检查点和丢弃票据后推进均可结束() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 检查点等待超时保留动作且会话放弃使已接受票据失败() {
+fn checkpoint_wait_timeout_preserves_action_and_session_abandons_failed_accepted_ticket() {
     let (_root, store) = setup(None);
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let second = crate::engine::session_actor::session(&store);
@@ -248,7 +249,8 @@ fn put(session: &mut Session<Schema>, serial: u64, key: u64) {
     }
 }
 #[test]
-fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
+fn a_full_checkpoint_covers_cold_pages_and_old_pending_requests_but_does_not_commit_to_new_version_numbers()
+ {
     let (_root, store) = setup(None);
     let mut closed = store.start_session(SessionOptions::default()).unwrap();
     put(&mut closed, 37, 999);
@@ -262,7 +264,7 @@ fn 完整检查点覆盖冷页和旧挂起请求但不承诺新版本序号() {
         .read(Serial(400), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("旧键应从磁盘挂起读取")
+        panic!("Old keys should be read from disk pending")
     };
     let ticket = store
         .maintenance()
@@ -425,7 +427,7 @@ impl Device for FinalSyncFault {
         if matches!(request.operation, IoOperation::SyncDirectory(_)) && self.renamed.load(SeqCst) {
             return Err(RejectedIo {
                 request,
-                reason: std::io::Error::other("注入提交后目录同步失败").into(),
+                reason: std::io::Error::other("Directory sync fails after injecting commit").into(),
             });
         }
         let rename = matches!(request.operation, IoOperation::Rename { .. });
@@ -443,7 +445,7 @@ impl Device for FinalSyncFault {
     }
 }
 #[test]
-fn 提交可见但最终目录同步失败时公开票据保持失败() {
+fn public_ticket_remains_failed_when_commit_is_visible_but_final_directory_sync_fails() {
     let (root, store) = setup(Some(Box::new(FinalSyncFaultFactory)));
     let ticket = store
         .maintenance()
@@ -492,7 +494,8 @@ fn 提交可见但最终目录同步失败时公开票据保持失败() {
 }
 
 #[test]
-fn 不支持持久化的设备在接受检查点前拒绝且不占用动作() {
+fn devices_that_do_not_support_persistence_reject_and_do_not_take_actions_before_accepting_checkpoints()
+ {
     let (_root, store) = setup(Some(Box::new(device::null::NullDeviceFactory)));
     for kind in [
         CheckpointKind::Full,
@@ -512,7 +515,7 @@ fn 不支持持久化的设备在接受检查点前拒绝且不占用动作() {
 }
 
 #[test]
-fn 多线程推进检查点只报告一次完成且动作期间拒绝关闭() {
+fn multi_threaded_push_checkpoints_only_report_completion_once_and_refuse_to_close_during_action() {
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -571,7 +574,8 @@ fn 多线程推进检查点只报告一次完成且动作期间拒绝关闭() {
 }
 
 #[test]
-fn 恢复计划逐材料验证且同一完整检查点不重复计数() {
+fn recovery_plans_are_verified_material_by_material_and_the_same_complete_checkpoint_is_not_counted_twice()
+ {
     use crate::checkpoint::recovery::{RecoveryPlan, ValidatedMaterial};
     let (_root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -651,7 +655,7 @@ fn 恢复计划逐材料验证且同一完整检查点不重复计数() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 恢复计划拒绝错配语义页布局和越界索引链头() {
+fn recovery_plan_rejects_mismatched_semantic_page_layout_and_out_of_bounds_index_link_headers() {
     use crate::checkpoint::recovery::RecoveryPlan;
     let (_root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -781,7 +785,8 @@ fn 恢复计划拒绝错配语义页布局和越界索引链头() {
 }
 
 #[test]
-fn 日志材料校验通过但键编码不规范时恢复计划不接受材料() {
+fn if_the_log_material_verification_passes_but_the_key_encoding_is_not_standardized_the_recovery_plan_will_not_accept_the_material()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     put(&mut session, 1, 19);
@@ -887,7 +892,7 @@ fn read_value(session: &mut Session<Schema>, serial: u64, key: u64) -> Option<u6
     match outcome {
         crate::api::completion::Outcome::Success(value) => Some(value),
         crate::api::completion::Outcome::NotFound => None,
-        _ => panic!("意外读取结果"),
+        _ => panic!("Unexpected read result"),
     }
 }
 fn recover_store(
@@ -903,7 +908,8 @@ fn recover_store(
         .recover(set)
 }
 #[test]
-fn 完整恢复保留墓碑与进度并可继续写入再次检查点和恢复() {
+fn full_recovery_retains_tombstones_and_progress_and_can_continue_to_be_written_to_checkpoint_and_recover_again()
+ {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -999,7 +1005,7 @@ fn 完整恢复保留墓碑与进度并可继续写入再次检查点和恢复()
 }
 
 #[test]
-fn 索引日志分离恢复后可以再次提交仅日志检查点() {
+fn log_only_checkpoints_can_be_submitted_again_after_index_log_separation_recovery() {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -1058,7 +1064,8 @@ fn 索引日志分离恢复后可以再次提交仅日志检查点() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 恢复预算不足或材料缺失不发布实例且原提交保持不变() {
+fn insufficient_recovery_budget_or_missing_materials_do_not_publish_the_instance_and_the_original_submission_remains_unchanged()
+ {
     let (root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -1143,7 +1150,7 @@ fn 恢复预算不足或材料缺失不发布实例且原提交保持不变() {
     assert!(matches!(recover_store(config, set), Err(Error::Io(_))));
 }
 #[test]
-fn 恢复子进程入口() {
+fn restore_child_process_entry() {
     let Some(root) = std::env::var_os("RASTER_RECOVERY_CHILD_ROOT") else {
         return;
     };
@@ -1185,10 +1192,10 @@ fn 恢复子进程入口() {
     assert_eq!(report.sessions[0].serial, Serial(9));
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();
-    println!("恢复子进程完成");
+    println!("Resume child process completed");
 }
 #[test]
-fn 独立进程恢复后读取写入及检查点通过() {
+fn reading_writing_and_checkpoint_passing_after_independent_process_recovery() {
     let (root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     let id = session.id();
@@ -1209,7 +1216,7 @@ fn 独立进程恢复后读取写入及检查点通过() {
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "engine::checkpoint_tests::恢复子进程入口",
+            "engine::checkpoint_tests::restore_child_process_entry",
             "--nocapture",
         ])
         .env("RASTER_RECOVERY_CHILD_ROOT", &root.0)
@@ -1220,13 +1227,13 @@ fn 独立进程恢复后读取写入及检查点通过() {
         .unwrap();
     assert!(
         result.status.success(),
-        "子进程失败：{}",
+        "Child process failed:{}",
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(
         String::from_utf8(result.stdout)
             .unwrap()
-            .contains("恢复子进程完成")
+            .contains("Resume child process completed")
     );
 }
 
@@ -1256,7 +1263,8 @@ impl Device for RecoverySyncFault {
         {
             return Err(RejectedIo {
                 request,
-                reason: std::io::Error::other("注入恢复目录同步失败").into(),
+                reason: std::io::Error::other("Injection recovery catalog synchronization failed")
+                    .into(),
             });
         }
         self.inner.submit(request)
@@ -1272,7 +1280,8 @@ impl Device for RecoverySyncFault {
     }
 }
 #[test]
-fn 恢复安装同步失败会排空设备且超时后可以重新恢复() {
+fn if_the_recovery_installation_synchronization_fails_the_device_will_be_emptied_and_can_be_restored_after_timeout()
+ {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();

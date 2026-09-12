@@ -1,4 +1,4 @@
-//! 不可变磁盘记录缓存；索引条件发布、地址解析和淘汰共用控制锁。
+//! Immutable disk record cache;Index condition release,Geocoding and elimination of shared control locks.
 mod arena;
 use crate::{
     config::CacheConfig,
@@ -91,12 +91,12 @@ impl ReadCache {
     pub fn reserved_bytes(&self) -> usize {
         self.arena.as_ref().map_or(0, |arena| arena.capacity())
     }
-    /// 仅调整不可变记录的淘汰顺序；不改索引头、日志地址或正在读取的字节。
+    /// Only adjust the elimination order of immutable records;Do not change index header,Log address or bytes being read.
     pub fn touch(&self, address: CacheAddress) -> Result<(), Error> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
+            .map_err(|_| Error::InvalidState("cache_control_lock_poisoned"))?;
         let Some(record) = state.entries.get(&address.0).cloned() else {
             return Ok(());
         };
@@ -128,7 +128,9 @@ impl ReadCache {
     fn bind(state: &mut State, index: &MemIndex) -> Result<(), Error> {
         let owner = index.identity()?;
         if state.owner.is_some_and(|old| old != owner) {
-            return Err(Error::InvalidState("缓存属于另一索引身份"));
+            return Err(Error::InvalidState(
+                "The cache belongs to another index identity",
+            ));
         }
         state.owner = Some(owner);
         Ok(())
@@ -141,20 +143,25 @@ impl ReadCache {
                 .entries
                 .get(&address.0)
                 .map(|record| Some(record.head))
-                .ok_or(Error::InvalidState("索引引用了不存在的缓存记录")),
+                .ok_or(Error::InvalidState(
+                    "Index references a cache record that does not exist",
+                )),
         }
     }
-    /// 选择索引头和取得缓存租约是同一临界区，避免淘汰后解析过期缓存地址。
+    /// Selecting the index header and obtaining the cache lease are the same critical section,Avoid parsing expired cache addresses after elimination.
     pub fn resolve(&self, index: &MemIndex, hash: KeyHash, key: &[u8]) -> Result<Resolved, Error> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
+            .map_err(|_| Error::InvalidState("cache_control_lock_poisoned"))?;
         Self::bind(&mut state, index)?;
         let entry = index.prepare(hash)?;
         let head = Self::head(&state, entry)?;
         let cached = if let IndexHead::Cache(address) = entry.head {
-            let record = state.entries.get(&address.0).expect("缓存头已验证");
+            let record = state
+                .entries
+                .get(&address.0)
+                .expect("Cache header verified");
             (Record::decode(record.encoded())?.key == key).then(|| record.clone())
         } else {
             None
@@ -165,7 +172,7 @@ impl ReadCache {
             cached,
         })
     }
-    /// 源必须是已验证的冷记录，hash 对应记录的规范键；未命中或预算不足不是业务错误。
+    /// Source must be a verified cold record,hash The canonical key of the corresponding record;Misses or budget shortfalls are not business errors.
     pub fn insert_if_current(
         &self,
         index: &MemIndex,
@@ -187,7 +194,9 @@ impl ReadCache {
             .previous
             .is_some_and(|previous| previous >= source)
         {
-            return Err(Error::InvalidFormat("缓存源记录前驱没有递减"));
+            return Err(Error::InvalidFormat(
+                "Cache source record predecessor is not decremented",
+            ));
         }
         let version = record.header.version;
         let charge = if self.arena.is_some() {
@@ -203,15 +212,18 @@ impl ReadCache {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
+            .map_err(|_| Error::InvalidState("cache_control_lock_poisoned"))?;
         Self::bind(&mut state, index)?;
         if index.prepare(hash)? != expected {
             return Ok(None);
         }
-        let head =
-            Self::head(&state, expected)?.ok_or(Error::InvalidState("空索引头不能安装缓存"))?;
+        let head = Self::head(&state, expected)?.ok_or(Error::InvalidState(
+            "Empty index header cannot install cache",
+        ))?;
         if source > head {
-            return Err(Error::InvalidFormat("缓存源记录越过主日志链头"));
+            return Err(Error::InvalidFormat(
+                "Cache source records past the main log link head",
+            ));
         }
         while self
             .allocated
@@ -240,7 +252,7 @@ impl ReadCache {
         } else {
             Bytes::Owned(bytes)
         };
-        // 淘汰可能还原 expected 本身，重新取得快照但不接受其他写入造成的链变化。
+        // Elimination may be restored expected itself,Retake the snapshot but do not accept chain changes caused by other writes.
         let current = index.prepare(hash)?;
         if current != expected {
             return Ok(None);
@@ -286,10 +298,10 @@ impl ReadCache {
         let record = state
             .entries
             .get(&address)
-            .ok_or(Error::InvalidState("缓存项不存在"))?;
+            .ok_or(Error::InvalidState("Cache item does not exist"))?;
         let current = index.prepare(record.hash)?;
         if current.head == IndexHead::Cache(CacheAddress(address)) {
-            // 非缓存写入可抢先替换；冲突时无需覆盖其新链头。
+            // Non-cached writes can be replaced preemptively;No need to overwrite its new link head in case of conflict.
             index.compare_publish(current, IndexHead::Log(record.head))?;
         }
         let position = record.position.load(Ordering::Relaxed);
@@ -304,14 +316,14 @@ impl ReadCache {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
+            .map_err(|_| Error::InvalidState("cache_control_lock_poisoned"))?;
         Self::bind(&mut state, index)?;
         if state.entries.contains_key(&address.0) {
             self.remove(&mut state, index, address.0)?;
         }
         Ok(())
     }
-    /// 调用者在本临界区执行索引快照或迁移，不能插入用户回调或等待 I/O。
+    /// The caller performs index snapshot or migration in this critical section,Cannot insert user callbacks or waits I/O.
     pub fn with_normalized_index<T>(
         &self,
         index: &MemIndex,
@@ -320,7 +332,7 @@ impl ReadCache {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("缓存控制锁中毒"))?;
+            .map_err(|_| Error::InvalidState("cache_control_lock_poisoned"))?;
         Self::bind(&mut state, index)?;
         while let Some(address) = state.entries.keys().next().copied() {
             self.remove(&mut state, index, address)?;
@@ -371,7 +383,8 @@ mod tests {
         })
     }
     #[test]
-    fn 预分配缓存的淘汰租约继续计费且最后读者退出才可复用() {
+    fn the_eviction_lease_of_the_pre_allocated_cache_continues_to_be_billed_and_can_be_reused_until_the_last_reader_exits()
+     {
         let index = index();
         let encoded = bytes(b"a", b"v");
         let charge = encoded.len() + std::mem::size_of::<CachedRecord>();
@@ -429,7 +442,7 @@ mod tests {
         assert_eq!(Record::decode(pinned.encoded()).unwrap().value, b"x");
     }
     #[test]
-    fn 最近窗口比例控制命中刷新而旧读者和索引头保持有效() {
+    fn recent_window_scale_control_hits_refresh_while_old_readers_and_index_headers_remain_valid() {
         for fraction in [0.0, 0.75] {
             let index = index();
             let charge = bytes(b"a", b"v").capacity() + std::mem::size_of::<CachedRecord>();
@@ -501,7 +514,7 @@ mod tests {
         }
     }
     #[test]
-    fn 缓存条件安装完整键命中且快照先还原日志地址() {
+    fn cache_condition_installation_complete_key_hit_and_snapshot_restore_log_address_first() {
         let index = index();
         let cache = cache(4096);
         let expected = head(&index, KeyHash(0), 10);
@@ -535,12 +548,16 @@ mod tests {
             .unwrap();
         assert_eq!(image.entries[0].head, IndexHead::Log(LogAddress(10)));
         image.encode().unwrap();
-        assert!(cache.allocated_bytes() > 0, "已借出的记录仍计入预算");
+        assert!(
+            cache.allocated_bytes() > 0,
+            "Loaned records are still included in the budget"
+        );
         drop(pinned);
         assert_eq!(cache.allocated_bytes(), 0);
     }
     #[test]
-    fn 淘汰中的借用继续计费且旧缓存地址不能误伤新项() {
+    fn borrowing_during_elimination_will_continue_to_be_billed_and_old_cache_addresses_cannot_accidentally_damage_new_items()
+     {
         let index = index();
         let record = bytes(b"a", b"v");
         let charge = record.capacity() + std::mem::size_of::<CachedRecord>();
@@ -598,7 +615,8 @@ mod tests {
         assert_eq!(cache.allocated_bytes(), charge);
     }
     #[test]
-    fn 迟到安装与不同索引身份拒绝且同标签键不串值() {
+    fn late_installation_and_different_index_identity_rejection_and_the_same_tag_key_does_not_string_values()
+     {
         let index = index();
         let cache = cache(4096);
         let stale = head(&index, KeyHash(0), 10);

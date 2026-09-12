@@ -1,4 +1,4 @@
-//! 设备完成只跨线程传递拥有型缓冲；邮箱不持有用户请求或回调。
+//! Device completion only passes owned buffers across threads;Mailbox does not hold user requests or callbacks.
 use crate::{
     device::{CompletionRoute, Device, IoCompletion},
     types::*,
@@ -40,7 +40,7 @@ impl CompletionHub {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+            .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
         if state.mailboxes.len() >= self.capacity {
             return Err(Error::Busy);
         }
@@ -62,7 +62,7 @@ impl CompletionHub {
         state.next = next;
         Ok(id)
     }
-    /// 路由编号在该设备所属引擎内单调分配，不复用槽号，耗尽则拒绝。
+    /// Route numbers are assigned monotonically within the engine to which the device belongs.,Do not reuse slot numbers,Reject when exhausted.
     pub fn route(id: RequestId) -> CompletionRoute {
         CompletionRoute(id.slot)
     }
@@ -70,13 +70,15 @@ impl CompletionHub {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+            .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
         let mailbox = state
             .mailboxes
             .get_mut(&id.slot)
-            .ok_or(Error::InvalidState("请求邮箱不存在"))?;
+            .ok_or(Error::InvalidState("The request email does not exist"))?;
         if mailbox.id != id {
-            return Err(Error::InvalidState("请求邮箱归属不匹配"));
+            return Err(Error::InvalidState(
+                "request mailbox ownership does not match",
+            ));
         }
         Ok(mailbox.completion.take())
     }
@@ -84,33 +86,35 @@ impl CompletionHub {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+            .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
         state
             .mailboxes
             .get(&id.slot)
             .filter(|mailbox| mailbox.id == id)
             .map(|mailbox| mailbox.completions)
-            .ok_or(Error::InvalidState("完成计数路由不存在"))
+            .ok_or(Error::InvalidState("Completion count route does not exist"))
     }
-    /// 请求终结或会话放弃时注销；设备仍拥有尚未返回的 I/O 缓冲。
+    /// Logout when requesting termination or session abandonment;The device still has the I/O buffer.
     pub fn release(&self, id: RequestId) -> Result<(), Error> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+            .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
         if state
             .mailboxes
             .get(&id.slot)
             .is_none_or(|mailbox| mailbox.id != id)
         {
-            return Err(Error::InvalidState("请求邮箱归属不匹配"));
+            return Err(Error::InvalidState(
+                "request mailbox ownership does not match",
+            ));
         }
         state.mailboxes.remove(&id.slot);
         Ok(())
     }
-    /// 仅在设备已 shutdown、所有发布线程退出后调用；终态只丢弃拥有型完成，不再投递任务。
+    /// Only if the device has shutdown,Called after all publishing threads have exited;The final state only discards possession completion,No more delivering tasks.
     pub(crate) fn discard_after_device_shutdown(&self, device: &dyn Device) -> Result<(), Error> {
-        // 设备 poll 的 panic 可能毒化序列化锁；关闭已终结设备，终态回收不恢复运行权限。
+        // Equipment poll of panic Possible poisoning of serialization locks;Shut down terminated device,Final state recycling does not restore running permissions.
         let _polling = self
             .polling
             .lock()
@@ -126,7 +130,7 @@ impl CompletionHub {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+            .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
         for mailbox in state.mailboxes.values_mut() {
             mailbox.completion = None;
         }
@@ -136,33 +140,37 @@ impl CompletionHub {
         let _polling = match self.polling.try_lock() {
             Ok(guard) => guard,
             Err(std::sync::TryLockError::WouldBlock) => return Ok(0),
-            Err(_) => return Err(Error::InvalidState("完成轮询锁中毒")),
+            Err(_) => return Err(Error::InvalidState("Complete polling lock poisoning")),
         };
         let mut completions = Vec::new();
         let limit = budget.0.get().min(self.capacity);
         let mut error = device
             .poll(
-                PollBudget(std::num::NonZeroUsize::new(limit).expect("容量非零")),
+                PollBudget(std::num::NonZeroUsize::new(limit).expect("Capacity is non-zero")),
                 &mut completions,
             )
             .err();
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("完成邮箱锁中毒"))?;
+            .map_err(|_| Error::InvalidState("completion_mailbox_lock_poisoned"))?;
         let count = completions.len();
         for completion in completions {
             if let Some(mailbox) = state.mailboxes.get_mut(&completion.route.0) {
                 mailbox.completions = mailbox.completions.saturating_add(1);
                 if mailbox.completion.is_some() {
-                    error.get_or_insert(Error::InvalidState("一个请求存在多个未收取 I/O 完成"));
+                    error.get_or_insert(Error::InvalidState(
+                        "There are multiple uncollected requests for one request I/O completed",
+                    ));
                 } else {
                     mailbox.completion = Some(completion);
                 }
             } else if completion.route.0 >= state.next {
-                error.get_or_insert(Error::InvalidState("设备返回未分配的完成路由"));
+                error.get_or_insert(Error::InvalidState(
+                    "Device returns unassigned completion route",
+                ));
             }
-            // 已注销的历史路由仅释放完成缓冲，不调用已放弃的用户请求。
+            // Unregistered historical routes only release the completion buffer,Abandoned user requests are not invoked.
         }
         match error {
             Some(error) => Err(error),
@@ -176,7 +184,8 @@ mod tests {
     use super::*;
     use crate::device::{IoOperation, IoRequest, memory::MemoryDevice};
     #[test]
-    fn 其他会话轮询后结果留在原邮箱且错身份不能收取() {
+    fn after_other_session_polling_the_results_will_remain_in_the_original_mailbox_and_cannot_be_collected_if_the_identity_is_wrong()
+     {
         let hub = CompletionHub::new(StoreId([1; 16]), 2).unwrap();
         let device = MemoryDevice::new(4, 64).unwrap();
         let first = hub.reserve(SessionId([1; 16])).unwrap();
@@ -186,7 +195,7 @@ mod tests {
             device
                 .submit(IoRequest {
                     route: CompletionHub::route(id),
-                    operation: IoOperation::CreateDirectory(format!("目录{}", id.slot).into()),
+                    operation: IoOperation::CreateDirectory(format!("directory{}", id.slot).into()),
                 })
                 .unwrap();
         }
@@ -203,7 +212,8 @@ mod tests {
         assert!(next.slot > second.slot);
     }
     #[test]
-    fn 注销后迟到完成只回收缓冲且不会误投新请求() {
+    fn late_completion_after_logging_out_only_recycles_the_buffer_and_does_not_accidentally_throw_new_requests()
+     {
         let hub = CompletionHub::new(StoreId([1; 16]), 1).unwrap();
         let device = MemoryDevice::new(4, 64).unwrap();
         let old = hub.reserve(SessionId([1; 16])).unwrap();
@@ -226,7 +236,8 @@ mod tests {
         assert!(hub.take(new).unwrap().is_none());
     }
     #[test]
-    fn 重复未收完成与未知路由报错但不覆盖或丢失其他邮箱() {
+    fn repeated_uncollected_completion_and_unknown_routing_errors_are_reported_but_other_mailboxes_are_not_covered_or_lost()
+     {
         let hub = CompletionHub::new(StoreId([1; 16]), 4).unwrap();
         let device = MemoryDevice::new(4, 64).unwrap();
         let first = hub.reserve(SessionId([1; 16])).unwrap();
@@ -239,9 +250,9 @@ mod tests {
                 })
                 .unwrap()
         };
-        let first_io = submit(CompletionHub::route(first), "第一次");
-        submit(CompletionHub::route(first), "重复");
-        let second_io = submit(CompletionHub::route(second), "另一个会话");
+        let first_io = submit(CompletionHub::route(first), "first time");
+        submit(CompletionHub::route(first), "Repeat");
+        let second_io = submit(CompletionHub::route(second), "another session");
         assert!(matches!(
             hub.poll(&device, PollBudget::default()),
             Err(Error::InvalidState(_))
@@ -249,7 +260,7 @@ mod tests {
         assert_eq!(hub.take(first).unwrap().unwrap().id, first_io);
         assert!(hub.take(first).unwrap().is_none());
         assert_eq!(hub.take(second).unwrap().unwrap().id, second_io);
-        submit(CompletionRoute(999), "未知路由");
+        submit(CompletionRoute(999), "unknown route");
         assert!(matches!(
             hub.poll(&device, PollBudget::default()),
             Err(Error::InvalidState(_))

@@ -1,4 +1,4 @@
-//! 单页顺序刷盘任务；写入完成不等于文件同步或检查点持久化。
+//! Single page sequential disk flushing task;Write completion does not equal file synchronization or checkpoint persistence.
 use super::*;
 use crate::{
     device::{CompletionRoute, IoCompletion},
@@ -53,7 +53,7 @@ impl PageFlush {
                         return self
                             .opening
                             .as_mut()
-                            .expect("刚创建打开任务")
+                            .expect("Just created and opened the task")
                             .submit_next(storage);
                     }
                 }
@@ -62,12 +62,12 @@ impl PageFlush {
         }
         self.write.submit_next(storage)
     }
-    /// 调用者必须先确认设备 shutdown 已排空；丢弃失败任务不推进刷盘边界。
+    /// The caller must first confirm the device shutdown Drained;Discard failed tasks and do not advance the brush boundary.
     pub(crate) fn discard_after_device_shutdown(&mut self) -> Result<(), Error> {
         let mut state = self
             .control
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if state
             .flush
             .as_ref()
@@ -80,11 +80,16 @@ impl PageFlush {
     }
     fn check_storage(&self, storage: &SegmentedStorage) -> Result<(), Error> {
         if !Arc::ptr_eq(&self.storage, &storage.identity) {
-            return Err(Error::InvalidState("刷盘属于其他存储"));
+            return Err(Error::InvalidState(
+                "The flash disk belongs to other storage",
+            ));
         }
         Ok(())
     }
-    #[allow(clippy::result_large_err, reason = "错误存储路由须归还完成缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Error stored routes must be returned to the completion buffer"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -112,7 +117,7 @@ impl PageFlush {
 }
 impl Drop for PageFlush {
     fn drop(&mut self) {
-        // 在途写入仍由设备持有；未接管其终结前不能放行另一份可能不同版本的页写入。
+        // Writes in transit are still held by the device;Another, possibly different, page write cannot be released without taking over its termination..
         if !self.write.has_inflight()
             && self
                 .opening
@@ -139,7 +144,7 @@ impl<V: ValueLayout> HybridLog<V> {
             let state = self
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             if state.flush.is_some() {
                 return Err(Error::Busy);
             }
@@ -156,7 +161,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if state.flush.is_some()
             || state
                 .frontiers
@@ -181,18 +186,18 @@ impl<V: ValueLayout> HybridLog<V> {
             terminal: false,
         })
     }
-    /// false 表示仍待完成；只有所有字节写入且身份匹配才推进连续边界。
+    /// false Indicates it is still to be completed;Contiguous boundaries are advanced only if all bytes are written and identities match.
     pub fn finish_flush(
         &self,
         storage: &SegmentedStorage,
         task: &mut PageFlush,
     ) -> Result<bool, Error> {
         if !Arc::ptr_eq(&self.state, &task.control) {
-            return Err(Error::InvalidState("刷盘属于其他日志"));
+            return Err(Error::InvalidState("Flushing belongs to other logs"));
         }
         task.check_storage(storage)?;
         if task.terminal {
-            return Err(Error::InvalidState("刷盘已终结"));
+            return Err(Error::InvalidState("Cleaning has ended"));
         }
         let Some(result) = task
             .error
@@ -205,13 +210,13 @@ impl<V: ValueLayout> HybridLog<V> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         if !state
             .flush
             .as_ref()
             .is_some_and(|token| Arc::ptr_eq(token, &task.token))
         {
-            return Err(Error::InvalidState("刷盘任务已失效"));
+            return Err(Error::InvalidState("The disk flushing task has expired"));
         }
         task.terminal = true;
         state.flush = None;
@@ -223,7 +228,9 @@ impl<V: ValueLayout> HybridLog<V> {
         let begin = LogAddress::from_page_offset(task.page, 0, self.page_bytes as u64)?;
         let end = begin.checked_add(self.page_bytes as u64)?;
         if state.frontiers.flushed_until != begin || end > state.frontiers.safe_read_only {
-            return Err(Error::InvalidState("刷盘边界不连续或未冻结"));
+            return Err(Error::InvalidState(
+                "The brush boundary is discontinuous or not frozen",
+            ));
         }
         state.frontiers.flushed_until = end;
         Ok(true)
@@ -245,7 +252,10 @@ mod tests {
         let mut out = vec![];
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while out.is_empty() {
-            assert!(std::time::Instant::now() < deadline, "等待设备完成超时");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for device completion"
+            );
             device.poll(PollBudget::default(), &mut out).unwrap();
             std::thread::yield_now();
         }
@@ -298,7 +308,7 @@ mod tests {
             )
             .result
             .unwrap() else {
-                panic!("打开")
+                panic!("open")
             };
             storage.bind(number, Generation(0), file).unwrap();
             files.push(file);
@@ -320,7 +330,8 @@ mod tests {
         }
     }
     #[test]
-    fn 磁盘混合版本页仍能沿新版本异键链头读取旧记录() {
+    fn disk_mixed_version_pages_can_still_read_old_records_along_the_new_version_of_the_heterokey_link_head()
+     {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 256,
@@ -388,12 +399,13 @@ mod tests {
                     assert_eq!(value.read(|v| v).unwrap(), 10);
                     break;
                 }
-                _ => panic!("必须从混合版本磁盘页读出旧记录"),
+                _ => panic!("Old records must be read from mixed version disk pages"),
             }
         }
     }
     #[test]
-    fn 同页不同记录版本在刷盘中保留且超范围版本拒绝() {
+    fn different_record_versions_of_the_same_page_are_retained_in_the_flush_disk_and_out_of_range_versions_are_rejected()
+     {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 256,
@@ -447,7 +459,7 @@ mod tests {
         }
     }
     #[test]
-    fn 混合链按预算跨内存与磁盘查找且墓碑遮蔽旧值() {
+    fn hybrid_chains_look_across_memory_and_disk_on_a_budget_and_tombstone_obscuring_old_values() {
         use crate::log::lookup::LookupStep;
         let log = HybridLog::new(
             LogConfig {
@@ -493,7 +505,7 @@ mod tests {
                     )
                     .unwrap()
                 {
-                    LookupStep::Present => panic!("值查询需要返回值"),
+                    LookupStep::Present => panic!("Value query requires return value"),
                     LookupStep::Continue => {}
                     LookupStep::AwaitingIo => {
                         lookup
@@ -524,13 +536,13 @@ mod tests {
                     }
                 }
             }
-            assert!(ended, "预算推进未终结");
+            assert!(ended, "Budget push is not over yet");
             assert_eq!(reads, expected_reads);
             assert!(lookup.step(&log, &storage, PollBudget::default()).is_err());
         }
     }
     #[test]
-    fn 淘汰后的页通过跨段短读恢复且损坏帧被拒绝() {
+    fn eliminated_pages_are_recovered_via_span_reads_and_damaged_frames_are_rejected() {
         use crate::log::read_page::{PageRead, ReadPage};
         let log = log();
         let (device, storage, files) = storage();
@@ -576,7 +588,8 @@ mod tests {
         assert!(matches!(read(&device), Err(Error::InvalidFormat(_))));
     }
     #[test]
-    fn 旧租约阻止安全回收而新分配只能复用新代次() {
+    fn old_leases_prevent_safe_reclamation_while_new_allocations_can_only_be_reused_in_new_generations()
+     {
         let log = log();
         let (_, storage, _) = storage();
         let lease = log.lease(LogAddress(0)).unwrap();
@@ -603,7 +616,7 @@ mod tests {
         assert!(log.lease_generation(LogAddress(0), Generation(0)).is_err());
     }
     #[test]
-    fn 两页内存跨越多次窗口且所有刷盘页可重读() {
+    fn two_pages_of_memory_span_multiple_windows_and_all_flush_pages_can_be_reread() {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 256,
@@ -635,7 +648,7 @@ mod tests {
             },
         );
         let IoOutcome::Transferred(length) = done.result.unwrap() else {
-            panic!("读取")
+            panic!("read")
         };
         assert_eq!(length, 9 * (256 + 36));
         let buffer = done.buffer.unwrap();
@@ -650,7 +663,8 @@ mod tests {
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn 原生工作线程刷盘后重读三段并解码页帧() {
+    fn after_the_native_worker_thread_flushes_the_disk_it_rereads_the_three_segments_and_decodes_the_page_frame()
+     {
         struct Directory(PathBuf);
         impl Drop for Directory {
             fn drop(&mut self) {
@@ -701,7 +715,7 @@ mod tests {
         assert_eq!(log.frontiers().unwrap().flushed_until, LogAddress(256));
     }
     #[test]
-    fn 三段短写全部完成后才推进刷盘边界() {
+    fn push_the_brush_boundary_only_after_all_three_short_paragraphs_are_completed() {
         let log = log();
         let (device, storage, files) = storage();
         let mut task = log
@@ -740,7 +754,7 @@ mod tests {
                 },
             );
             let IoOutcome::Transferred(n) = done.result.unwrap() else {
-                panic!("读取")
+                panic!("read")
             };
             bytes.extend_from_slice(&done.buffer.unwrap().as_slice()[..n]);
         }
@@ -750,7 +764,7 @@ mod tests {
         assert_eq!(records[2].1.value, 2u64.to_le_bytes());
     }
     #[test]
-    fn 失败与错误日志不得推进或消费其他任务() {
+    fn failure_and_error_logs_must_not_advance_or_consume_other_tasks() {
         let first = log();
         let second = log();
         let (device, storage, _) = storage();
@@ -767,7 +781,7 @@ mod tests {
             .unwrap();
         assert!(first.finish_flush(&storage, &mut task).is_err());
         assert_eq!(first.frontiers().unwrap().flushed_until, LogAddress(0));
-        // 无在途 I/O 后允许上层显式开启一次新刷盘，不自行重试。
+        // No way I/O Afterwards, the upper layer is allowed to explicitly enable a new disk flush.,Do not retry on your own.
         assert!(
             first
                 .begin_flush(&storage, CompletionRoute(8), CheckpointVersion(0))
@@ -775,7 +789,7 @@ mod tests {
         );
     }
     #[test]
-    fn 所有传输结束后段失效仍拒绝边界推进() {
+    fn segment_failure_after_all_transmissions_are_complete_still_rejects_boundary_advancement() {
         let log = log();
         let (device, storage, _) = storage();
         let mut task = log

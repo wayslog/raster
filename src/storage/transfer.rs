@@ -1,4 +1,4 @@
-//! 拥有型分段传输，每次仅有一个在途请求；完成由上层统一路由。
+//! Owned segment transfer,There is only one request in transit at a time;Complete unified routing by the upper layer.
 use super::{SegmentLocation, SegmentedStorage};
 use crate::{device::*, types::*};
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ pub(crate) struct SegmentTransfer {
     result: Option<Result<(), Error>>,
 }
 impl SegmentTransfer {
-    /// start 是页帧物理字节流偏移，不是记录逻辑地址。段必须预先打开并绑定。
+    /// start is the page frame physical byte stream offset,Not recording logical address.Segments must be opened and bound beforehand.
     pub fn write(start: u64, bytes: Vec<u8>, route: CompletionRoute) -> Result<Self, Error> {
         LogAddress(start)
             .checked_add(u64::try_from(bytes.len()).map_err(|_| Error::CapacityExceeded)?)?;
@@ -86,7 +86,7 @@ impl SegmentTransfer {
                 buffer,
             },
         };
-        // 提交前完成所有内部扩容；接受后不会因记录绑定失败丢失在途请求。
+        // Complete all internal expansion before submission;After acceptance, requests in transit will not be lost due to record binding failure..
         self.bindings
             .try_reserve(1)
             .map_err(|_| Error::OutOfMemory)?;
@@ -111,8 +111,11 @@ impl SegmentTransfer {
         });
         Ok(Some(id))
     }
-    /// 路由不匹配时原样归还完成项，任务仍等待原请求；匹配项恰好消费一次。
-    #[allow(clippy::result_large_err, reason = "错误路由原样归还完成缓冲")]
+    /// Return the completion item unchanged if the route does not match,The task is still waiting for the original request;The matching item is consumed exactly once.
+    #[allow(
+        clippy::result_large_err,
+        reason = "The error route is returned intact to the completion buffer."
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -129,10 +132,10 @@ impl SegmentTransfer {
         {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("分段传输完成路由不匹配"),
+                reason: Error::InvalidState("Fragment transfer complete route mismatch"),
             });
         }
-        let pending = self.inflight.take().expect("已匹配在途项");
+        let pending = self.inflight.take().expect("Matched items in transit");
         let result = (|| {
             storage.validate_completion(pending.address, pending.location)?;
             if completion
@@ -140,7 +143,9 @@ impl SegmentTransfer {
                 .as_ref()
                 .is_none_or(|buffer| buffer.len() != pending.length)
             {
-                return Err(Error::InvalidState("传输完成未归还正确缓冲"));
+                return Err(Error::InvalidState(
+                    "Transfer completed without returning correct buffer",
+                ));
             }
             let count = match completion.result? {
                 IoOutcome::Transferred(0) => {
@@ -153,10 +158,17 @@ impl SegmentTransfer {
                     ));
                 }
                 IoOutcome::Transferred(count) if count <= pending.length => count,
-                _ => return Err(Error::InvalidState("传输完成长度或类型无效")),
+                _ => {
+                    return Err(Error::InvalidState(
+                        "Transfer completion length or type is invalid",
+                    ));
+                }
             };
             if self.direction == Direction::Read {
-                let buffer = completion.buffer.as_ref().expect("已校验完成缓冲");
+                let buffer = completion
+                    .buffer
+                    .as_ref()
+                    .expect("Checked completion buffer");
                 self.bytes[self.cursor..self.cursor + count]
                     .copy_from_slice(&buffer.as_slice()[..count]);
             }
@@ -189,7 +201,7 @@ impl SegmentTransfer {
             .as_ref()
             .is_some_and(|identity| !std::sync::Arc::ptr_eq(identity, &storage.identity))
         {
-            return Err(Error::InvalidState("传输属于其他存储"));
+            return Err(Error::InvalidState("Transfer belongs to other storage"));
         }
         for (address, location) in &self.bindings {
             storage.validate_completion(*address, *location)?;
@@ -247,7 +259,7 @@ mod tests {
             )
             .result
             .unwrap() else {
-                panic!("打开")
+                panic!("open")
             };
             storage.bind(number, Generation(0), file).unwrap();
             files.push(file);
@@ -261,7 +273,8 @@ mod tests {
         out.pop().unwrap()
     }
     #[test]
-    fn 跨段短读返回完整拥有型字节且超出文件报错() {
+    fn cross_segment_short_read_returns_complete_owned_bytes_and_an_error_is_reported_when_exceeding_the_file()
+     {
         let (device, storage, _) = setup();
         let bytes: Vec<u8> = (0..30).collect();
         let mut write = SegmentTransfer::write(14, bytes.clone(), CompletionRoute(7)).unwrap();
@@ -304,7 +317,7 @@ mod tests {
         );
     }
     #[test]
-    fn 已接受写入失败后停止续传并只交付一次错误() {
+    fn accepted_to_stop_resuming_after_write_failure_and_deliver_only_one_error() {
         let (device, storage, _) = setup();
         let mut task = SegmentTransfer::write(0, vec![5; 24], CompletionRoute(7)).unwrap();
         device
@@ -322,7 +335,8 @@ mod tests {
         assert_eq!(task.completed_bytes(), 0);
     }
     #[test]
-    fn 跨三段短写从实际偏移续传且完整字节一致() {
+    fn the_short_write_across_three_segments_is_resumed_from_the_actual_offset_and_the_complete_bytes_are_consistent()
+     {
         let (device, storage, files) = setup();
         let bytes: Vec<u8> = (0..30).collect();
         let mut task = SegmentTransfer::write(14, bytes.clone(), CompletionRoute(7)).unwrap();
@@ -351,7 +365,7 @@ mod tests {
                 },
             );
             let IoOutcome::Transferred(n) = done.result.unwrap() else {
-                panic!("读取")
+                panic!("read")
             };
             stored.extend_from_slice(&done.buffer.unwrap().as_slice()[..n]);
         }
@@ -359,7 +373,8 @@ mod tests {
         assert_eq!(&stored[14..], bytes);
     }
     #[test]
-    fn 零写和失效代次终结但错误路由不消费原完成() {
+    fn zero_writes_and_invalid_generation_termination_but_error_routing_does_not_consume_the_original_completion()
+     {
         let (device, storage, _) = setup();
         let mut task = SegmentTransfer::write(0, vec![1; 8], CompletionRoute(7)).unwrap();
         device.inject_next(MemoryFault::Short(0)).unwrap();

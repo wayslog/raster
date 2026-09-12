@@ -1,4 +1,4 @@
-//! 工作线程使用的根目录能力与文件句柄表；不执行会话回调。
+//! Root directory capabilities and file handle tables used by worker threads;Session callbacks are not executed.
 use super::*;
 use cap_std::{
     ambient_authority,
@@ -16,7 +16,7 @@ struct Files {
 }
 enum Handle {
     Data(Arc<File>),
-    // 不克隆锁句柄；关闭时显式解锁，避免并发 fork 的临时继承延长锁寿命。
+    // Do not clone lock handle;Explicitly unlock when closing,avoid concurrency fork Temporary inheritance extends lock life.
     Lock { file: File },
 }
 impl Handle {
@@ -57,19 +57,21 @@ impl LocalFiles {
         let files = self
             .files
             .lock()
-            .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("file_table_lock_poisoned"))?;
         match files.open.get(&id.slot) {
             Some(Handle::Data(file)) => Ok(file.clone()),
-            Some(Handle::Lock { .. }) => Err(Error::InvalidState("锁句柄不能用于数据 I/O")),
+            Some(Handle::Lock { .. }) => Err(Error::InvalidState(
+                "a lock handle cannot be used for data I/O",
+            )),
             None => Err(Error::RangeTruncated),
         }
     }
-    /// 工作线程全部退出后调用；保留设备对象也不应继续占有操作系统文件锁。
+    /// Called after all worker threads have exited;Retained device objects should also not continue to hold operating system file locks.
     pub fn close_all(&self) -> Result<(), Error> {
         let mut files = self
             .files
             .lock()
-            .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("file_table_lock_poisoned"))?;
         while let Some((&id, handle)) = files.open.first_key_value() {
             handle.unlock()?;
             files.open.remove(&id);
@@ -85,7 +87,7 @@ impl LocalFiles {
                 let mut files = self
                     .files
                     .lock()
-                    .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+                    .map_err(|_| Error::InvalidState("file_table_lock_poisoned"))?;
                 if files.open.len() >= self.limit {
                     return Err(Error::CapacityExceeded);
                 }
@@ -103,10 +105,12 @@ impl LocalFiles {
             }
             IoOperation::TryLock { path, mode } => {
                 valid(&path)?;
-                // 锁文件是固定仲裁对象；不能通过符号链接指向会被其他协议替换的材料。
+                // The lock file is a fixed arbitration object;Symbolic links may not point to material that would be replaced by another protocol.
                 match self.root.symlink_metadata(&path) {
                     Ok(metadata) if !metadata.is_file() => {
-                        return Err(Error::InvalidFormat("锁路径不是普通文件"));
+                        return Err(Error::InvalidFormat(
+                            "The lock path is not an ordinary file",
+                        ));
                     }
                     Ok(_) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -115,7 +119,7 @@ impl LocalFiles {
                 let mut files = self
                     .files
                     .lock()
-                    .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+                    .map_err(|_| Error::InvalidState("file_table_lock_poisoned"))?;
                 if files.open.len() >= self.limit {
                     return Err(Error::CapacityExceeded);
                 }
@@ -124,7 +128,9 @@ impl LocalFiles {
                 options.read(true).write(true).create(true);
                 let file = self.root.open_with(path, &options)?.into_std();
                 if !file.metadata()?.is_file() {
-                    return Err(Error::InvalidFormat("锁目标不是普通文件"));
+                    return Err(Error::InvalidFormat(
+                        "the lock target is not a regular file",
+                    ));
                 }
                 let result = match mode {
                     FileLockMode::Shared => file.try_lock_shared(),
@@ -237,7 +243,7 @@ impl LocalFiles {
                 let mut files = self
                     .files
                     .lock()
-                    .map_err(|_| Error::InvalidState("文件表锁中毒"))?;
+                    .map_err(|_| Error::InvalidState("file_table_lock_poisoned"))?;
                 files
                     .open
                     .get(&file.slot)
@@ -259,7 +265,9 @@ impl LocalFiles {
                     self.root.open(path)?
                 };
                 if !directory.metadata()?.is_dir() {
-                    return Err(Error::InvalidFormat("同步目标不是目录"));
+                    return Err(Error::InvalidFormat(
+                        "The synchronization target is not a directory",
+                    ));
                 }
                 directory.sync_all()?;
                 Ok(IoOutcome::Done)
@@ -278,7 +286,9 @@ impl LocalFiles {
                 self.root.remove_file(path)?;
                 Ok(IoOutcome::Done)
             }
-            IoOperation::Cancel(_) => Err(Error::InvalidState("取消应由请求队列处理")),
+            IoOperation::Cancel(_) => Err(Error::InvalidState(
+                "Cancellation should be handled by the request queue",
+            )),
         })();
         IoCompletion {
             id,
@@ -295,7 +305,9 @@ fn valid(path: &std::path::Path) -> Result<(), Error> {
             .components()
             .any(|p| !matches!(p, std::path::Component::Normal(_)))
     {
-        return Err(Error::InvalidFormat("文件路径须相对于设备根目录"));
+        return Err(Error::InvalidFormat(
+            "File paths must be relative to the device root directory",
+        ));
     }
     Ok(())
 }
@@ -313,7 +325,7 @@ mod tests {
         )
     }
     #[test]
-    fn 实际偏移读写同步重开与越界路径拒绝() {
+    fn actual_offset_read_and_write_synchronization_reopening_and_out_of_bound_path_rejection() {
         let root = std::env::temp_dir().join(format!(
             "raster-local-{}",
             crate::types::StoreId::generate()
@@ -334,13 +346,13 @@ mod tests {
         let IoOutcome::Opened(file) = execute(
             &files,
             IoOperation::Open {
-                path: "数据".into(),
+                path: "data".into(),
                 create_new: true,
             },
         )
         .result
         .unwrap() else {
-            panic!("文件打开")
+            panic!("file open")
         };
         let mut buffer = AlignedBuffer::new_zeroed(3, 8).unwrap();
         buffer.as_mut_slice().copy_from_slice(b"abc");
@@ -367,13 +379,13 @@ mod tests {
         let IoOutcome::Opened(file) = execute(
             &files,
             IoOperation::Open {
-                path: "数据".into(),
+                path: "data".into(),
                 create_new: false,
             },
         )
         .result
         .unwrap() else {
-            panic!("文件重开")
+            panic!("File reopen")
         };
         let done = execute(
             &files,
@@ -385,7 +397,7 @@ mod tests {
         );
         assert!(matches!(done.result, Ok(IoOutcome::Transferred(5))));
         assert_eq!(&done.buffer.unwrap().as_slice()[..5], b"\0\0abc");
-        for path in ["../逃逸", "/绝对"] {
+        for path in ["../escape", "/Absolutely"] {
             assert!(
                 execute(
                     &files,
@@ -398,12 +410,12 @@ mod tests {
                 .is_err()
             );
         }
-        std::os::unix::fs::symlink(std::env::temp_dir(), root.join("链接")).unwrap();
+        std::os::unix::fs::symlink(std::env::temp_dir(), root.join("link")).unwrap();
         assert!(
             execute(
                 &files,
                 IoOperation::Open {
-                    path: "链接/不应创建".into(),
+                    path: "link/should not be created".into(),
                     create_new: true
                 }
             )
@@ -417,7 +429,8 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn 描述符副本仍存活时关闭及设备清理显式解除原锁() {
+    fn close_and_device_cleanup_explicitly_release_the_original_lock_while_the_descriptor_copy_is_still_alive()
+     {
         struct Directory(std::path::PathBuf);
         impl Drop for Directory {
             fn drop(&mut self) {
@@ -450,20 +463,20 @@ mod tests {
             )
             .result
             .unwrap() else {
-                panic!("文件锁未取得")
+                panic!("File lock not obtained")
             };
             id
         };
         let duplicate = |files: &LocalFiles, id: FileId| {
             let table = files.files.lock().unwrap();
             let Handle::Lock { file } = table.open.get(&id.slot).unwrap() else {
-                panic!("句柄不是文件锁")
+                panic!("Handle is not a file lock")
             };
             file.try_clone().unwrap()
         };
         for shutdown in [false, true] {
             let id = acquire(&first);
-            // 模拟 fork 或复制句柄仍保留同一打开文件描述；关闭必须主动解锁。
+            // Simulation fork or the copy handle still retains the same open file description;Close must be unlocked actively.
             let duplicate = duplicate(&first, id);
             assert!(matches!(
                 execute(

@@ -1,8 +1,8 @@
 #!/bin/sh
-# 原始上游与仅修正强制墓碑保护的参考副本分别构建，保留两个可执行文件。
+# The original upstream was built separately from a reference copy that only fixed forced tombstone protection.,Keep two executable files.
 set -eu
 if [ "$#" -ne 2 ]; then
-  echo '用法：build.sh 上游检出目录 构建目录' >&2
+  echo 'Usage:build.sh Upstream checkout directory Build directory' >&2
   exit 2
 fi
 upstream=$1
@@ -10,11 +10,11 @@ output=$2
 expected=321d872eabda6a0345c8bd76419f89723ed864ae
 actual=$(git -C "$upstream" rev-parse HEAD)
 if [ "$actual" != "$expected" ]; then
-  echo '上游提交与固定基线不符' >&2
+  echo 'Upstream commit does not match fixed baseline' >&2
   exit 1
 fi
 if [ -n "$(git -C "$upstream" status --porcelain --untracked-files=no)" ]; then
-  echo '上游已跟踪源文件存在未提交修改' >&2
+  echo 'The upstream tracked source file has uncommitted modifications' >&2
   exit 1
 fi
 mkdir -p "$output"

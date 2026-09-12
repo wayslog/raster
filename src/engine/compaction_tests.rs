@@ -1,4 +1,4 @@
-//! 公开单存储压缩的物理扫描、两种算法、错误影响及恢复贯通。
+//! Exposing physical scans of single storage compression,Two algorithms,Error impact and recovery.
 use super::*;
 use crate::{
     api::{
@@ -17,7 +17,8 @@ fn options(algorithm: CompactionAlgorithm, until: LogAddress) -> CompactionOptio
     }
 }
 #[test]
-fn 两种压缩算法跨冷页保留当前值墓碑及会话进度且独立恢复() {
+fn two_compression_algorithms_retain_current_value_tombstones_and_session_progress_across_cold_pages_and_recover_independently()
+ {
     for algorithm in [CompactionAlgorithm::Lookup, CompactionAlgorithm::ScanDedup] {
         let (_root, store) = setup(None);
         let mut session = store.start_session(Default::default()).unwrap();
@@ -115,7 +116,8 @@ fn 两种压缩算法跨冷页保留当前值墓碑及会话进度且独立恢�
     }
 }
 #[test]
-fn 冷结束边界位于记录中间时先失败且没有迁移或移动begin() {
+fn fails_first_and_does_not_migrate_or_move_when_the_cold_end_boundary_is_in_the_middle_of_the_recordbegin()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 0);
@@ -148,7 +150,8 @@ fn 冷结束边界位于记录中间时先失败且没有迁移或移动begin() 
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 扫描去重预算不足零迁移终结且空范围与后续动作可执行() {
+fn the_scanning_deduplication_budget_is_insufficient_zero_migration_is_terminated_and_the_empty_range_and_subsequent_actions_are_executable()
+ {
     let mut config = Config::default();
     config.maintenance.max_compaction_keys = 1;
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
@@ -201,7 +204,8 @@ fn 扫描去重预算不足零迁移终结且空范围与后续动作可执行()
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 内存容量耗尽报告已迁移数且源数据保留而新任务不暗中移begin() {
+fn memory_capacity_exhaustion_reports_migrated_data_and_source_data_is_retained_but_new_tasks_are_not_implicitly_migratedbegin()
+ {
     let mut config = Config::default();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 2;
@@ -225,7 +229,7 @@ fn 内存容量耗尽报告已迁移数且源数据保留而新任务不暗中�
             assert!(matches!(&**cause, Error::CapacityExceeded));
             *copied
         }
-        _ => panic!("容量不足必须报告部分失败"),
+        _ => panic!("Insufficient capacity must report partial failure"),
     };
     assert!(copied > 0 && copied < 90);
     let mut scan = store

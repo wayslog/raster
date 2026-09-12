@@ -1,4 +1,4 @@
-//! 可重复的内存写入基线；分组比较，不作为性能承诺。
+//! Repeatable memory write baseline;Group comparison,No performance promise.
 use raster::{
     RasterKV, Submission,
     api::{completion::Outcome, operation::*, session::SessionOptions},
@@ -115,7 +115,12 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
                                 break;
                             }
                             Ok(Submission::Ready(Err(error))) => return Err(error.into()),
-                            _ => return Err(Error::InvalidState("基线预期同步完成").into()),
+                            _ => {
+                                return Err(Error::InvalidState(
+                                    "Baseline expected to be completed synchronously",
+                                )
+                                .into());
+                            }
                         }
                     }
                 }
@@ -127,7 +132,7 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
         barrier.wait();
         let results = handles
             .into_iter()
-            .map(|h| h.join().expect("工作线程完成"))
+            .map(|h| h.join().expect("Worker thread completed"))
             .collect::<Vec<_>>();
         (start.elapsed(), results)
     });
@@ -150,7 +155,9 @@ fn run<S: Schema, O: UpsertOperation<S, Output = u64>>(
     ))
 }
 fn main() -> ExampleResult<()> {
-    println!("布局,分布,线程,轮次,操作数,每秒操作,P50纳秒,P95纳秒,P99纳秒,拒绝重试");
+    println!(
+        "layout,distribution,threads,round,operation_count,operations_per_second,P50nanoseconds,P95nanoseconds,P99nanoseconds,Deny retry"
+    );
     for variable in [false, true] {
         for hot in [false, true] {
             for threads in [1, 4] {
@@ -177,11 +184,15 @@ fn main() -> ExampleResult<()> {
                     println!(
                         "{},{},{threads},{round},20000,{:.0},{},{},{},{}",
                         if variable {
-                            "变长32至512字节"
+                            "variable_length32to512bytes"
                         } else {
-                            "原子u64"
+                            "atomicu64"
                         },
-                        if hot { "单键热点" } else { "256键均匀" },
+                        if hot {
+                            "single_key_hotspot"
+                        } else {
+                            "256uniform_keys"
+                        },
                         result.0,
                         result.1,
                         result.2,

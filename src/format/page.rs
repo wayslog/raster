@@ -1,4 +1,4 @@
-//! 页帧包含完整逻辑页和整体校验；零间隙不能绕过页级损坏检查。
+//! Page frames contain complete logical pages and overall parity;Zero gaps do not bypass page-level corruption checks.
 use super::{
     HEADER_BYTES, Record, RecordHeader,
     wire::{checksum, invalid},
@@ -21,7 +21,7 @@ impl PageFrame<'_> {
             .checked_add(OVERHEAD)
             .ok_or(Error::CapacityExceeded)
     }
-    /// 物理偏移独立于日志地址；每页都计入固定帧头与尾部校验。
+    /// Physical offset is independent of log address;Each page includes fixed frame header and trailer parity.
     pub fn physical_offset(page: PageId, page_bytes: usize) -> Result<u64, Error> {
         if !page_bytes.is_power_of_two() {
             return Err(invalid());
@@ -107,21 +107,21 @@ impl<'a> PageFrame<'a> {
         }
         if &bytes[..4] != b"RPAG"
             || bytes[4..8] != [1, 0, 0, 0]
-            || u32::from_le_bytes(bytes[24..28].try_into().expect("固定头部")) as usize
+            || u32::from_le_bytes(bytes[24..28].try_into().expect("fixed_header")) as usize
                 != page_bytes
-            || u32::from_le_bytes(bytes[28..32].try_into().expect("固定头部"))
+            || u32::from_le_bytes(bytes[28..32].try_into().expect("fixed_header"))
                 != checksum(&bytes[..28])
-            || u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().expect("固定尾部"))
+            || u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().expect("fixed tail"))
                 != checksum(&bytes[..bytes.len() - 4])
         {
             return Err(invalid());
         }
         let frame = Self {
             page: PageId(u64::from_le_bytes(
-                bytes[8..16].try_into().expect("固定头部"),
+                bytes[8..16].try_into().expect("fixed_header"),
             )),
             version: CheckpointVersion(u64::from_le_bytes(
-                bytes[16..24].try_into().expect("固定头部"),
+                bytes[16..24].try_into().expect("fixed_header"),
             )),
             payload: &bytes[PREFIX..bytes.len() - 4],
         };
@@ -137,7 +137,7 @@ impl<'a> PageFrame<'a> {
 mod tests {
     use super::*;
     #[test]
-    fn 页帧间隙可遍历且整条记录被清零也会拒绝() {
+    fn page_frame_gaps_can_be_traversed_and_the_entire_record_will_be_rejected_if_it_is_cleared() {
         let record = Record {
             header: RecordHeader {
                 previous: None,
@@ -189,7 +189,7 @@ mod frozen_tests {
             .collect()
     }
     #[test]
-    fn 页帧独立固定样例往返并拒绝未知版本与标志() {
+    fn page_frame_independent_fixed_sample_round_trip_and_reject_unknown_version_and_flag() {
         let bytes = fixture();
         let frame = PageFrame::decode(&bytes, PageId(2), 256).unwrap();
         let records = frame.records().unwrap();
@@ -215,7 +215,7 @@ mod frozen_tests {
         }
     }
     #[test]
-    fn 最后记录标志后只允许零填充() {
+    fn only_zero_padding_allowed_after_last_record_flag() {
         let bytes = fixture();
         let frame = PageFrame::decode(&bytes, PageId(2), 256).unwrap();
         let mut record = Record::decode(&frame.payload[16..74]).unwrap();

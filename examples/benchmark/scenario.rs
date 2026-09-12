@@ -1,4 +1,4 @@
-//! 参数固定的短轨迹；预言机在计时前运行，热点按线程分区并明确保留缺失删除。
+//! Short trajectories with fixed parameters;The oracle runs before timing,Hotspots are partitioned by threads and missing deletions are explicitly retained.
 use crate::{
     model::{Model, ResultValue, Submission},
     trace::{Operation, Step, Trace, Value},
@@ -54,8 +54,8 @@ fn value(variable: bool, ordinal: usize) -> Value {
         Value::Number(SEED.wrapping_add(ordinal as u64))
     }
 }
-/// 此固定矩阵仅生成普通删除：重复删除允许盲删成功，恢复后的普通墓碑可不可达。
-/// 活跃值、首次删除成功、条件错误均仍按确定模型精确比较。
+/// This fixed matrix only generates ordinary deletions:Duplicate deletion allows blind deletion to succeed,Are ordinary tombstones accessible after restoration?.
+/// active value,Deletion successful for the first time,Conditional errors are still compared accurately according to the determined model.
 pub fn matches_result(step: &Step, actual: &ResultValue, expected: &ResultValue) -> bool {
     actual == expected
         || matches!(
@@ -78,7 +78,7 @@ pub fn matches_result(step: &Step, actual: &ResultValue, expected: &ResultValue)
 fn expected(model: &mut Model, step: &Step) -> ResultValue {
     match model.submit(step.clone()) {
         Submission::Accepted(value) => value,
-        _ => panic!("生成器序号必须合法"),
+        _ => panic!("The generator serial number must be legal"),
     }
 }
 pub fn prepare(case: Case, worker: usize) -> Prepared {
@@ -162,7 +162,7 @@ pub fn prepare(case: Case, worker: usize) -> Prepared {
     }
 }
 pub fn trace(prepared: &[Prepared]) -> Trace {
-    // 各线程键域不相交；文件按线程排列，重放具有相同逐步预期，运行时仍由真实线程并发执行。
+    // The key fields of each thread do not intersect;Files arranged by thread,Replay with the same step-by-step expectations,Runtime is still executed concurrently by real threads.
     Trace {
         seed: SEED,
         steps: prepared

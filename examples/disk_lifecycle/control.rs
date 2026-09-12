@@ -1,4 +1,4 @@
-//! 等待只推进已接受票据；报告失败保留原始错误和部分生效信息。
+//! Wait to advance only accepted tickets;Reporting failure retains the original error and some effective information.
 use raster::{
     RasterKV, Session, Submission, Ticket,
     api::{
@@ -46,8 +46,8 @@ pub fn take<S: Schema, T: 'static>(
 pub fn success<T>(outcome: Outcome<T>) -> Result<T> {
     match outcome {
         Outcome::Success(value) => Ok(value),
-        Outcome::NotFound => Err("示例预期成功，实际键不存在".into()),
-        Outcome::Aborted(reason) => Err(format!("示例条件中止：{reason:?}").into()),
+        Outcome::NotFound => Err("Example expected success,The actual key does not exist".into()),
+        Outcome::Aborted(reason) => Err(format!("Example conditional abort:{reason:?}").into()),
     }
 }
 
@@ -55,7 +55,7 @@ pub fn success<T>(outcome: Outcome<T>) -> Result<T> {
 struct ReportError<R: fmt::Debug>(SharedReport<R>);
 impl<R: fmt::Debug> fmt::Display for ReportError<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "维护失败：{:?}", self.0)
+        write!(f, "Maintenance failed:{:?}", self.0)
     }
 }
 impl<R: fmt::Debug + 'static> std::error::Error for ReportError<R> {
@@ -84,7 +84,7 @@ pub fn report<S: Schema, R: Clone + fmt::Debug + 'static>(
         Err(_) => Err(Box::new(ReportError(shared))),
     }
 }
-/// 会话已退出后推进原维护任务收尾；Busy 不会触发重新提交业务或维护。
+/// After the session has been exited, advance the original maintenance task to completion.;Busy Will not trigger business resubmission or maintenance.
 pub fn shutdown<S: Schema>(store: &RasterKV<S>) -> Result<()> {
     let end = deadline();
     store.maintenance().stop_auto_compaction()?;
@@ -97,9 +97,9 @@ pub fn shutdown<S: Schema>(store: &RasterKV<S>) -> Result<()> {
                     None => Ok(()),
                 };
             }
-            Ok(_) => return Err("设备未排空".into()),
+            Ok(_) => return Err("Device is not draining".into()),
             Err(Error::Busy | Error::DeadlineExceeded) if !end.expired() => {
-                // 继续已接受的动作；失败关闭后的 shutdown 仍负责资源排空。
+                // Continue with accepted action;after failed shutdown shutdown Still responsible for resource draining.
                 if let Err(error) = store.maintenance().poll(PollBudget::default()) {
                     progress_error.get_or_insert(error);
                 }
@@ -107,9 +107,10 @@ pub fn shutdown<S: Schema>(store: &RasterKV<S>) -> Result<()> {
             }
             Err(error) => {
                 return match progress_error {
-                    Some(progress) => {
-                        Err(format!("维护推进失败：{progress:?}；设备收尾失败：{error:?}").into())
-                    }
+                    Some(progress) => Err(format!(
+                        "Maintenance promotion failed:{progress:?};Device closing failed:{error:?}"
+                    )
+                    .into()),
                     None => Err(error.into()),
                 };
             }

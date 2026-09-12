@@ -1,4 +1,4 @@
-//! 会话持有本线程请求；不允许把用户上下文移动到设备线程。
+//! The session holds this thread's request;Moving user context to the device thread is not allowed.
 use super::{
     completion::*,
     maintenance::{MaintenanceTicket, SharedReport},
@@ -21,7 +21,7 @@ pub struct CloseReport {
     pub drained: bool,
 }
 
-/// 线程绑定会话；本对象推进在途请求，Ticket 只收取结果。
+/// Thread bound session;This object advances requests in transit,Ticket Only receive results.
 ///
 /// ```compile_fail
 /// use raster::{Session, schema::Schema};
@@ -57,7 +57,7 @@ impl<S: Schema> Session<S> {
         let engine = self.engine.clone();
         let _guard = match self
             .participant
-            .ok_or(Error::InvalidState("会话已关闭"))
+            .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
             Ok(guard) => guard,
@@ -73,7 +73,7 @@ impl<S: Schema> Session<S> {
         let engine = self.engine.clone();
         let _guard = match self
             .participant
-            .ok_or(Error::InvalidState("会话已关闭"))
+            .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
             Ok(guard) => guard,
@@ -90,7 +90,7 @@ impl<S: Schema> Session<S> {
         let engine = self.engine.clone();
         let _guard = match self
             .participant
-            .ok_or(Error::InvalidState("会话已关闭"))
+            .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
             Ok(guard) => guard,
@@ -107,7 +107,7 @@ impl<S: Schema> Session<S> {
         let engine = self.engine.clone();
         let _guard = match self
             .participant
-            .ok_or(Error::InvalidState("会话已关闭"))
+            .ok_or(Error::InvalidState("session_closed"))
             .and_then(|participant| engine.epoch.enter(participant))
         {
             Ok(guard) => guard,
@@ -133,7 +133,7 @@ impl<S: Schema> Session<S> {
         let engine = self.engine.clone();
         let _guard = engine
             .epoch
-            .enter(self.participant.expect("已确认参与者存在"))?;
+            .enter(self.participant.expect("Confirmed participant exists"))?;
         engine.poll_session(&mut self.runtime, budget)
     }
     pub fn try_take<T: 'static>(
@@ -145,7 +145,7 @@ impl<S: Schema> Session<S> {
         }
         ticket.try_take()
     }
-    /// 已完成结果可立即收取；截止时间只限制等待，不消费仍在途的票据。
+    /// Completed results are available immediately;Deadline only limits waiting,Do not consume bills that are still in transit.
     pub fn wait<T: 'static>(
         &mut self,
         ticket: &mut Ticket<T>,
@@ -153,10 +153,18 @@ impl<S: Schema> Session<S> {
     ) -> Result<OperationResult<T>, Error> {
         loop {
             match self.try_take(ticket).map_err(|error| match error {
-                TicketError::WrongSession => Error::InvalidState("票据不属于该存储或会话"),
-                TicketError::AlreadyTaken => Error::InvalidState("票据结果已收取"),
-                TicketError::AlreadyCompleted => Error::InvalidState("票据已经完成"),
-                TicketError::BorrowConflict => Error::InvalidState("票据存在借用冲突"),
+                TicketError::WrongSession => {
+                    Error::InvalidState("Ticket does not belong to this store or session")
+                }
+                TicketError::AlreadyTaken => {
+                    Error::InvalidState("The ticket result has been collected")
+                }
+                TicketError::AlreadyCompleted => {
+                    Error::InvalidState("The ticket has been completed")
+                }
+                TicketError::BorrowConflict => {
+                    Error::InvalidState("The note has a borrowing conflict")
+                }
             })? {
                 TicketState::Ready(result) => return Ok(result),
                 TicketState::Pending => {}
@@ -168,7 +176,7 @@ impl<S: Schema> Session<S> {
             std::thread::yield_now();
         }
     }
-    /// 只排空会话请求；Drained 不声明后台刷盘或检查点完成。
+    /// Drain session requests only;Drained Do not declare background flush or checkpoint completion.
     pub fn complete_pending(&mut self, mode: WaitMode) -> Result<DrainReport, Error> {
         match mode {
             WaitMode::Once => {
@@ -191,7 +199,7 @@ impl<S: Schema> Session<S> {
             }
         }
     }
-    /// 在本线程推进会话，等待自动维护空闲或停止；超时不取消已接受任务。
+    /// Advance conversation in this thread,Wait for automatic maintenance to idle or stop;Accepted tasks will not be canceled after timeout.
     pub fn wait_auto_compaction(
         &mut self,
         deadline: Deadline,
@@ -204,7 +212,7 @@ impl<S: Schema> Session<S> {
             if deadline.expired() {
                 return Err(Error::DeadlineExceeded);
             }
-            // 调度线程负责汇总维护失败；这里仍须推进本会话的完成与失败关闭。
+            // The scheduling thread is responsible for summarizing maintenance failures;It is still necessary to advance the completion and failure closure of this session..
             if let Err(error) = self.poll(PollBudget::default())
                 && !self.engine.failed.load(std::sync::atomic::Ordering::SeqCst)
             {
@@ -213,15 +221,17 @@ impl<S: Schema> Session<S> {
             self.engine.auto_compaction.wait_change(deadline)?;
         }
     }
-    /// 在本线程推进旧版本请求和维护，返回可重复观察的共享终结报告。
-    /// 等待错误和报告内的维护错误分开处理；超时不取消票据。
+    /// Promote old version requests and maintenance in this thread,Returns shared final report of repeatable observations.
+    /// Waiting errors are handled separately from maintenance errors within reports;Not canceling ticket after timeout.
     pub fn wait_maintenance<R>(
         &mut self,
         ticket: &MaintenanceTicket<R>,
         deadline: Deadline,
     ) -> Result<SharedReport<R>, Error> {
         if ticket.store != self.engine.id {
-            return Err(Error::InvalidState("维护票据属于其他存储"));
+            return Err(Error::InvalidState(
+                "Maintenance tickets belong to other storage",
+            ));
         }
         loop {
             if let Some(report) = ticket.try_report()? {
@@ -251,12 +261,12 @@ impl<S: Schema> Session<S> {
             std::thread::yield_now();
         }
     }
-    /// 超时后保留 Session；成功只代表排空和注销，不自动检查点。
+    /// retained after timeout Session;Success only means emptying and logging out,No automatic checkpoints.
     pub fn close(&mut self, deadline: Deadline) -> Result<CloseReport, Error> {
         if self.participant.is_some() {
             self.runtime.closing = true;
             self.complete_pending(WaitMode::Until(deadline))?;
-            let participant = self.participant.expect("参与者存在");
+            let participant = self.participant.expect("Participants exist");
             let current = (
                 self.runtime.current.version,
                 self.runtime.cut(self.runtime.current.version)?,

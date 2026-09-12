@@ -1,4 +1,4 @@
-//! 使用完整 TOML 解析器，字段映射严格且拥有输出；错误只保留位置和静态原因。
+//! Use full TOML parser,Field mapping is strict and has output;Errors only retain positional and static causes.
 use super::*;
 use std::{io::Read, path::Path, time::Duration};
 use toml::{
@@ -22,7 +22,11 @@ impl<'a, 'i> Table<'a, 'i> {
     fn check(&self, allowed: &[&str]) -> Result<(), Error> {
         for key in self.value.keys() {
             if !allowed.contains(&key.get_ref().as_ref()) {
-                return Err(error(self.name, Some(key.span().start), "存在未知字段"));
+                return Err(error(
+                    self.name,
+                    Some(key.span().start),
+                    "There is an unknown field",
+                ));
             }
         }
         Ok(())
@@ -37,9 +41,9 @@ impl<'a, 'i> Table<'a, 'i> {
         let number = v
             .get_ref()
             .as_integer()
-            .ok_or_else(|| self.invalid(v, "需要无符号整数"))?;
+            .ok_or_else(|| self.invalid(v, "requires unsigned integer"))?;
         u64::from_str_radix(number.as_str(), number.radix())
-            .map_err(|_| self.invalid(v, "整数为负数或超出 u64 范围"))
+            .map_err(|_| self.invalid(v, "The integer is negative or exceeds u64 range"))
     }
     fn u64(&self, key: &str, out: &mut u64) -> Result<(), Error> {
         if let Some(v) = self.value(key) {
@@ -50,7 +54,7 @@ impl<'a, 'i> Table<'a, 'i> {
     fn usize(&self, key: &str, out: &mut usize) -> Result<(), Error> {
         if let Some(v) = self.value(key) {
             *out = usize::try_from(self.unsigned(v)?)
-                .map_err(|_| self.invalid(v, "整数超出本平台 usize 范围"))?;
+                .map_err(|_| self.invalid(v, "Integer exceeds this platform usize range"))?;
         }
         Ok(())
     }
@@ -59,7 +63,7 @@ impl<'a, 'i> Table<'a, 'i> {
             *out = v
                 .get_ref()
                 .as_bool()
-                .ok_or_else(|| self.invalid(v, "需要布尔值"))?;
+                .ok_or_else(|| self.invalid(v, "requires boolean"))?;
         }
         Ok(())
     }
@@ -69,12 +73,13 @@ impl<'a, 'i> Table<'a, 'i> {
                 value
                     .as_str()
                     .parse()
-                    .map_err(|_| self.invalid(v, "无效浮点数"))?
+                    .map_err(|_| self.invalid(v, "Invalid floating point number"))?
             } else if let Some(value) = v.get_ref().as_integer() {
                 i128::from_str_radix(value.as_str(), value.radix())
-                    .map_err(|_| self.invalid(v, "整数比例超出范围"))? as f64
+                    .map_err(|_| self.invalid(v, "Integer scale out of range"))?
+                    as f64
             } else {
-                return Err(self.invalid(v, "需要整数或浮点比例"));
+                return Err(self.invalid(v, "Requires integer or floating point scale"));
             };
         }
         Ok(())
@@ -82,16 +87,15 @@ impl<'a, 'i> Table<'a, 'i> {
     fn duration(&self, key: &str, milliseconds: &str, out: &mut Duration) -> Result<(), Error> {
         if let Some(ms) = self.value(milliseconds) {
             if self.value(key).is_some() {
-                return Err(self.invalid(ms, "不能同时指定时长结构与毫秒字段"));
+                return Err(self.invalid(ms, "The duration structure and milliseconds field cannot be specified at the same time"));
             }
             *out = Duration::from_millis(self.unsigned(ms)?);
         } else if let Some(value) = self.value(key) {
             let table = Table {
                 name: self.name,
-                value: value
-                    .get_ref()
-                    .as_table()
-                    .ok_or_else(|| self.invalid(value, "时长需要 seconds/nanoseconds 子表"))?,
+                value: value.get_ref().as_table().ok_or_else(|| {
+                    self.invalid(value, "Time required seconds/nanoseconds Subtable")
+                })?,
             };
             table.check(&["seconds", "nanoseconds"])?;
             let mut seconds = 0;
@@ -99,7 +103,7 @@ impl<'a, 'i> Table<'a, 'i> {
             table.u64("seconds", &mut seconds)?;
             table.u64("nanoseconds", &mut nanoseconds)?;
             if nanoseconds >= 1_000_000_000 {
-                return Err(self.invalid(value, "nanoseconds 必须小于十亿"));
+                return Err(self.invalid(value, "nanoseconds Must be less than one billion"));
             }
             *out = Duration::new(seconds, nanoseconds as u32);
         }
@@ -114,10 +118,9 @@ impl<'a, 'i> Table<'a, 'i> {
         if let Some(value) = self.value(key) {
             apply(Table {
                 name,
-                value: value
-                    .get_ref()
-                    .as_table()
-                    .ok_or_else(|| self.invalid(value, "配置分组必须是子表"))?,
+                value: value.get_ref().as_table().ok_or_else(|| {
+                    self.invalid(value, "Configuration grouping must be a subtable")
+                })?,
             })?;
         }
         Ok(())
@@ -125,18 +128,23 @@ impl<'a, 'i> Table<'a, 'i> {
 }
 pub(super) fn parse(input: &str, path: &[&str]) -> Result<Config, Error> {
     if input.len() > MAX_BYTES {
-        return Err(error("config-toml", None, "文档超过 1 MiB"));
+        return Err(error("config-toml", None, "Documentation exceeds 1 MiB"));
     }
-    let document = DeTable::parse(input)
-        .map_err(|e| error("config-toml", e.span().map(|s| s.start), "TOML 语法无效"))?;
+    let document = DeTable::parse(input).map_err(|e| {
+        error(
+            "config-toml",
+            e.span().map(|s| s.start),
+            "TOML Invalid syntax",
+        )
+    })?;
     let mut selected = document.get_ref();
     for &key in path {
         selected = selected
             .get(key)
-            .ok_or_else(|| error("table_path", None, "选定子表不存在"))?
+            .ok_or_else(|| error("table_path", None, "The selected subtable does not exist"))?
             .get_ref()
             .as_table()
-            .ok_or_else(|| error("table_path", None, "选定路径不是子表"))?;
+            .ok_or_else(|| error("table_path", None, "The selected path is not a subtable"))?;
     }
     let table = Table {
         name: "config-toml",
@@ -160,7 +168,7 @@ pub(super) fn parse(input: &str, path: &[&str]) -> Result<Config, Error> {
             c.storage.root = value
                 .get_ref()
                 .as_str()
-                .ok_or_else(|| t.invalid(value, "根目录需要字符串"))?
+                .ok_or_else(|| t.invalid(value, "Root directory requires string"))?
                 .into();
         }
         t.u64("segment_bytes", &mut c.storage.segment_bytes)?;
@@ -277,9 +285,14 @@ pub(super) fn file(path: &Path, table: &[&str]) -> Result<Config, Error> {
         .read_to_end(&mut bytes)
         .map_err(Error::Io)?;
     if bytes.len() > MAX_BYTES {
-        return Err(error("config-toml", None, "文档超过 1 MiB"));
+        return Err(error("config-toml", None, "Documentation exceeds 1 MiB"));
     }
-    let input = std::str::from_utf8(&bytes)
-        .map_err(|e| error("config-toml", Some(e.valid_up_to()), "文档不是 UTF-8"))?;
+    let input = std::str::from_utf8(&bytes).map_err(|e| {
+        error(
+            "config-toml",
+            Some(e.valid_up_to()),
+            "Documentation is not UTF-8",
+        )
+    })?;
     parse(input, table)
 }

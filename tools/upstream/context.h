@@ -1,4 +1,4 @@
-// 使用固定上游的真实上下文协议；拥有输入和异步结果，不计算独立模型。
+// Real context protocol using fixed upstream;Have input and asynchronous results,Do not count independent models.
 #pragma once
 #include <atomic>
 #include <cstring>
@@ -7,7 +7,7 @@
 #include "trace.h"
 namespace comparison {
 using namespace FASTER::core;
-// 日志里的键只含长度和紧随其后的字节，不写入 vector 或指针。
+// The key in the log only contains the length and the bytes that follow it,Do not write vector or pointer.
 struct Key {
   uint32_t length;
   uint32_t size() const { return sizeof(Key)+length; }
@@ -18,7 +18,7 @@ struct Key {
   }
   bool operator!=(const Key& other) const { return !(*this==other); }
 };
-// 上游支持不同的浅键接口；上下文的深复制仍拥有整个字节输入。
+// Upstream supports different shallow key interfaces;A deep copy of the context still owns the entire byte input.
 struct OwnedKey {
   Bytes bytes;
   uint32_t size() const { return sizeof(Key)+bytes.size(); }
@@ -32,7 +32,7 @@ struct OwnedKey {
   }
   bool operator!=(const Key& other) const { return !(*this==other); }
 };
-// 数字原地更新只访问 atomic；普通字节记录保持不可变，增长和替换走追加。
+// Digital in-place updates access only atomic;Ordinary byte records remain immutable,grow and replace append.
 struct Value {
   uint32_t numeric=0,length=0;
   std::atomic<uint64_t> number{0};
@@ -57,7 +57,7 @@ class Context: public IAsyncContext {
   const OwnedKey& key() const { return key_; }
   uint32_t value_size() const { return sizeof(Value)+input.operand.bytes.size(); }
   uint32_t value_size(const Value& old) const {
-    if(old.numeric!=input.operand.numeric) throw std::runtime_error("对照轨迹存在未定义的跨类型 RMW");
+    if(old.numeric!=input.operand.numeric) throw std::runtime_error("Control trace has undefined cross-type RMW");
     return sizeof(Value)+old.length+input.operand.bytes.size();
   }
   void Get(const Value& value) { GetAtomic(value); }
@@ -77,7 +77,7 @@ class Context: public IAsyncContext {
   }
   void RmwInitial(Value& value) { initialize(value,input.operand); GetAtomic(value); }
   void RmwCopy(const Value& old, Value& value) {
-    if(old.numeric!=input.operand.numeric) throw std::runtime_error("对照轨迹存在未定义的跨类型 RMW");
+    if(old.numeric!=input.operand.numeric) throw std::runtime_error("Control trace has undefined cross-type RMW");
     Operand updated=input.operand;
     if(updated.numeric) updated.number+=old.number.load();
     else { updated.bytes.assign(old.data(),old.data()+old.length); updated.bytes.insert(updated.bytes.end(),input.operand.bytes.begin(),input.operand.bytes.end()); }
@@ -107,9 +107,9 @@ inline void callback(IAsyncContext* raw,Status status) {
 inline std::string result(const Step& step,const Reply& reply) {
   if(reply.status==Status::NotFound) return "missing";
   if(reply.status==Status::Aborted && step.operation=="read" && step.option) return "tombstone";
-  if(reply.status!=Status::Ok) throw std::runtime_error(std::string("上游业务失败：")+StatusStr(reply.status));
+  if(reply.status!=Status::Ok) throw std::runtime_error(std::string("Upstream business failure:")+StatusStr(reply.status));
   if(step.operation=="delete") return "deleted";
-  if(reply.value.empty()) throw std::runtime_error("成功结果没有业务输出");
+  if(reply.value.empty()) throw std::runtime_error("Success result has no business output");
   return reply.value;
 }
 }

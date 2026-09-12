@@ -1,4 +1,4 @@
-//! 逐桶清理失效链头；空槽与存活条目共用单调桶修订，回收溢出块不重置历史。
+//! Clean up failed chain heads bucket by bucket;Empty slots and surviving entries share monotonic bucket revisions,Recycling overflow blocks without resetting history.
 use super::*;
 impl Table {
     pub(super) fn clean_bucket(&self, number: usize, begin: LogAddress) -> Result<usize, Error> {
@@ -6,9 +6,9 @@ impl Table {
         let mut bucket = self
             .buckets
             .get(number)
-            .ok_or(Error::InvalidState("清理桶编号越界"))?
+            .ok_or(Error::InvalidState("Cleaning bucket number out of bounds"))?
             .lock()
-            .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+            .map_err(|_| Error::InvalidState("index_bucket_lock_poisoned"))?;
         let obsolete = |entry: Entry| {
             matches!(entry.head, IndexHead::Empty)
                 || matches!(entry.head, IndexHead::Log(address) if address < begin)
@@ -16,7 +16,9 @@ impl Table {
         let mut removed = 0;
         for entry in bucket.blocks.iter().flatten().flatten() {
             if matches!(entry.head, IndexHead::Cache(_)) {
-                return Err(Error::InvalidState("清理前必须规范化缓存头"));
+                return Err(Error::InvalidState(
+                    "Cache headers must be normalized before cleaning",
+                ));
             }
             removed += usize::from(obsolete(*entry));
         }
@@ -28,7 +30,7 @@ impl Table {
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
         let mut kept = 0;
-        // Entry 是纯复制数据；在独占桶锁内向前压紧，不分配第二份大桶。
+        // Entry It is pure copy data;Press forward in exclusive barrel lock,Do not allocate the second bucket.
         for read in 0..bucket.blocks.len() * SLOTS {
             if let Some(entry) = bucket.blocks[read / SLOTS][read % SLOTS]
                 && !obsolete(entry)
@@ -70,7 +72,8 @@ mod tests {
         ));
     }
     #[test]
-    fn 清理回收溢出槽并保留新链头且旧空槽许可不能跨清理复用() {
+    fn clean_up_and_recycle_overflow_slots_and_retain_new_chain_heads_and_old_empty_slot_permissions_cannot_be_reused_across_cleanups()
+     {
         let table = table();
         let empty = table.prepare(hash(7)).unwrap();
         for tag in 0..30 {
@@ -104,7 +107,7 @@ mod tests {
                 .unwrap(),
             PublishResult::Conflict(_)
         ));
-        // 其他条目未改变，已持有的真实条目许可仍可条件发布。
+        // Other items have not changed,Licenses already held for genuine articles may still be released conditionally.
         assert!(matches!(
             table
                 .compare_publish(untouched, IndexHead::Log(LogAddress(9999)))
@@ -117,7 +120,7 @@ mod tests {
         assert_eq!(bucket.blocks.capacity(), 0);
     }
     #[test]
-    fn 缓存头和修订耗尽在清理任何条目前拒绝() {
+    fn cache_header_and_revision_exhaustion_reject_before_cleaning_any_entries() {
         let table = table();
         put(&table, 1, 1);
         let expected = table.prepare(hash(2)).unwrap();
@@ -146,7 +149,8 @@ mod tests {
         ));
     }
     #[test]
-    fn 清理与同键发布并发不会删除边界之后的新头() {
+    fn cleaning_concurrently_with_same_key_publishing_does_not_delete_new_headers_after_boundaries()
+    {
         for _ in 0..32 {
             let table = table();
             put(&table, 1, 1);

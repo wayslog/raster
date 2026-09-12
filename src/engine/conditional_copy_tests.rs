@@ -1,4 +1,4 @@
-//! 条件复制使用真实索引、日志与设备；测试暂停点只控制交错，不替代发布协议。
+//! Conditional replication uses real index,Logs and equipment;Test pause points only control interleaving,Does not replace publishing agreement.
 use super::*;
 use crate::{
     api::operation::RmwOperation,
@@ -34,7 +34,10 @@ fn source<S: crate::schema::Schema<Key = U64Key>>(engine: &Engine<S>, key: u64) 
 fn drive<S: crate::schema::Schema>(engine: &Engine<S>, task: &mut ConditionalCopy) -> CopyResult {
     let end = deadline();
     loop {
-        assert!(!end.expired(), "条件复制没有在期限内结束");
+        assert!(
+            !end.expired(),
+            "Conditional replication did not end within the deadline"
+        );
         match engine.conditional_copy(task, budget()).unwrap() {
             CopyResult::Retry => {
                 engine.poll_maintenance(budget()).unwrap();
@@ -54,7 +57,7 @@ impl Keyed<Schema> for Add {
 impl RmwOperation<Schema> for Add {
     type Output = u64;
     fn initial(&mut self) -> Result<(u64, u64), Error> {
-        panic!("源必须存在")
+        panic!("source must exist")
     }
     fn copy_update(&mut self, old: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
         let new = old.view().wrapping_add(self.1);
@@ -73,7 +76,8 @@ impl RmwOperation<Schema> for Add {
     }
 }
 #[test]
-fn 候选捕获后原地更新保持源地址但复制当前值且只终结一次() {
+fn in_place_update_after_candidate_capture_keeps_the_source_address_but_copies_the_current_value_and_only_ends_once()
+ {
     let (_root, store) = setup(None);
     store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -90,7 +94,7 @@ fn 候选捕获后原地更新保持源地址但复制当前值且只终结一�
     assert_eq!(source(&store.inner, 7), old);
     let before = store.inner.log.frontiers().unwrap();
     let CopyResult::Copied(new) = drive(&store.inner, &mut task) else {
-        panic!("应复制活源")
+        panic!("Live source should be copied")
     };
     assert!(new > old);
     assert_eq!(task.published_address(), Some(new));
@@ -110,7 +114,8 @@ fn 候选捕获后原地更新保持源地址但复制当前值且只终结一�
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 追加使旧源失效且原地删除后只复制当前墓碑() {
+fn appending_invalidates_the_old_source_and_deletes_it_in_place_and_only_copies_the_current_tombstone()
+ {
     let (_root, store) = setup(None);
     store.enable_stats_collection();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -135,7 +140,9 @@ fn 追加使旧源失效且原地删除后只复制当前墓碑() {
         .delete(Serial(2), Delete(9), Default::default())
         .unwrap();
     let CopyResult::Copied(deleted) = drive(&store.inner, &mut task) else {
-        panic!("原地删除保留源地址，复制必须取得当前墓碑");
+        panic!(
+            "Delete in place and keep the source address,Copying must obtain the current tombstone"
+        );
     };
     assert!(store.inner.log.lease(deleted).unwrap().is_tombstone());
     let tombstone = source(&store.inner, 9);
@@ -144,7 +151,7 @@ fn 追加使旧源失效且原地删除后只复制当前墓碑() {
         .new_conditional_copy(id, tombstone, 9u64.to_le_bytes().to_vec())
         .unwrap();
     let CopyResult::Copied(new) = drive(&store.inner, &mut task) else {
-        panic!("应复制墓碑")
+        panic!("Tombstones should be copied")
     };
     assert!(store.inner.log.lease(new).unwrap().is_tombstone());
     finish(&store.inner, id);
@@ -153,7 +160,8 @@ fn 追加使旧源失效且原地删除后只复制当前墓碑() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 同桶同标签不同完整键可复制链内源且保留另一键() {
+fn different_complete_keys_in_the_same_bucket_and_same_label_can_copy_the_source_within_the_chain_and_retain_the_other_key()
+ {
     let mut config = Config::default();
     config.index.buckets = 1;
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
@@ -183,7 +191,8 @@ fn 同桶同标签不同完整键可复制链内源且保留另一键() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 冷源读取挂起期间追加可完成而过时源不能重新发布() {
+fn append_can_be_completed_while_cold_source_read_is_pending_but_the_outdated_source_cannot_be_republished()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 0);
@@ -203,7 +212,7 @@ fn 冷源读取挂起期间追加可完成而过时源不能重新发布() {
             CopyResult::Retry
         );
     }
-    // 查索引式 upsert 不需要读取旧值；挂起的复制没有持有业务或源记录许可。
+    // Search index upsert No need to read old values;Pending replication does not hold business or source record permissions.
     put(&mut session, 400, 0);
     let latest = source(&store.inner, 0);
     assert_eq!(drive(&store.inner, &mut task), CopyResult::Obsolete);
@@ -214,7 +223,7 @@ fn 冷源读取挂起期间追加可完成而过时源不能重新发布() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 外来实例拒绝复制而所属实例仍可完成() {
+fn the_foreign_instance_refuses_replication_while_the_owning_instance_can_still_complete() {
     let (_one, first) = setup(None);
     let (_two, second) = setup(None);
     let mut session = first.start_session(Default::default()).unwrap();
@@ -269,8 +278,12 @@ mod ordinary {
                 == Ok(1)
             {
                 match self.0.mode.load(Ordering::SeqCst) {
-                    1 => return Err(Error::Codec("注入目标初始化编码失败")),
-                    2 => panic!("注入目标初始化恐慌"),
+                    1 => {
+                        return Err(Error::Codec(
+                            "Injection target initialization encoding failed",
+                        ));
+                    }
+                    2 => panic!("Inject target initialization panic"),
                     3 => return Err(Error::Busy),
                     _ => {
                         self.0.reached.send(()).unwrap();
@@ -338,7 +351,7 @@ mod ordinary {
     fn write(session: &mut Session<Ordinary>, serial: u64, key: u64, value: u64) {
         let Submission::Ready(result) = session.upsert(Serial(serial), Write(key, value)).unwrap()
         else {
-            panic!("热记录应同步完成")
+            panic!("Hot recording should be completed simultaneously")
         };
         result.unwrap();
     }
@@ -351,10 +364,11 @@ mod ordinary {
             }
             at = lease.previous();
         }
-        panic!("键必须存在")
+        panic!("key must exist")
     }
     #[test]
-    fn 源许可覆盖目标初始化且碰撞发布冲突清理目标后重试保留两键() {
+    fn the_source_license_overrides_the_target_initialization_and_collides_with_the_release_conflict_retry_after_cleaning_up_the_target_keep_both_keys()
+     {
         let (store, fault, reached, resume) = setup();
         let mut session = store.start_session(Default::default()).unwrap();
         write(&mut session, 0, 8969, 11);
@@ -365,7 +379,7 @@ mod ordinary {
             .inner
             .new_conditional_copy(id, old, 8969u64.to_le_bytes().to_vec())
             .unwrap();
-        // 第二次编码是目标初始化，分配已经占槽但尚未进入地址表。
+        // The second encoding is target initialization,The allocation has occupied the slot but has not yet entered the address table..
         fault.encode_countdown.store(2, Ordering::SeqCst);
         let end_before = store.inner.log.frontiers().unwrap().tail;
         std::thread::scope(|scope| {
@@ -395,7 +409,7 @@ mod ordinary {
             assert_eq!(copying.join().unwrap(), CopyResult::Retry);
             assert_eq!(source(&store.inner, 9239), collided_head);
         });
-        // 失败目标的地址槽可能有对齐填充，但不出现在物理记录扫描中。
+        // The failed target's address slot may have alignment padding,but does not appear in physical record scans.
         let mut count = 0;
         let end = store.inner.log.frontiers().unwrap().tail;
         let mut at = LogAddress(0);
@@ -422,7 +436,8 @@ mod ordinary {
         store.shutdown(deadline()).unwrap();
     }
     #[test]
-    fn 目标初始化失败保持源和索引且不能再次执行编码() {
+    fn target_initialization_failed_retaining_source_and_index_and_encoding_cannot_be_performed_again()
+     {
         for mode in [1, 3] {
             let (store, fault, _, _) = setup();
             let mut session = store.start_session(Default::default()).unwrap();
@@ -456,7 +471,7 @@ mod ordinary {
     }
 
     #[test]
-    fn 目标初始化恐慌失败关闭且没有发布目标() {
+    fn target_initialization_panic_failed_to_close_and_no_target_was_released() {
         let (store, fault, _, _) = setup();
         let mut session = store.start_session(Default::default()).unwrap();
         write(&mut session, 0, 7, 42);
@@ -483,7 +498,8 @@ mod ordinary {
 }
 
 #[test]
-fn 冷源完整复制和在途排空不保留路由或阻止后续动作() {
+fn full_replication_and_in_flight_draining_of_cold_sources_without_preserving_routes_or_blocking_subsequent_actions()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 0);
@@ -497,7 +513,7 @@ fn 冷源完整复制和在途排空不保留路由或阻止后续动作() {
         .new_conditional_copy(id, old, 0u64.to_le_bytes().to_vec())
         .unwrap();
     let CopyResult::Copied(new) = drive(&store.inner, &mut task) else {
-        panic!("冷源应完整迁移")
+        panic!("The cold source should be completely migrated")
     };
     assert!(new > old);
     assert_eq!(source(&store.inner, 0), new);
@@ -544,7 +560,7 @@ fn 冷源完整复制和在途排空不保留路由或阻止后续动作() {
         .checkpoint(CheckpointKind::Full)
         .unwrap();
     wait(&mut session, &checkpoint);
-    // 更旧版本的许可阻止复制；释放之后相同请求可以继续，压缩自身不递增版本。
+    // Older version license prevents copying;After release, the same request can continue,Compression itself does not increment the version.
     let id = start(&store.inner);
     let permit = store
         .inner

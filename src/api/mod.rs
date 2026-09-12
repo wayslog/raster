@@ -1,4 +1,4 @@
-//! 面向应用的接口，隐藏索引、日志页和全局阶段的私有状态。
+//! application-oriented interface,Hidden index,Private state for log pages and global stages.
 pub mod completion;
 pub mod maintenance;
 pub mod operation;

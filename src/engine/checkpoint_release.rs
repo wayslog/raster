@@ -1,4 +1,4 @@
-//! 显式检查点释放：目录独占仲裁、依赖延后、先持久化失效再删除；失败不自动重试。
+//! explicit checkpoint release:Directory Exclusive Quorum,Dependence on deferral,Persist first and then delete;Failure does not automatically retry.
 use super::Engine;
 use crate::{
     api::maintenance::{
@@ -61,7 +61,7 @@ impl Job {
         let result = if let Some(error) = self.failure.take() {
             Err(self.error(error))
         } else {
-            let catalog = self.catalog.as_ref().expect("已验证释放目录");
+            let catalog = self.catalog.as_ref().expect("Verified release directory");
             Ok(CheckpointReleaseReport {
                 token: self.token,
                 retirement: self.retirement,
@@ -87,10 +87,9 @@ impl Job {
     }
     fn fail<S: Schema>(&mut self, _engine: &Engine<S>) -> Result<(), Error> {
         if !self.reported {
-            let cause = self
-                .failure
-                .take()
-                .unwrap_or(Error::InvalidState("检查点释放期间引擎失败关闭"));
+            let cause = self.failure.take().unwrap_or(Error::InvalidState(
+                "Engine failed shutdown during checkpoint release",
+            ));
             self.complete.finish(Err(self.error(cause)))?;
             self.reported = true;
         }
@@ -111,7 +110,7 @@ impl Job {
         engine
             .checkpoints
             .lock()
-            .map_err(|_| Error::InvalidState("检查点目录锁中毒"))?
+            .map_err(|_| Error::InvalidState("Checkpoint directory lock poisoning"))?
             .release_token(self.token, self.retirement == CheckpointRetirement::Retired);
         Ok(())
     }
@@ -125,7 +124,9 @@ impl Job {
                 || completion.route != self.route()
                 || completion.buffer.is_some()
             {
-                return Err(Error::InvalidState("释放元数据完成身份或缓冲错误"));
+                return Err(Error::InvalidState(
+                    "Free metadata completion identity or buffering error",
+                ));
             }
             self.pending = None;
             match completion.result {
@@ -134,7 +135,11 @@ impl Job {
                     if matches!(self.stage, Stage::Delete)
                         && error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
-                _ => return Err(Error::InvalidState("释放元数据完成类型错误")),
+                _ => {
+                    return Err(Error::InvalidState(
+                        "Release metadata completion type error",
+                    ));
+                }
             }
             match self.stage {
                 Stage::Retire => self.stage = Stage::RetirementSync,
@@ -149,7 +154,7 @@ impl Job {
                     self.material += 1;
                     self.stage = Stage::Delete;
                 }
-                _ => return Err(Error::InvalidState("释放元数据阶段错误")),
+                _ => return Err(Error::InvalidState("invalid metadata release stage")),
             }
             return Ok(true);
         }
@@ -177,7 +182,9 @@ impl Job {
             if self.pending.is_some()
                 || self.reader.as_ref().is_some_and(CatalogRead::has_resources)
             {
-                return Err(Error::InvalidState("释放失败仍有未确认资源"));
+                return Err(Error::InvalidState(
+                    "The release failed and there are still unconfirmed resources.",
+                ));
             }
             self.stage = Stage::Unlock;
         }
@@ -207,7 +214,7 @@ impl Job {
                 self.stage = Stage::Catalog;
             }
             Stage::Catalog => {
-                let reader = self.reader.as_mut().expect("目录读取者存在");
+                let reader = self.reader.as_mut().expect("directory reader exists");
                 let advanced =
                     reader.step(&engine.storage, &self.lock, engine.io.take(self.mailbox)?)?;
                 if let Some(catalog) = reader.take_result(&engine.storage, &self.lock)? {
@@ -247,13 +254,13 @@ impl Job {
                             .storage
                             .checkpoint_path(self.token, "commit")?
                             .parent()
-                            .expect("固定目录")
+                            .expect("fixed directory")
                             .to_path_buf(),
                     ),
                 );
             }
             Stage::Delete => {
-                let catalog = self.catalog.as_ref().expect("目录已验证");
+                let catalog = self.catalog.as_ref().expect("Directory verified");
                 if let Some(material) = catalog.target.materials.get(self.material) {
                     let name = crate::storage::SegmentedStorage::checkpoint_material_name(
                         material.id,
@@ -270,7 +277,7 @@ impl Job {
                 if self.lock.closed() {
                     self.stage = Stage::Finish;
                 } else if !self.lock.held() && self.failure.is_some() {
-                    // 未取得锁且没有在途尝试才允许取消；其余错误由失败关闭保存资源。
+                    // Cancellation is only allowed if the lock has not been acquired and no attempts are in progress.;The remaining errors result from failed shutdown of the saved resource.
                     if self.lock.cancel_unacquired().is_ok() {
                         self.stage = Stage::Finish;
                     } else {
@@ -293,7 +300,7 @@ impl<S: Schema> Engine<S> {
     ) -> Result<MaintenanceTicket<CheckpointReleaseReport>, Error> {
         token.validate()?;
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("存储已经关闭或失败"));
+            return Err(Error::InvalidState("Storage has been closed or failed"));
         }
         let caps = self.storage.device.capabilities();
         if !caps.supports_files
@@ -308,7 +315,7 @@ impl<S: Schema> Engine<S> {
         }
         let mut runtime = self.checkpoint_release.try_lock().map_err(|e| match e {
             TryLockError::WouldBlock => Error::Busy,
-            _ => Error::InvalidState("检查点释放任务锁中毒"),
+            _ => Error::InvalidState("checkpoint_release_task_lock_poisoned"),
         })?;
         if runtime.job.is_some() {
             return Err(Error::Busy);
@@ -355,7 +362,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.checkpoint_release.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok((false, false)),
-            Err(_) => return Err(Error::InvalidState("检查点释放任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("checkpoint_release_task_lock_poisoned")),
         };
         let Some(job) = &mut runtime.job else {
             return Ok((false, false));
@@ -365,7 +372,9 @@ impl<S: Schema> Engine<S> {
         }
         let draining = job.failure.is_some();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.step(self)))
-            .unwrap_or(Err(Error::InvalidState("检查点释放推进恐慌")));
+            .unwrap_or(Err(Error::InvalidState(
+                "Checkpoint release advances panic",
+            )));
         let advanced = match result {
             Ok(advanced) => advanced,
             Err(error) => {
@@ -383,7 +392,9 @@ impl<S: Schema> Engine<S> {
         };
         if self.failed.load(Ordering::SeqCst) {
             job.fail(self)?;
-            return Err(Error::InvalidState("检查点释放失败关闭，详见维护报告"));
+            return Err(Error::InvalidState(
+                "Checkpoint release failed shutdown,see_maintenance_report",
+            ));
         }
         if job.reported {
             self.io.release(job.mailbox)?;
@@ -396,7 +407,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.checkpoint_release.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(_) => return Err(Error::InvalidState("检查点释放任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("checkpoint_release_task_lock_poisoned")),
         };
         if let Some(job) = &mut runtime.job {
             job.fail(self)?;
@@ -408,7 +419,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = self
             .checkpoint_release
             .lock()
-            .map_err(|_| Error::InvalidState("检查点释放任务锁中毒"))?;
+            .map_err(|_| Error::InvalidState("checkpoint_release_task_lock_poisoned"))?;
         if let Some(job) = runtime.job.take() {
             self.io.release(job.mailbox)?;
         }

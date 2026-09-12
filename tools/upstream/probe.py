@@ -1,4 +1,4 @@
-"""原生上游固定边界：原始返回不变，已确认的强制墓碑修正由独立参考副本验证。"""
+"""Native upstream fixed boundary:Original return unchanged,Confirmed mandatory tombstone fix verified by independent reference copy."""
 import argparse
 import json
 import os
@@ -10,10 +10,10 @@ import tempfile
 def run(command, log, env=None):
     result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=180)
     content = result.stdout + result.stderr
-    content = content.replace(str(Path.cwd()), "工作树").replace(str(Path.home()), "用户目录")
+    content = content.replace(str(Path.cwd()), "worktree").replace(str(Path.home()), "user_directory")
     log.write_text(content)
     if result.returncode:
-        raise RuntimeError(f"环境探测退出码 {result.returncode}，见 {log.name}")
+        raise RuntimeError(f"Environment detection exit code {result.returncode},see {log.name}")
 
 
 def main():
@@ -34,14 +34,14 @@ def main():
                 command += ["--disk", str(Path(root) / "cpp-store")]
             run(command, output / (mode + ".cpp.log"))
             if result.read_text() != expected:
-                raise RuntimeError(f"上游 {mode} 原始返回与固定观察不符，请重新调查")
+                raise RuntimeError(f"upstream {mode} Raw return does not match fixed observation,Please investigate again")
             result = output / (mode + ".corrected.cpp.results")
             command = [str(args.corrected_cpp.resolve()), str(source), str(result)]
             if mode == "file":
                 command += ["--disk", str(Path(root) / "corrected-store")]
             run(command, output / (mode + ".corrected.cpp.log"))
             if result.read_text() != expected.replace("0 6 missing", "0 6 tombstone"):
-                raise RuntimeError(f"强制墓碑修正的 {mode} 固定观察不符")
+                raise RuntimeError(f"Forced tombstone correction {mode} Fixed observation discrepancy")
         env = os.environ.copy()
         env["RASTER_UPSTREAM_TRACE"] = str(source)
         env["RASTER_UPSTREAM_RESULT"] = str(output / "fixed.rust.results")
@@ -56,17 +56,17 @@ def main():
     if len(rust) != len(cpp) or differences != [
         {"line": 6, "rust": "0 6 tombstone", "cpp": "0 6 missing"},
     ]:
-        raise RuntimeError("跨实现差异与已记录的固定边界不符，需要调查")
+        raise RuntimeError("Cross-implementation differences do not match documented fixed boundaries,Need investigation")
     summary = {"environment_probe": "passed", "compatibility_acceptance": "approved_contract_passed", "differences": differences,
-               "correction": "force_tombstone 禁止索引消除", "corrected_differences": []}
+               "correction": "force_tombstone Disable index elimination", "corrected_differences": []}
     (output / "probe.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
-    print("上游执行环境基线通过：Null 与 Linux libaio 返回均符合固定观察。")
-    print("固定边界通过已确认契约：Rust 与强制墓碑参考修正一致；原始上游的一处差异保留。")
+    print("Upstream execution environment baseline passed:Null and Linux libaio Returns are all consistent with fixed observations.")
+    print("Fixed boundaries via confirmed contracts:Rust Consistent with mandatory tombstone reference fix;One difference from the original upstream remains.")
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print(f"上游环境探测失败：{error}")
+        print(f"Upstream environment detection failed:{error}")
         raise SystemExit(1)

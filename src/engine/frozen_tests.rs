@@ -1,4 +1,4 @@
-//! 冻结后的写入使用真实 Session 和日志，不执行旧值更新回调。
+//! Writes after freezing use real Session and log,Do not execute old value update callback.
 use crate::{
     RasterKV, Submission,
     api::{completion::Outcome, operation::*, session::SessionOptions},
@@ -25,7 +25,7 @@ impl UpsertOperation<Schema> for Put {
         &mut self,
         _: ValueUpdate<'_, Schema>,
     ) -> Result<UpdateDecision<u64>, Error> {
-        panic!("被冻结记录不应进入原地写入回调")
+        panic!("Frozen records should not enter the in-place write callback")
     }
 }
 struct Add(u64, u64);
@@ -37,7 +37,7 @@ impl Keyed<Schema> for Add {
 impl RmwOperation<Schema> for Add {
     type Output = u64;
     fn initial(&mut self) -> Result<(u64, u64), Error> {
-        panic!("已有冻结值不能作为缺失键")
+        panic!("Existing frozen values cannot be used as missing keys")
     }
     fn copy_update(&mut self, value: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
         let result = value.view().wrapping_add(self.1);
@@ -47,14 +47,15 @@ impl RmwOperation<Schema> for Add {
         &mut self,
         _: ValueUpdate<'_, Schema>,
     ) -> Result<UpdateDecision<u64>, Error> {
-        panic!("被冻结记录不应进入原地 RMW 回调")
+        panic!("Frozen records should not be entered in place RMW callback")
     }
 }
 fn success(result: Submission<u64>, expected: u64) {
     assert!(matches!(result, Submission::Ready(Ok(Outcome::Success(value))) if value == expected));
 }
 #[test]
-fn 冻结后替换与复制追加保留原值且引擎继续服务() {
+fn after_freezing_replacement_copy_and_append_retain_the_original_value_and_the_engine_continues_to_serve()
+ {
     let mut config = Config::default();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 4;

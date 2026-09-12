@@ -1,4 +1,4 @@
-//! 固定版本文本轨迹；字节使用十六进制，空字节使用短横线。
+//! Fixed version text track;Bytes use hexadecimal,Use dash for null byte.
 use std::fmt::Write;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,31 +50,31 @@ fn unhex(text: &str) -> Result<Vec<u8>, String> {
         || !text.len().is_multiple_of(2)
         || !text.bytes().all(|b| b.is_ascii_hexdigit())
     {
-        return Err("无效十六进制".into());
+        return Err("Invalid hex".into());
     }
     (0..text.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|_| "无效字节".into()))
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|_| "invalid byte".into()))
         .collect()
 }
 fn number(text: &str) -> Result<u64, String> {
     if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
-        return Err("无效无符号整数".into());
+        return Err("Invalid unsigned integer".into());
     }
-    text.parse().map_err(|_| "整数溢出".into())
+    text.parse().map_err(|_| "integer overflow".into())
 }
 fn flag(text: &str) -> Result<bool, String> {
     match text {
         "0" => Ok(false),
         "1" => Ok(true),
-        _ => Err("标志必须为 0 或 1".into()),
+        _ => Err("The flag must be 0 or 1".into()),
     }
 }
 fn value(kind: &str, text: &str) -> Result<Value, String> {
     match kind {
         "u" => Ok(Value::Number(number(text)?)),
         "b" => Ok(Value::Bytes(unhex(text)?)),
-        _ => Err("未知值类型".into()),
+        _ => Err("Unknown value type".into()),
     }
 }
 fn encoded_value(value: &Value) -> String {
@@ -119,11 +119,11 @@ impl Trace {
         let mut lines = input.lines();
         let header: Vec<_> = lines
             .next()
-            .ok_or("缺少轨迹头")?
+            .ok_or("Missing track header")?
             .split_whitespace()
             .collect();
         let ["raster-trace", "1", seed] = header.as_slice() else {
-            return Err("未知轨迹版本或错误头部".into());
+            return Err("Unknown track version or wrong header".into());
         };
         let mut trace = Self {
             seed: number(seed)?,
@@ -133,7 +133,7 @@ impl Trace {
             let fields: Vec<_> = text.split_whitespace().collect();
             let parsed = (|| {
                 let [session, serial, key, rest @ ..] = fields.as_slice() else {
-                    return Err("缺少操作字段".into());
+                    return Err("Missing action field".into());
                 };
                 let operation = match rest {
                     ["read", b] => Operation::Read {
@@ -147,7 +147,7 @@ impl Trace {
                     ["delete", b] => Operation::Delete {
                         force_tombstone: flag(b)?,
                     },
-                    _ => return Err(String::from("操作字段不匹配")),
+                    _ => return Err(String::from("Action fields do not match")),
                 };
                 Ok(Step {
                     session: number(session)?,
@@ -158,11 +158,11 @@ impl Trace {
             })();
             trace
                 .steps
-                .push(parsed.map_err(|e| format!("第 {} 行：{e}", line + 2))?);
+                .push(parsed.map_err(|e| format!("ordinal {} OK:{e}", line + 2))?);
         }
         Ok(trace)
     }
-    /// SplitMix64，显式 wrapping 运算使跨平台输出一致；每步固定消耗四个随机数。
+    /// SplitMix64,explicit wrapping Compute to make output consistent across platforms;Each step consumes four random numbers..
     pub fn generate(seed: u64, count: usize) -> Self {
         let mut state = seed;
         let mut next = || {
@@ -181,7 +181,7 @@ impl Trace {
             let payload = next();
             serials[session] = serials[session]
                 .checked_add(1 + (choice % 3))
-                .expect("测试轨迹过长");
+                .expect("Test track is too long");
             let key = if key_id == 0 {
                 vec![]
             } else {

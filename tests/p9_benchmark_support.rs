@@ -1,16 +1,22 @@
-//! 基准不能靠计数或输入口径错误得到漂亮结果；使用真实短传输及独立固定预期校验。
+//! Benchmarks can't get pretty results by counting or entering caliber errors;Use true short transmission and independent fixed expectation check.
 #[path = "../examples/benchmark/meter.rs"]
 mod meter;
 #[path = "support/model.rs"]
 #[allow(
     dead_code,
-    reason = "固定基准只使用确定值模型；盲删观察模型由 P0/P3/P9 轨迹验收"
+    reason = "Fixed benchmarks only use deterministic value models;The blind deletion observation model is given by P0/P3/P9 Trajectory acceptance"
 )]
 mod model;
-#[allow(dead_code, reason = "复用基准生成器，测试不执行整套计时矩阵")]
+#[allow(
+    dead_code,
+    reason = "Reuse benchmark generator,The test does not execute the entire timing matrix"
+)]
 #[path = "../examples/benchmark/scenario.rs"]
 mod scenario;
-#[allow(dead_code, reason = "复用轨迹数据类型，文本协议另有完整测试")]
+#[allow(
+    dead_code,
+    reason = "Reuse trajectory data types,There is also a complete test of the text protocol"
+)]
 #[path = "support/trace.rs"]
 mod trace;
 use model::ResultValue;
@@ -19,7 +25,8 @@ use std::sync::Arc;
 use trace::Value;
 
 #[test]
-fn 基准只接受普通删除的有限结果且保留逻辑负载口径() {
+fn the_benchmark_only_accepts_limited_results_of_ordinary_deletion_and_retains_the_logical_load_caliber()
+ {
     use trace::{Operation, Step};
     let step = |operation| Step {
         session: 0,
@@ -65,7 +72,8 @@ fn 基准只接受普通删除的有限结果且保留逻辑负载口径() {
 }
 
 #[test]
-fn 计量只累计实际完成字节且拒绝错误和旧输出不重复计数() {
+fn metering_only_accumulates_actual_completed_bytes_and_rejects_errors_and_old_output_without_double_counting()
+ {
     let inner = Arc::new(memory::MemoryDevice::new(1, 1024).unwrap());
     let meter = meter::Meter::default();
     let device = meter.wrap(inner.clone());
@@ -75,14 +83,14 @@ fn 计量只累计实际完成字节且拒绝错误和旧输出不重复计数()
     };
     device
         .submit(request(IoOperation::Open {
-            path: "数据".into(),
+            path: "data".into(),
             create_new: true,
         }))
         .unwrap();
     let mut output = Vec::new();
     device.poll(PollBudget::default(), &mut output).unwrap();
     let IoOutcome::Opened(file) = output[0].result.as_ref().unwrap() else {
-        panic!("应打开测试文件")
+        panic!("The test file should be opened")
     };
     let file = *file;
     inner.inject_next(memory::MemoryFault::Short(3)).unwrap();
@@ -124,7 +132,8 @@ fn 计量只累计实际完成字节且拒绝错误和旧输出不重复计数()
 }
 
 #[test]
-fn 固定轨迹的混合比例删除缺失及放大分母有独立预期() {
+fn fixed_trajectory_blend_ratio_deletion_missing_and_amplified_denominator_have_independent_expectations()
+ {
     let fixed = scenario::prepare(
         scenario::Case {
             variable: false,

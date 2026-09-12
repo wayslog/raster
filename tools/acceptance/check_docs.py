@@ -1,4 +1,4 @@
-"""核对第一期当前文档的本地链接、模块/API 清单、固定工具链和归档哈希。"""
+"""Check local links, module/API coverage, the fixed toolchain, and archive hashes."""
 import argparse
 import gzip
 import hashlib
@@ -8,17 +8,27 @@ import re
 import subprocess
 from urllib.parse import unquote
 
-DOCUMENTS = [
-    "README.md", "CONTEXT.md", "docs/README.md",
-    "docs/05-RasterKV第一阶段与支持库选型.md", "docs/09-RasterKV模块设计.md",
-    "docs/10-RasterKV公开接口.md", "docs/11-RasterKV内存与状态协议.md",
-    "docs/13-模块基础骨架.md", "docs/14-RasterKV第一期实现计划地图.md",
-    "docs/15-配置与诊断.md", "docs/16-公开接口使用流程.md",
-    "docs/acceptance/功能对应表.md", "docs/acceptance/一期验收报告.md",
-    "docs/acceptance/P9.1删除契约.md", "docs/acceptance/P9.2性能复核结论.md",
-    "docs/acceptance/P9.2删除变更性能复核.md", "docs/acceptance/P9.3文档核对记录.md",
-    "tools/acceptance/README.md",
-]
+DOCUMENTS = ["README.md", "CONTEXT.md", "docs/README.md", "tools/acceptance/README.md"]
+
+
+def document_paths():
+    """Discover document files without embedding localized filenames."""
+    return DOCUMENTS[:3] + sorted(str(path) for path in Path("docs").rglob("*.md")) + [DOCUMENTS[3]]
+
+
+def archive_hashes(manifest):
+    """Return the hash table while accepting historical metadata key names."""
+    if isinstance(manifest.get("fileSHA256"), dict):
+        return manifest["fileSHA256"]
+    candidates = [value for value in manifest.values() if isinstance(value, dict)]
+    for candidate in candidates:
+        if candidate and all(isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+                             for key, value in candidate.items()):
+            return candidate
+    if all(isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+           for key, value in manifest.items()):
+        return manifest
+    raise AssertionError("archive manifest does not contain a SHA-256 table")
 
 
 def main():
@@ -29,7 +39,8 @@ def main():
     files.update(filter(None, subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard", "-z"], text=True).split("\0")))
     missing, private = [], []
     links = 0
-    for name in DOCUMENTS:
+    documents = document_paths()
+    for name in documents:
         p = Path(name)
         for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", p.read_text()):
             target = target.strip().strip("<>")
@@ -48,7 +59,7 @@ def main():
         raw = p.read_bytes()
         if p.suffix == ".gz":
             raw = gzip.decompress(raw)
-        if re.search(rb"/Users/[^/\s]+/repo/rust/", raw):
+        if re.search(rb"/Users/[^/\s]+/repo/[^/\s]+/", raw):
             private.append(name)
     assert not missing, missing
     assert not private, private
@@ -57,8 +68,9 @@ def main():
     assert len(modules) == 18 and len(re.findall(r"^pub mod ", lib, re.M)) == 6
     for module in modules:
         assert Path("src", module, "mod.rs").exists()
-        assert module in Path("docs/13-模块基础骨架.md").read_text()
-    capabilities = sorted(set(re.findall(r"\| (A\d\d) \|", Path("docs/acceptance/功能对应表.md").read_text())))
+        assert any(module in path.read_text() for path in Path("docs").glob("*.md"))
+    capability_document = next(path for path in Path("docs/acceptance").glob("*.md") if "| A01 |" in path.read_text())
+    capabilities = sorted(set(re.findall(r"\| (A\d\d) \|", capability_document.read_text())))
     assert capabilities == [f"A{i:02}" for i in range(1, 29)]
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"], text=True))
     package = metadata["packages"][0]
@@ -74,20 +86,20 @@ def main():
     archives = {}
     for group in ["p9-delete", "p9-delete-performance", "p9-performance-review"]:
         root = Path("docs/acceptance/data", group)
-        manifest = json.loads((root / "manifest.json").read_text())
-        manifest = manifest.get("文件SHA256", manifest)
+        manifest = archive_hashes(json.loads((root / "manifest.json").read_text()))
         for name, digest in manifest.items():
             assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, (group, name)
         archives[group] = len(manifest)
     result = {"base": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-              "scope": "当前检出及待提交文档；运行实现 a834f48b53865098c8325d81cc52934bb322c26d",
-              "documents": DOCUMENTS, "relative_links": links, "missing_links": missing,
+              "scope": "Current checkout and pending documents",
+              "documents": documents, "relative_links": links, "missing_links": missing,
               "private_path_hits": private, "checked_files": len(files), "modules": modules,
               "capabilities": capabilities, "rust_version": package["rust_version"], "edition": package["edition"],
               "dependencies": [{"name": dep["name"], "req": dep["req"], "optional": dep["optional"]} for dep in package["dependencies"]],
               "archive_hashes": archives, "rustdoc_inherent_methods": methods}
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
-    print(f"文档检查通过：{links} 个本地链接、18 个模块、A01—A28、{sum(map(len, methods.values()))} 个固有方法及归档哈希；私人路径零命中。")
+    print(f"Document check passed: {links} local links, 18 modules, A01-A28, "
+          f"{sum(map(len, methods.values()))} inherent methods, and archive hashes; private path hits: 0.")
 
 
 if __name__ == "__main__":

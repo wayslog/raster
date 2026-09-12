@@ -1,4 +1,4 @@
-//! 四操作、挂起任务、持久化和维护的编排中心。
+//! four operations,pending tasks,Orchestration center for persistence and maintenance.
 pub(crate) mod auto_compaction;
 mod cache;
 pub(crate) mod checkpoint;
@@ -66,16 +66,18 @@ impl<S: Schema> Engine<S> {
     ) -> Result<(KeyHash, Vec<u8>), Error> {
         use crate::schema::KeyCodec;
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(Error::InvalidState("会话关闭或引擎失败"));
+            return Err(Error::InvalidState("Session closed or engine failed"));
         }
-        // 活跃身份只有当前会话能够提交；创建/续接读取登记进度，admit 成功后同步本地值。
-        // 此处仅提前拒绝非法序号；最终接受仍检查全局身份、版本及序号。
+        // Active identities can only be submitted by the current session;create/Continue to read registration progress,admit Synchronize local value after success.
+        // Only illegal serial numbers are rejected in advance here;Final acceptance still checks global identity,Version and serial number.
         if session
             .current
             .last_accepted
             .is_some_and(|last| serial <= last)
         {
-            return Err(Error::InvalidState("操作序号必须严格递增"));
+            return Err(Error::InvalidState(
+                "operation_serial_must_increase_strictly",
+            ));
         }
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let codec = self.schema.key_codec();
@@ -93,7 +95,7 @@ impl<S: Schema> Engine<S> {
             Ok(result) => result,
             Err(_) => {
                 self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
-                Err(Error::InvalidState("请求键或编码器恐慌"))
+                Err(Error::InvalidState("request key or encoder panicked"))
             }
         }
     }
@@ -105,10 +107,10 @@ impl<S: Schema> Engine<S> {
     ) -> crate::api::completion::OperationResult<T> {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(request))).is_err() {
             self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
-            // 旧输出也可能有用户析构，仍在边界内释放。
+            // Old output may also have user destruction,still released within borders.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(result)));
             return Err(OperationError {
-                cause: Error::InvalidState("请求析构恐慌"),
+                cause: Error::InvalidState("Request destructor panic"),
                 effect,
             });
         }
@@ -116,7 +118,7 @@ impl<S: Schema> Engine<S> {
     }
     fn admit(&self, session: &mut SessionRuntime, serial: Serial) -> Result<(), Error> {
         if session.closing || self.failed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(Error::InvalidState("会话关闭或引擎失败"));
+            return Err(Error::InvalidState("Session closed or engine failed"));
         }
         self.coordinator
             .accept_serial(session.id, serial, session.current.version)?;
@@ -127,7 +129,9 @@ impl<S: Schema> Engine<S> {
         match entry.head {
             crate::index::IndexHead::Empty => Ok(None),
             crate::index::IndexHead::Log(address) => Ok(Some(address)),
-            crate::index::IndexHead::Cache(_) => Err(Error::InvalidState("缓存路径尚未接通")),
+            crate::index::IndexHead::Cache(_) => {
+                Err(Error::InvalidState("The cache path is not connected yet"))
+            }
         }
     }
 }
@@ -144,7 +148,7 @@ mod pending_read_tests;
 mod checkpoint_tests;
 
 impl<S: Schema> Engine<S> {
-    /// Ready 直接移交拥有型结果；仍以相同终结和 I/O 采样口径记录统计。
+    /// Ready Direct handover of owned results;Still ends up the same and I/O Sampling caliber record statistics.
     fn record_ready<T: 'static>(
         &self,
         monitor: &mut metrics::Monitor,

@@ -1,4 +1,4 @@
-// 每个逻辑会话使用真实线程，空闲时参与上游阶段推进；上下文与结果不跨归属线程执行。
+// Use real threads per logical session,Participate in upstream stage advancement during free time;Context and results are not executed across owning threads.
 #pragma once
 #include <array>
 #include <condition_variable>
@@ -31,7 +31,7 @@ class SessionWorker {
           state_.guid=resumed->guid;
           state_.serial=store_.ContinueSession(state_.guid);
           registered=true;
-          if(state_.serial!=resumed->serial) throw std::runtime_error("上游续会话序号与检查点不同");
+          if(state_.serial!=resumed->serial) throw std::runtime_error("The upstream continued session sequence number is different from the checkpoint");
         } else {state_.guid=store_.StartSession();registered=true;}
         initialized.set_value();
       } catch(...) {
@@ -73,7 +73,7 @@ class SessionWorker {
     auto ready=task->get_future();
     {std::lock_guard<std::mutex> lock(mutex_);jobs_.push_back([task]{(*task)();});}
     changed_.notify_one();
-    // 整个执行器还有外层进程期限，覆盖上游内部同步循环和 StopSession。
+    // The entire executor also has outer process deadlines,Override the upstream inner sync loop and StopSession.
     return ready.get();
   }
   std::string apply(const Step& step) {
@@ -88,12 +88,12 @@ class SessionWorker {
       ++state_.pending[operation];
       auto end=std::chrono::steady_clock::now()+std::chrono::seconds(60);
       while(context.reply->completions==0) {
-        if(std::chrono::steady_clock::now()>=end) throw std::runtime_error("上游已接受请求等待超时");
+        if(std::chrono::steady_clock::now()>=end) throw std::runtime_error("The upstream accepted the request and waited for timeout");
         store_.CompletePending(false);store_.Refresh();std::this_thread::yield();
       }
-      if(context.reply->completions!=1) throw std::runtime_error("上游异步结果没有恰好终结一次");
+      if(context.reply->completions!=1) throw std::runtime_error("The upstream asynchronous result did not end exactly once");
     } else {
-      if(context.reply->completions) throw std::runtime_error("上游同步返回同时通知异步回调");
+      if(context.reply->completions) throw std::runtime_error("The upstream returns synchronously and notifies the asynchronous callback.");
       context.reply->status=status;
     }
     state_.serial=step.serial;

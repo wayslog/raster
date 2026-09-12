@@ -1,4 +1,4 @@
-//! 检查点发布与恢复通过同一目录锁协调；暂停点使用原生设备，不替代磁盘语义。
+//! Checkpoint release and recovery are coordinated through the same directory lock;Use native device at pause point,Does not replace disk semantics.
 use super::*;
 use std::sync::{
     Arc,
@@ -94,7 +94,7 @@ fn execute(device: &dyn Device, operation: IoOperation) -> Result<IoOutcome, Err
     let id = device.submit(IoRequest { route, operation }).unwrap();
     let until = deadline();
     loop {
-        assert!(!until.expired(), "目录仲裁设备等待超时");
+        assert!(!until.expired(), "Directory quorum device wait timeout");
         let mut output = Vec::new();
         device.poll(PollBudget::default(), &mut output).unwrap();
         if let Some(done) = output.pop() {
@@ -116,7 +116,7 @@ fn try_lock(device: &dyn Device, mode: FileLockMode) -> Result<FileId, Error> {
         },
     )? {
         IoOutcome::Locked(file) => Ok(file),
-        _ => panic!("目录锁完成错误"),
+        _ => panic!("directory lock completion error"),
     }
 }
 fn lock(device: &dyn Device, mode: FileLockMode) -> FileId {
@@ -125,10 +125,13 @@ fn lock(device: &dyn Device, mode: FileLockMode) -> FileId {
         match try_lock(device, mode) {
             Ok(file) => return file,
             Err(Error::Busy) => {
-                assert!(!until.expired(), "预期可用的目录锁没有释放");
+                assert!(
+                    !until.expired(),
+                    "Expected available directory lock not released"
+                );
                 std::thread::yield_now();
             }
-            Err(error) => panic!("加锁失败：{error}"),
+            Err(error) => panic!("Lock failed:{error}"),
         }
     }
 }
@@ -145,14 +148,17 @@ fn progress_until(
 ) {
     let until = deadline();
     while !ready() {
-        assert!(!until.expired(), "未到达目录仲裁暂停点");
+        assert!(
+            !until.expired(),
+            "Directory arbitration pause point not reached"
+        );
         session.poll(PollBudget::default()).unwrap();
         store.maintenance().poll(PollBudget::default()).unwrap();
         std::thread::yield_now();
     }
 }
 #[test]
-fn 独占目录锁阻挡检查点且发布共享锁覆盖提交重命名() {
+fn exclusive_directory_lock_blocks_checkpoint_and_issuing_shared_lock_overwrites_commit_rename() {
     let control = Arc::new(Control::default());
     let (_root, store) = setup(Some(Box::new(Factory(control.clone()))));
     let mut session = store.start_session(Default::default()).unwrap();
@@ -179,7 +185,7 @@ fn 独占目录锁阻挡检查点且发布共享锁覆盖提交重命名() {
     });
     assert!(
         matches!(try_lock(&*guard, FileLockMode::Exclusive), Err(Error::Busy)),
-        "创建命名空间之前必须已经取得共享锁"
+        "Shared locks must be obtained before creating a namespace"
     );
     control.pause_namespace.store(false, Ordering::SeqCst);
     progress_until(&store, &mut session, || {
@@ -200,7 +206,7 @@ fn 独占目录锁阻挡检查点且发布共享锁覆盖提交重命名() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 恢复读取持有共享目录锁且实例发布前释放() {
+fn resume_reading_holds_a_shared_directory_lock_and_releases_it_before_the_instance_is_released() {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
@@ -231,7 +237,7 @@ fn 恢复读取持有共享目录锁且实例发布前释放() {
     while !control.read_blocked.load(Ordering::SeqCst) {
         assert!(
             !until.expired() && !child.is_finished(),
-            "恢复未到达材料读取暂停点"
+            "Resume has not reached the material reading pause point"
         );
         std::thread::yield_now();
     }
@@ -273,7 +279,8 @@ fn 恢复读取持有共享目录锁且实例发布前释放() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 等待目录锁期间基准索引失效则日志检查点拒绝发布() {
+fn if_the_base_index_fails_while_waiting_for_the_directory_lock_the_log_checkpoint_refuses_to_be_released()
+ {
     let control = Arc::new(Control::default());
     let (_root, store) = setup(Some(Box::new(Factory(control.clone()))));
     let mut session = store.start_session(Default::default()).unwrap();
@@ -329,7 +336,7 @@ fn 等待目录锁期间基准索引失效则日志检查点拒绝发布() {
         .count();
     assert_eq!(
         committed, 1,
-        "只保留原始完整集合，不能发布缺少基准索引的日志检查点"
+        "Keep only the original complete set,Cannot publish log checkpoint missing base index"
     );
     let guard = external(&store);
     assert!(matches!(

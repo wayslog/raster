@@ -1,4 +1,4 @@
-//! 预分配的字节区仅发放互不重叠的租约；不可变缓存记录持有租约至最后一个读者退出。
+//! Pre-allocated byte areas are only issued non-overlapping leases;Immutable cache records hold a lease until the last reader exits.
 use crate::types::Error;
 use std::{
     alloc::{Layout, alloc_zeroed, dealloc},
@@ -14,9 +14,9 @@ pub(super) struct Arena {
     layout: Layout,
     state: Mutex<State>,
 }
-// SAFETY: 字节区不直接暴露引用；控制锁发放不重叠的 Lease，每个租约只允许独占初始化。
+// SAFETY: The byte area does not directly expose references;Control lock issuance without overlap Lease,Only exclusive initialization is allowed per lease.
 unsafe impl Send for Arena {}
-// SAFETY: 已初始化租约只提供不可变访问；最后一个租约退出前其范围不会再次分配。
+// SAFETY: Initialized leases only provide immutable access;The scope will not be allocated again until the last lease is exited..
 unsafe impl Sync for Arena {}
 impl Arena {
     pub fn new(bytes: usize) -> Result<Arc<Self>, Error> {
@@ -24,7 +24,7 @@ impl Arena {
             return Err(Error::CapacityExceeded);
         }
         let layout = Layout::from_size_align(bytes, 8).map_err(|_| Error::CapacityExceeded)?;
-        // SAFETY: 非零 Layout 已验证；空指针按分配失败处理。
+        // SAFETY: non-zero Layout Verified;Null pointers are handled as allocation failures.
         let pointer = NonNull::new(unsafe { alloc_zeroed(layout) }).ok_or(Error::OutOfMemory)?;
         let arena = Arc::new(Self {
             pointer,
@@ -38,7 +38,7 @@ impl Arena {
             let mut state = arena
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("缓存字节区锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Cache byte area lock poisoning"))?;
             state
                 .free
                 .try_reserve_exact(1)
@@ -57,11 +57,11 @@ impl Arena {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("缓存字节区锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Cache byte area lock poisoning"))?;
         let Some(index) = state.free.iter().position(|&(_, bytes)| bytes >= len) else {
             return Ok(None);
         };
-        // 每个活跃租约最多增加一个自由区间，归还时绝不再为元数据分配内存。
+        // Each active lease adds at most one free interval,Memory is never allocated for metadata on return.
         let required = state
             .free
             .len()
@@ -89,7 +89,7 @@ impl Arena {
 }
 impl Drop for Arena {
     fn drop(&mut self) {
-        // SAFETY: 最后一个 Arc 才执行；所有租约及其字节引用已退出，Layout 与分配一致。
+        // SAFETY: the last one Arc before execution;All leases and their byte references have been exited,Layout consistent with assignment.
         unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
     }
 }
@@ -101,7 +101,7 @@ pub(super) struct Lease {
 impl Lease {
     pub fn initialize(&mut self, bytes: &[u8]) {
         assert_eq!(self.len, bytes.len());
-        // SAFETY: 自由区间账本保证该范围独占且位于分配内；&mut self 排除同一租约的共享访问。
+        // SAFETY: The free range ledger guarantees that the range is exclusive and within the allocation;&mut self Exclude shared access for the same lease.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 bytes.as_ptr(),
@@ -111,7 +111,7 @@ impl Lease {
         };
     }
     pub fn bytes(&self) -> &[u8] {
-        // SAFETY: 租约持有字节区 Arc，范围边界已验证；发布后不会再次可变访问同一租约。
+        // SAFETY: The lease holds the byte area Arc,Range boundaries verified;The same lease is not mutably accessed again after publishing.
         unsafe {
             std::slice::from_raw_parts(self.arena.pointer.as_ptr().add(self.offset), self.len)
         }
@@ -140,7 +140,7 @@ impl Drop for Lease {
 mod tests {
     use super::*;
     #[test]
-    fn 租约跨线程且空洞合并复用不会覆盖尚存读者() {
+    fn the_lease_spans_threads_and_hole_merge_reuse_does_not_overwrite_existing_readers() {
         let arena = Arena::new(64).unwrap();
         let mut a = arena.allocate(16).unwrap().unwrap();
         a.initialize(&[1; 16]);

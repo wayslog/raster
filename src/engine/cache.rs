@@ -1,4 +1,4 @@
-//! 缓存修改取得全部业务写入仲裁；读取只取得拥有型记录租约。
+//! Cache modification obtains all business write arbitration;Read only obtains the lease of owned records.
 use super::Engine;
 use crate::{
     cache::Resolved, index::EntrySnapshot, log::lookup::LogLookup, schema::Schema, types::*,
@@ -32,16 +32,20 @@ impl<S: Schema> Engine<S> {
             match gate.try_lock() {
                 Ok(guard) => guards.push(guard),
                 Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
-                Err(_) => return Err(Error::InvalidState("缓存安装遇到业务仲裁锁中毒")),
+                Err(_) => {
+                    return Err(Error::InvalidState(
+                        "Cache installation encounters business arbitration lock poisoning",
+                    ));
+                }
             }
         }
-        // 检查须在仲裁内：否则 GC 可在检查后清空缓存，迟到安装又把缓存头放回待清桶。
+        // Inspection must be within arbitration:Otherwise GC Cache can be cleared after checking,The installation was late and the cache header was returned to the bucket to be cleared..
         if self.coordinator.snapshot()?.id.is_some() {
             return Ok(());
         }
         let result = (|| {
             if let Some((source, bytes)) = lookup.cache_record(self.cache.max_record_bytes())? {
-                // 同标签的较新链头可能仍有效，但本次读出的旧键已被逻辑截断。
+                // Newer link headers with the same tag may still be valid,But the old key read this time has been logically truncated.
                 if source < self.log.frontiers()?.begin {
                     return Ok(());
                 }
@@ -63,13 +67,15 @@ impl<S: Schema> Engine<S> {
         for gate in &self.operations {
             guards.push(gate.try_lock().map_err(|error| match error {
                 std::sync::TryLockError::WouldBlock => Error::Busy,
-                _ => Error::InvalidState("索引快照遇到业务仲裁锁中毒"),
+                _ => Error::InvalidState(
+                    "Index snapshot encounters business arbitration lock poisoning",
+                ),
             })?);
         }
         self.cache.with_normalized_index(&self.index, || {
             let begin = self.log.frontiers()?.begin;
             let mut image = self.index.snapshot()?;
-            // GC 失败后可能尚有未清完的旧桶；这些链头已经不属于当前逻辑键空间。
+            // GC There may still be old buckets that have not been cleared after failure.;These chain heads no longer belong to the current logical key space.
             image.entries.retain(|entry| matches!(entry.head, crate::index::IndexHead::Log(address) if address >= begin));
             image.encode()
         })

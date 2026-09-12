@@ -1,4 +1,4 @@
-//! 用 P0 的独立模型逐操作核验公开引擎；适配器不模拟索引和日志。
+//! use P0 independent model operation-by-operation verification public engine;Adapter does not simulate indexes and logs.
 #[path = "support/actor.rs"]
 mod actor;
 #[path = "support/replay.rs"]
@@ -40,7 +40,7 @@ fn replay_store(trace: Trace, store: RasterKV<Schema>) -> [usize; 4] {
         });
         model
             .verify(step.clone(), &observed)
-            .unwrap_or_else(|error| panic!("种子 {} 步骤 {i}：{error}", trace.seed));
+            .unwrap_or_else(|error| panic!("seeds {} step {i}:{error}", trace.seed));
         assert_eq!(last.map(|s| s.0), model.last_accepted(step.session));
         for (sum, count) in pending.iter_mut().zip(step_pending) {
             *sum += count;
@@ -65,17 +65,17 @@ fn replay_store(trace: Trace, store: RasterKV<Schema>) -> [usize; 4] {
 }
 
 #[test]
-fn 固定轨迹通过真实引擎逐操作对照() {
+fn fixed_trajectories_are_compared_operation_by_operation_through_the_real_engine() {
     replay(Trace::decode(include_str!("fixtures/p0.trace")).unwrap());
 }
 #[test]
-fn 确定种子混合值多会话四操作对照() {
+fn determining_seed_mix_values_for_multi_session_four_operation_control() {
     for seed in [0, 1, 42, 0xabcdef, u64::MAX] {
         replay(Trace::generate(seed, 1500));
     }
 }
 #[test]
-fn 变长值增长收缩类型错误与序号拒绝对照() {
+fn variable_length_value_growth_and_shrinkage_type_error_and_serial_number_rejection_comparison() {
     let key = vec![255, 0];
     let mut steps = vec![];
     for (serial, operation) in [
@@ -121,7 +121,7 @@ fn 变长值增长收缩类型错误与序号拒绝对照() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn 原生文件两页内存变长值四操作混合轨迹() {
+fn native_file_two_page_memory_variable_length_value_four_operation_mixed_trajectory() {
     struct Directory(std::path::PathBuf);
     impl Drop for Directory {
         fn drop(&mut self) {
@@ -202,7 +202,7 @@ fn 原生文件两页内存变长值四操作混合轨迹() {
     let pending = replay_store(Trace { seed: 42, steps }, store);
     assert!(
         pending.iter().all(|count| *count > 0),
-        "四操作均应实际经历 Pending：{pending:?}"
+        "All four operations should be done through actual experience Pending:{pending:?}"
     );
     let files: Vec<_> = std::fs::read_dir(root.0.join("segments"))
         .unwrap()
@@ -211,7 +211,7 @@ fn 原生文件两页内存变长值四操作混合轨迹() {
     assert!(files.len() > 1);
     assert!(files.iter().sum::<u64>() > 4096 * 16);
     eprintln!(
-        "原生混合轨迹：Read/Upsert/RMW/Delete Pending={pending:?}，段数={}，文件字节={}",
+        "Native hybrid track:Read/Upsert/RMW/Delete Pending={pending:?},Number of segments={},file bytes={}",
         files.len(),
         files.iter().sum::<u64>()
     );

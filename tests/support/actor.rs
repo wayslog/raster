@@ -1,5 +1,5 @@
-//! 测试用同步指令线程；真实 Session、非 Send 请求及票据始终创建和保留在所属线程。
-//! 指令间不自动 poll，用主线程明确控制交错；不绕过任何公开注册检查。
+//! Synchronous instruction thread for testing;true Session,Not Send Requests and tickets are always created and retained in the owning thread.
+//! Not automatic between commands poll,Explicitly control interleaving with the main thread;Does not bypass any public registration checks.
 use std::{sync::mpsc, thread::JoinHandle, time::Duration};
 type Command<T> = Box<dyn FnOnce(&mut T) + Send>;
 pub(crate) struct Actor<T: 'static> {
@@ -19,7 +19,7 @@ impl<T: 'static> Actor<T> {
         });
         initialized
             .recv_timeout(Duration::from_secs(60))
-            .expect("会话线程初始化超时或失败");
+            .expect("Session thread initialization timed out or failed");
         Self {
             sender: Some(sender),
             worker: Some(worker),
@@ -34,10 +34,10 @@ impl<T: 'static> Actor<T> {
                 let value = action(state);
                 let _ = result.send(value);
             }))
-            .expect("会话指令线程已退出");
+            .expect("Session command thread has exited");
         receiver
             .recv_timeout(Duration::from_secs(60))
-            .expect("会话指令超时或线程失败")
+            .expect("Session command timeout or thread failure")
     }
 }
 impl<T> Drop for Actor<T> {
@@ -46,7 +46,7 @@ impl<T> Drop for Actor<T> {
         if let Some(worker) = self.worker.take() {
             let result = worker.join();
             if !std::thread::panicking() {
-                result.expect("会话指令线程失败");
+                result.expect("Session command thread failed");
             }
         }
     }

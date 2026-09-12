@@ -1,4 +1,4 @@
-//! P0 支持工具验收；这里没有执行 RasterKV 引擎。
+//! P0 Support tool acceptance;No execution here RasterKV engine.
 mod support;
 use raster::types::Effect;
 use support::{
@@ -23,7 +23,8 @@ fn read(serial: u64) -> Step {
     )
 }
 #[test]
-fn 盲删观察模型拒绝错误值强制墓碑丢失及伪造成功() {
+fn blind_deletion_observation_model_rejects_wrong_values_to_force_tombstone_loss_and_forgery_success()
+ {
     use support::model::ContractModel;
     let accepted = |value| Submission::Accepted(value);
     let mut empty = ContractModel::default();
@@ -97,7 +98,8 @@ fn 盲删观察模型拒绝错误值强制墓碑丢失及伪造成功() {
     );
 }
 #[test]
-fn 盲删观察模型限定普通墓碑的可达性且拒绝非法序号无副作用() {
+fn the_blind_deletion_observation_model_limits_the_accessibility_of_ordinary_tombstones_and_rejects_illegal_serial_numbers_without_any_side_effects()
+ {
     use support::model::ContractModel;
     for visible in [R::NotFound, R::Tombstone] {
         let mut model = ContractModel::default();
@@ -173,7 +175,7 @@ fn 盲删观察模型限定普通墓碑的可达性且拒绝非法序号无副�
     }
 }
 #[test]
-fn 固定轨迹与独立预期逐步一致() {
+fn the_fixed_trajectory_is_gradually_consistent_with_independent_expectations() {
     let trace = Trace::decode(include_str!("fixtures/p0.trace")).unwrap();
     let expected = [
         R::NotFound,
@@ -193,7 +195,7 @@ fn 固定轨迹与独立预期逐步一致() {
     assert_eq!(model.executions, 8);
 }
 #[test]
-fn 生成器固定种子及格式往返可重放() {
+fn generator_fixed_seed_and_format_round_trip_replayable() {
     let first = Trace::generate(0, 1);
     assert_eq!(first.steps[0].session, 1);
     assert_eq!(first.steps[0].key, vec![4; 4]);
@@ -208,7 +210,7 @@ fn 生成器固定种子及格式往返可重放() {
             assert_eq!(
                 a.submit(step.clone()),
                 b.submit(step.clone()),
-                "种子 {seed}\n{}",
+                "seeds {seed}\n{}",
                 trace.encode()
             );
         }
@@ -216,7 +218,7 @@ fn 生成器固定种子及格式往返可重放() {
     assert_ne!(Trace::generate(1, 32), Trace::generate(2, 32));
 }
 #[test]
-fn 损坏轨迹拒绝() {
+fn damaged_trajectory_rejection() {
     for bad in [
         "",
         "raster-trace 2 0",
@@ -233,7 +235,7 @@ fn 损坏轨迹拒绝() {
     }
 }
 #[test]
-fn 跳号拒绝与多会话互不消费序号() {
+fn number_hopping_rejection_and_multi_session_do_not_consume_sequence_numbers_from_each_other() {
     let mut model = Model::default();
     assert_eq!(model.submit(read(0)), Submission::Accepted(R::NotFound));
     assert_eq!(model.submit(read(9)), Submission::Accepted(R::NotFound));
@@ -249,7 +251,7 @@ fn 跳号拒绝与多会话互不消费序号() {
     assert_eq!(model.last_accepted(1), Some(0));
 }
 #[test]
-fn 变长追加与类型错误不修改旧值() {
+fn variable_length_append_and_type_error_do_not_modify_the_old_value() {
     let mut model = Model::default();
     assert_eq!(
         model.submit(step(
@@ -287,7 +289,7 @@ fn 变长追加与类型错误不修改旧值() {
     );
 }
 #[test]
-fn 故障按事件与出现次数单次触发() {
+fn faults_are_triggered_single_time_based_on_event_and_number_of_occurrences() {
     let mut names = std::collections::BTreeSet::new();
     for event in Event::ALL {
         assert!(names.insert(event.name()));
@@ -304,7 +306,7 @@ fn 故障按事件与出现次数单次触发() {
     }
 }
 #[test]
-fn 终结一次且修改后错误不得重试() {
+fn terminate_once_and_the_error_cannot_be_retried_after_modification() {
     for effect in [Effect::NotApplied, Effect::Applied, Effect::Unknown] {
         let mut life = Lifecycle::default();
         assert!(life.finish(effect, true).is_err());
@@ -321,7 +323,7 @@ fn 终结一次且修改后错误不得重试() {
 }
 
 #[test]
-fn 可能生效区间的恐慌不会重复执行修改() {
+fn panics_in_the_possible_effective_range_will_not_be_modified_repeatedly() {
     use std::panic::{AssertUnwindSafe, catch_unwind};
     let mut life = Lifecycle::default();
     let mut value = 0;
@@ -329,7 +331,7 @@ fn 可能生效区间的恐慌不会重复执行修改() {
     life.begin_mutation().unwrap();
     let failure = catch_unwind(AssertUnwindSafe(|| {
         value += 1;
-        panic!("模拟修改后恐慌");
+        panic!("Panic after simulation modification");
     }));
     assert!(failure.is_err());
     assert!(life.retry_computation().is_err());
@@ -340,11 +342,11 @@ fn 可能生效区间的恐慌不会重复执行修改() {
 }
 
 #[test]
-fn 通知恐慌不改变已终结结果() {
+fn notification_panic_does_not_change_the_finalized_result() {
     let mut life = Lifecycle::default();
     life.accept().unwrap();
     life.finish(Effect::Applied, false).unwrap();
-    assert!(std::panic::catch_unwind(|| panic!("模拟结果观察器恐慌")).is_err());
+    assert!(std::panic::catch_unwind(|| panic!("Simulation result observer panics")).is_err());
     assert!(life.finish(Effect::Applied, false).is_err());
     assert!(life.retry_computation().is_err());
     assert!(!life.failed);

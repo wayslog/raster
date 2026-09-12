@@ -1,4 +1,4 @@
-//! 检查点目录排他预留及父目录同步；预留成功不代表存在可恢复的提交。
+//! Checkpoint directory exclusive reservation and parent directory synchronization;Successful reservation does not mean that there are recoverable commits.
 use super::material::MaterialWrite;
 use crate::{device::*, storage::SegmentedStorage, types::*};
 use std::{path::PathBuf, sync::Arc};
@@ -12,7 +12,7 @@ enum Stage {
     NamespaceSync,
     Done,
 }
-/// 不可克隆的预留凭据，只有完整同步目录层级后才能取得。
+/// Non-clonable reserved credentials,It can only be obtained after completely synchronizing the directory hierarchy..
 pub(crate) struct PreparedDirectory {
     pub(super) owner: Arc<()>,
     pub(super) store: StoreId,
@@ -48,9 +48,9 @@ impl DirectoryPrepare {
         let path = storage
             .checkpoint_path(token, "owner")?
             .parent()
-            .expect("固定目录层级")
+            .expect("fixed directory hierarchy")
             .to_path_buf();
-        // owner 是排他预留记录，不是提交标识；从不自动删除或复用已有 token。
+        // owner is an exclusively reserved record,Not a commit ID;Never automatically delete or reuse existing token.
         let mut marker = b"RCLM\x01\x00\x00\x00".to_vec();
         marker.extend_from_slice(&store.0);
         marker.extend_from_slice(&token.0);
@@ -73,7 +73,9 @@ impl DirectoryPrepare {
         if Arc::ptr_eq(&self.owner, &storage.identity) {
             Ok(())
         } else {
-            Err(Error::InvalidState("目录预留属于其他存储"))
+            Err(Error::InvalidState(
+                "Directory reservation belongs to other storage",
+            ))
         }
     }
     fn fail(&mut self, error: Error) {
@@ -102,7 +104,7 @@ impl DirectoryPrepare {
                 return self
                     .claim
                     .as_mut()
-                    .expect("预留任务存在")
+                    .expect("Reserved tasks exist")
                     .submit_next(storage);
             }
             if self.stage == Stage::Done {
@@ -115,7 +117,7 @@ impl DirectoryPrepare {
             Stage::Token => IoOperation::CreateDirectory(self.path.clone()),
             Stage::TokenSync => IoOperation::SyncDirectory(self.path.clone()),
             Stage::NamespaceSync => IoOperation::SyncDirectory("checkpoints".into()),
-            Stage::Claim | Stage::Done => unreachable!("子任务阶段已经处理"),
+            Stage::Claim | Stage::Done => unreachable!("Subtask stage has been processed"),
         };
         match storage.device.submit(IoRequest {
             route: self.route,
@@ -134,7 +136,10 @@ impl DirectoryPrepare {
             },
         }
     }
-    #[allow(clippy::result_large_err, reason = "错误身份归还原完成")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Mistaken identity restitution still complete"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -143,13 +148,13 @@ impl DirectoryPrepare {
         if self.check_owner(storage).is_err() {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("目录预留属于其他存储"),
+                reason: Error::InvalidState("Directory reservation belongs to other storage"),
             });
         }
         if self.stage == Stage::Claim {
             self.claim
                 .as_mut()
-                .expect("预留任务存在")
+                .expect("Reserved tasks exist")
                 .accept(storage, completion)?;
             self.finish_claim();
             return Ok(());
@@ -157,7 +162,7 @@ impl DirectoryPrepare {
         if self.pending != Some(completion.id) || completion.route != self.route {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("目录预留完成身份不匹配"),
+                reason: Error::InvalidState("Directory reservation completion identity mismatch"),
             });
         }
         self.pending = None;
@@ -170,7 +175,7 @@ impl DirectoryPrepare {
                     Stage::TokenSync => Stage::NamespaceSync,
                     Stage::NamespaceSync => Stage::Done,
                     _ => {
-                        self.fail(Error::InvalidState("目录预留阶段不匹配"));
+                        self.fail(Error::InvalidState("Directory reservation phase mismatch"));
                         return Ok(());
                     }
                 };
@@ -183,7 +188,9 @@ impl DirectoryPrepare {
                 }
             }
             Err(error) => self.fail(error),
-            _ => self.fail(Error::InvalidState("目录预留完成类型错误")),
+            _ => self.fail(Error::InvalidState(
+                "Directory reservation completion type error",
+            )),
         }
         Ok(())
     }

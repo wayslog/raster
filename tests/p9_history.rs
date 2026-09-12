@@ -1,4 +1,4 @@
-//! 原生磁盘上记录完整调用区间，交错维护后枚举合法历史，并用真实恢复再次核验。
+//! Record the complete call interval on the native disk,Enumeration legal history after staggered maintenance,And verify again with real recovery.
 #[path = "support/history.rs"]
 mod history;
 use history::{Action, Event, Reply, Request, Schema};
@@ -51,7 +51,7 @@ fn take(session: &mut Session<Schema>, submission: Submission<Reply>) -> Reply {
     match result {
         Ok(Outcome::Success(reply)) => reply,
         Ok(Outcome::NotFound) => Reply::Missing,
-        other => panic!("意外业务结果 {other:?}"),
+        other => panic!("unexpected business results {other:?}"),
     }
 }
 fn call(
@@ -63,7 +63,7 @@ fn call(
     let end = deadline();
     loop {
         let request = Request(action);
-        // 只记录真正被接受的调用起点，不把之前 Busy 的区间并入历史。
+        // Only the origin of the call that is actually accepted is recorded,Don't put it before Busy The interval is merged into the history.
         let start = clock.fetch_add(1, Ordering::SeqCst);
         let result = match action {
             Action::Read => session.read(Serial(serial), request, ReadOptions::default()),
@@ -76,10 +76,13 @@ fn call(
             Err(rejected) => {
                 assert!(
                     matches!(rejected.reason, Error::Busy),
-                    "拒绝原因 {}",
+                    "Reason for rejection {}",
                     rejected.reason
                 );
-                assert!(!end.expired(), "未接受请求的背压超时");
+                assert!(
+                    !end.expired(),
+                    "Backpressure timeout for unaccepted requests"
+                );
                 assert!(session.last_accepted().is_none_or(|last| last.0 < serial));
                 session.poll(PollBudget::default()).unwrap();
                 std::thread::yield_now();
@@ -94,7 +97,7 @@ fn drive<R: Clone + std::fmt::Debug>(store: &RasterKV<Schema>, ticket: Maintenan
         if let Some(report) = ticket.try_report().unwrap() {
             return report.as_ref().as_ref().unwrap().clone();
         }
-        assert!(!end.expired(), "维护任务未终结");
+        assert!(!end.expired(), "Maintenance task not completed");
         std::thread::yield_now();
     }
 }
@@ -142,7 +145,7 @@ fn scenario(mode: MaintenanceMode, cache: bool, round: u64) -> String {
     drop(warm);
     let before = store.diagnostics().unwrap();
     assert!(before.log_span_bytes > config.log.page_bytes as u64 * config.log.memory_pages as u64);
-    // 已存在的初始键在磁盘；两名工作者先交出 Pending，维护才接受，之后共同推进。
+    // The initial key already exists on disk;Two workers hand over first Pending,Accept only after maintenance,Then work together to advance.
     let (submitted_tx, submitted_rx) = mpsc::channel();
     let clock = AtomicU64::new(0);
     let events = Mutex::new(Vec::new());
@@ -168,12 +171,12 @@ fn scenario(mode: MaintenanceMode, cache: bool, round: u64) -> String {
                 let (start, initial) = call(&mut session, 1, Action::Read, clock);
                 assert!(
                     matches!(initial, Submission::Pending(_)),
-                    "历史起点必须是真实磁盘 Pending"
+                    "The historical starting point must be a real disk Pending"
                 );
                 submitted.send(()).unwrap();
                 start_rx
                     .recv_timeout(Duration::from_secs(60))
-                    .expect("维护未接受或主线程失败");
+                    .expect("Maintenance not accepted or main thread failed");
                 let reply = take(&mut session, initial);
                 let end = clock.fetch_add(1, Ordering::SeqCst);
                 events.lock().unwrap().push(Event {
@@ -199,7 +202,7 @@ fn scenario(mode: MaintenanceMode, cache: bool, round: u64) -> String {
         for _ in 0..2 {
             submitted_rx
                 .recv_timeout(Duration::from_secs(60))
-                .expect("工作者未提交 Pending");
+                .expect("Worker not submitted Pending");
         }
         let start = || {
             for starter in &starters {
@@ -255,7 +258,7 @@ fn scenario(mode: MaintenanceMode, cache: bool, round: u64) -> String {
     assert_eq!(events.len(), 9);
     assert!(
         history::linearizable_from(&events, Some(7)),
-        "模式 {mode:?} 缓存 {cache} 轮次 {round}：{events:?}"
+        "mode {mode:?} cache {cache} round {round}:{events:?}"
     );
     let token = store
         .maintenance()
@@ -286,15 +289,16 @@ fn scenario(mode: MaintenanceMode, cache: bool, round: u64) -> String {
     assert_eq!(
         take(&mut observer, result),
         final_reply,
-        "历史终态在真实恢复后变化"
+        "The end state of history changes after the restoration of reality"
     );
     observer.close(deadline()).unwrap();
     drop(observer);
     recovered.shutdown(deadline()).unwrap();
-    format!("模式 {mode:?} 缓存 {cache} 轮次 {round}：{events:?}")
+    format!("mode {mode:?} cache {cache} round {round}:{events:?}")
 }
 #[test]
-fn 原生磁盘双挂起与维护交错的完整历史可线性化且恢复一致() {
+fn complete_history_of_native_disk_double_suspend_and_maintenance_interleaving_is_linearizable_and_recovery_consistent()
+ {
     let mut histories = Vec::new();
     for mode in [
         MaintenanceMode::Grow,

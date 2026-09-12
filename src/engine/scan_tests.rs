@@ -1,4 +1,4 @@
-//! 公开扫描的有界预读、失败、关闭与 Drop 生命周期；可控设备仍执行真实文件字节操作。
+//! Bounded read-ahead for public scans,failure,close with Drop life cycle;Controlled devices still perform real file byte operations.
 use super::*;
 use crate::{
     RasterKV, Submission,
@@ -93,7 +93,7 @@ fn setup() -> (RasterKV<TestSchema>, Arc<Control>) {
     let mut config = Config::default();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 4;
-    // 页帧跨段，恢复短读必须继续处理帧尾和下一段。
+    // Page frame span,Resuming a short read must continue processing the end of the frame and the next segment.
     config.storage.segment_bytes = 4096;
     config.scan.max_scanners = 1;
     config.scan.timeout = std::time::Duration::from_secs(1);
@@ -126,7 +126,8 @@ fn options(store: &RasterKV<TestSchema>, mode: Buffering) -> ScanOptions {
     }
 }
 #[test]
-fn 三种预读分别接受一二三页读取且超时恢复不遗漏() {
+fn three_types_of_pre_reading_accept_one_two_and_three_pages_of_reading_respectively_and_no_omissions_are_missed_during_timeout_recovery()
+ {
     let (store, control) = setup();
     for (mode, frames) in [
         (Buffering::Unbuffered, 1),
@@ -150,7 +151,8 @@ fn 三种预读分别接受一二三页读取且超时恢复不遗漏() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 放弃在途扫描仍占名额且归还完成后可重新注册() {
+fn if_you_give_up_scanning_in_transit_your_quota_will_still_be_occupied_and_you_can_re_register_after_the_return_is_completed()
+ {
     let (store, control) = setup();
     let range = options(&store, Buffering::DoublePage);
     let mut scan = store.scan(range).unwrap();
@@ -167,14 +169,14 @@ fn 放弃在途扫描仍占名额且归还完成后可重新注册() {
     let reads = control.reads.load(Ordering::SeqCst);
     control.paused.store(false, Ordering::SeqCst);
     let mut next = store.scan(range).unwrap();
-    // 放弃扫描只回收已接受的完成，不提交帧跨段的剩余读取。
+    // Abort scanning and only recycle accepted completions,Do not commit remaining reads across frame spans.
     assert_eq!(control.reads.load(Ordering::SeqCst), reads);
     next.close().unwrap();
     store.shutdown(deadline()).unwrap();
     next.close().unwrap();
 }
 #[test]
-fn 显式关闭超时可继续关闭且不会重新开始读取() {
+fn explicit_shutdown_timeout_continues_shutdown_without_restarting_reading() {
     let (store, control) = setup();
     let mut scan = store.scan(options(&store, Buffering::SinglePage)).unwrap();
     control.paused.store(true, Ordering::SeqCst);
@@ -189,7 +191,8 @@ fn 显式关闭超时可继续关闭且不会重新开始读取() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 短读跨段继续而读取失败使扫描一次失败关闭() {
+fn the_short_read_continues_across_segments_and_the_read_fails_causing_the_scan_to_fail_to_close_once()
+ {
     let (store, control) = setup();
     let range = options(&store, Buffering::Unbuffered);
     let mut scan = store.scan(range).unwrap();
@@ -204,14 +207,15 @@ fn 短读跨段继续而读取失败使扫描一次失败关闭() {
     assert!(matches!(scan.next_record(), Err(Error::InvalidState(_))));
     assert_eq!(control.reads.load(Ordering::SeqCst), reads);
     scan.close().unwrap();
-    // 一个扫描的文件读取错误不伪装成整个引擎不可用。
+    // A scanned file read error does not disguise itself as an entire engine being unavailable.
     let mut other = store.scan(range).unwrap();
     assert_eq!(other.next_record().unwrap().unwrap().key, 0);
     other.close().unwrap();
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 开放扫描前拒绝冷热半记录边界以及倒置和越界() {
+fn reject_hot_and_cold_half_record_boundaries_as_well_as_inversions_and_out_of_bounds_before_opening_the_scan()
+ {
     let (store, _) = setup();
     let range = options(&store, Buffering::Unbuffered);
     let hot = store.inner.log.frontiers().unwrap().head;
@@ -222,7 +226,7 @@ fn 开放扫描前拒绝冷热半记录边界以及倒置和越界() {
         .unwrap()
         .unwrap();
     assert!(!bytes.is_empty());
-    // 冷页从第一个记录的第二字节开始或结束，不能先交付其他记录再报边界错误。
+    // Cold pages start or end at the second byte of the first record,You cannot deliver other records first and then report a boundary error..
     for (begin, end) in [
         (LogAddress(1), range.end),
         (LogAddress(0), LogAddress(1)),
@@ -265,7 +269,7 @@ fn 开放扫描前拒绝冷热半记录边界以及倒置和越界() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 放弃通知不因收尾线程持锁而丢失() {
+fn abandon_notifications_are_not_lost_due_to_the_lock_being_held_by_the_finishing_thread() {
     let (store, _) = setup();
     let scan = store.scan(options(&store, Buffering::Unbuffered)).unwrap();
     let shared = scan.state.clone();
@@ -276,7 +280,7 @@ fn 放弃通知不因收尾线程持锁而丢失() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 扫描配置拒绝零预算超时和路由容量溢出() {
+fn scan_configuration_rejects_zero_budget_timeout_and_route_capacity_overflow() {
     let mut config = Config::default();
     config.scan.max_scanners = 0;
     assert!(config.validate().is_err());
@@ -288,7 +292,8 @@ fn 扫描配置拒绝零预算超时和路由容量溢出() {
 }
 
 #[test]
-fn 扫描返回后允许全部原驻留页淘汰并从磁盘继续固定范围() {
+fn after_the_scan_returns_all_original_resident_pages_are_allowed_to_be_eliminated_and_the_fixed_range_is_continued_from_disk()
+ {
     let (store, _) = setup();
     let range = options(&store, Buffering::DoublePage);
     let mut scan = store.scan(range).unwrap();
@@ -337,7 +342,8 @@ impl UpsertOperation<TestSchema> for Replace {
     }
 }
 #[test]
-fn 可变记录扫描不冻结值且旧输出不随原地更新变化() {
+fn variable_record_scans_do_not_freeze_values_and_old_output_does_not_change_with_in_place_updates()
+{
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .device(Box::new(crate::device::null::NullDeviceFactory))
         .create()
@@ -364,12 +370,12 @@ fn 可变记录扫描不冻结值且旧输出不随原地更新变化() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 逻辑边界前移时已缓存页也必须报范围截断() {
+fn when_the_logical_boundary_is_moved_forward_the_cached_page_must_also_report_range_truncation() {
     let (store, _) = setup();
     let range = options(&store, Buffering::DoublePage);
     let mut scan = store.scan(range).unwrap();
     let first = scan.next_record().unwrap().unwrap();
-    // P7 尚未开放 shift_begin；此处只注入合法的逻辑边界发布，验证扫描观察契约。
+    // P7 Not yet open shift_begin;Only legal logical boundary releases are injected here.,Verify Scan Observation Contract.
     store
         .inner
         .log
@@ -393,7 +399,7 @@ impl crate::schema::value::ValueCodec for PanicCodec {
     }
     fn decode(&self, _: &[u8]) -> Result<Vec<u8>, Error> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        panic!("注入扫描解码恐慌")
+        panic!("Inject scan decode panic")
     }
 }
 type PanicSchema = SchemaPair<U64Key, crate::schema::builtin::SerializedValue<PanicCodec>>;
@@ -417,7 +423,7 @@ impl UpsertOperation<PanicSchema> for PanicPut {
     }
 }
 #[test]
-fn 扫描专家解码恐慌只执行一次并使引擎失败关闭() {
+fn scan_expert_decode_panic_only_executes_once_and_fails_engine_shutdown() {
     let calls = Arc::new(AtomicUsize::new(0));
     let store = RasterKV::builder(SchemaPair::new(
         U64Key,
@@ -452,7 +458,8 @@ fn 扫描专家解码恐慌只执行一次并使引擎失败关闭() {
 }
 
 #[test]
-fn 在途与放弃读取保护跨段映射但完成页不长期阻止删除() {
+fn in_transit_read_protection_spans_mappings_with_abandonment_but_completion_pages_dont_block_deletion_for_long()
+ {
     let (store, control) = setup();
     let range = options(&store, Buffering::Unbuffered);
     let mut scan = store.scan(range).unwrap();
@@ -474,14 +481,14 @@ fn 在途与放弃读取保护跨段映射但完成页不长期阻止删除() {
     control.paused.store(false, Ordering::SeqCst);
     let mut next = store.scan(range).unwrap();
     assert_eq!(next.next_record().unwrap().unwrap().key, 0);
-    // 当前页成为拥有副本后立即释放读取租约，扫描器仍然活跃。
+    // The read lease is released immediately after the current page becomes the owning copy.,Scanner is still active.
     store.inner.storage.invalidate(0, Generation(0)).unwrap();
     next.close().unwrap();
     store.shutdown(deadline()).unwrap();
 }
 
 #[test]
-fn 会话轮询推进闲置扫描的分段预读并及时释放租约() {
+fn session_polling_facilitates_segmented_read_ahead_of_idle_scans_and_timely_release_of_leases() {
     let (store, control) = setup();
     let mut scan = store.scan(options(&store, Buffering::DoublePage)).unwrap();
     control.paused.store(true, Ordering::SeqCst);
@@ -556,7 +563,8 @@ impl UpsertOperation<BlockingSchema> for Put {
     }
 }
 #[test]
-fn 拥有值解码期间发布逻辑截断仍必须拒绝交付失效范围() {
+fn posting_logical_truncation_during_possession_of_value_decoding_must_still_reject_delivery_of_invalid_ranges()
+ {
     let armed = Arc::new(AtomicBool::new(false));
     let (entered, seen) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
@@ -619,7 +627,7 @@ fn compaction_options(
         checkpoint: false,
     }
 }
-// 受控内存设备没有操作系统 I/O 等待；用有限推进步数捕获卡死，避免共享 runner 调度改变功能验收。
+// Controlled memory device does not have an operating system I/O wait;Capture stuck with limited advancement progress,avoid sharing runner Scheduling change function acceptance.
 fn finish_compaction(
     session: &mut crate::api::session::Session<TestSchema>,
     ticket: &crate::api::maintenance::MaintenanceTicket<crate::api::maintenance::CompactionReport>,
@@ -632,7 +640,7 @@ fn finish_compaction(
             .poll(PollBudget(std::num::NonZeroUsize::new(1).unwrap()))
             .unwrap();
     }
-    panic!("有限输入的压缩超过推进步数上限");
+    panic!("Compression of finite input exceeds boost step limit");
 }
 #[derive(Debug)]
 struct ReadCompaction(u64);
@@ -648,7 +656,8 @@ impl ReadOperation<TestSchema> for ReadCompaction {
     }
 }
 #[test]
-fn 压缩轮询不等待设备且短读跨段与用户完成分流可仅由会话驱动() {
+fn compressed_polling_does_not_wait_for_the_device_and_short_reads_can_be_offloaded_across_segments_and_users_only_and_can_be_driven_by_sessions_only()
+ {
     use crate::api::maintenance::CompactionAlgorithm;
     for algorithm in [CompactionAlgorithm::Lookup, CompactionAlgorithm::ScanDedup] {
         let (store, control) = setup();
@@ -671,7 +680,7 @@ fn 压缩轮询不等待设备且短读跨段与用户完成分流可仅由会�
             .read(Serial(0), ReadCompaction(0), Default::default())
             .unwrap()
         else {
-            panic!("用户冷读取应挂起")
+            panic!("User cold reads should hang")
         };
         assert_eq!(control.reads.load(Ordering::SeqCst), 2);
         assert!(matches!(
@@ -697,7 +706,8 @@ fn 压缩轮询不等待设备且短读跨段与用户完成分流可仅由会�
     }
 }
 #[test]
-fn 压缩读取失败不会自动重试且新动作可重新执行同一范围() {
+fn compressed_read_failure_will_not_be_automatically_retried_and_new_actions_can_be_re_executed_in_the_same_range()
+ {
     use crate::api::maintenance::CompactionAlgorithm;
     let (store, control) = setup();
     let mut session = store.start_session(Default::default()).unwrap();
@@ -731,7 +741,8 @@ fn 压缩读取失败不会自动重试且新动作可重新执行同一范围()
 }
 
 #[test]
-fn 公开压缩专家恐慌终结报告一次且关闭释放任务没有实例引用环() {
+fn public_compression_expert_panic_finalizes_report_once_and_closes_free_task_without_instance_reference_loop()
+ {
     let calls = Arc::new(AtomicUsize::new(0));
     let store = RasterKV::builder(SchemaPair::new(
         U64Key,
@@ -769,7 +780,8 @@ fn 公开压缩专家恐慌终结报告一次且关闭释放任务没有实例�
 }
 
 #[test]
-fn 普通冷读取跨段短读期间保护全部段且完成后释放() {
+fn ordinary_cold_reads_protect_all_segments_during_short_reads_across_segments_and_release_them_after_completion()
+ {
     let (store, control) = setup();
     let mut session = store.start_session(Default::default()).unwrap();
     control.short.store(true, Ordering::SeqCst);
@@ -778,7 +790,7 @@ fn 普通冷读取跨段短读期间保护全部段且完成后释放() {
         .read(Serial(0), ReadCompaction(0), Default::default())
         .unwrap()
     else {
-        panic!("冷读取应挂起")
+        panic!("Cold reads should be suspended")
     };
     for number in [0, 1] {
         assert!(matches!(
@@ -792,7 +804,7 @@ fn 普通冷读取跨段短读期间保护全部段且完成后释放() {
         .io
         .poll(&*store.inner.storage.device, PollBudget::default())
         .unwrap();
-    // 完成仍在会话邮箱中，短读后余下帧未收齐，不能提前释放后续段。
+    // Done still in session mailbox,The remaining frames after short reading are not collected,Subsequent segments cannot be released early.
     assert!(matches!(
         store.inner.storage.invalidate(1, Generation(0)),
         Err(Error::Busy)
@@ -812,7 +824,8 @@ fn 普通冷读取跨段短读期间保护全部段且完成后释放() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 普通冷读取失败收尾释放段保护且不保留失败请求() {
+fn ordinary_cold_read_failure_ends_with_segment_protection_released_and_failed_requests_not_retained()
+ {
     let (store, control) = setup();
     let mut session = store.start_session(Default::default()).unwrap();
     control.fail.store(true, Ordering::SeqCst);
@@ -820,7 +833,7 @@ fn 普通冷读取失败收尾释放段保护且不保留失败请求() {
         .read(Serial(0), ReadCompaction(0), Default::default())
         .unwrap()
     else {
-        panic!("冷读取应挂起")
+        panic!("Cold reads should be suspended")
     };
     assert!(matches!(
         store.inner.storage.invalidate(0, Generation(0)),

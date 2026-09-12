@@ -1,4 +1,4 @@
-//! 有界、由 poll 推进的内存设备；不提供进程重启或掉电持久化保证。
+//! Bounded,by poll Advance memory device;No process restart or power-off persistence guarantee is provided.
 use super::*;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -11,7 +11,7 @@ impl DeviceFactory for MemoryDeviceFactory {
         Ok(Box::new(MemoryDevice::new(1024, 64 * 1024 * 1024)?))
     }
 }
-/// 绑定到下一次成功接受的请求，拒绝不会消耗该故障。
+/// Bind to the next successfully accepted request,Rejection does not consume the fault.
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryFault {
     Fail(std::io::ErrorKind),
@@ -46,7 +46,7 @@ impl MemoryDevice {
         if capacity == 0 || max_bytes == 0 {
             return Err(Error::InvalidConfig {
                 field: "memory_device",
-                reason: "队列和字节容量必须非零",
+                reason: "Queue and byte capacity must be non-zero",
             });
         }
         Ok(Self {
@@ -71,18 +71,18 @@ impl MemoryDevice {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("内存设备锁中毒"))?;
+            .map_err(|_| Error::InvalidState("memory_device_lock_poisoned"))?;
         if state.fault.is_some() {
             return Err(Error::Busy);
         }
         state.fault = Some(fault);
         Ok(())
     }
-    /// 测试用反向执行队列，用于确定地制造乱序；不会执行用户业务回调。
+    /// Reverse execution queue for testing,Used to deterministically create chaos;User business callbacks will not be executed.
     pub fn set_reverse(&self, reverse: bool) -> Result<(), Error> {
         self.state
             .lock()
-            .map_err(|_| Error::InvalidState("内存设备锁中毒"))?
+            .map_err(|_| Error::InvalidState("memory_device_lock_poisoned"))?
             .reverse = reverse;
         Ok(())
     }
@@ -120,7 +120,7 @@ impl MemoryDevice {
                 valid_path(&path)?;
                 parent_exists(state, &path)?;
                 if state.directories.contains(&path) {
-                    return Err(Error::InvalidFormat("路径是目录"));
+                    return Err(Error::InvalidFormat("path is directory"));
                 }
                 if create_new && state.files.contains_key(&path) {
                     return Err(Error::Io(std::io::Error::from(
@@ -191,7 +191,7 @@ impl MemoryDevice {
                         .ok_or(Error::CapacityExceeded)?;
                     let old = state.objects.get(&path).ok_or(Error::RangeTruncated)?.len();
                     self.budget(state, end.saturating_sub(old))?;
-                    let data = state.objects.get_mut(&path).expect("文件已检查");
+                    let data = state.objects.get_mut(&path).expect("File checked");
                     if end > old {
                         data.try_reserve(end - old)
                             .map_err(|_| Error::OutOfMemory)?;
@@ -208,7 +208,7 @@ impl MemoryDevice {
                 let len = usize::try_from(length).map_err(|_| Error::CapacityExceeded)?;
                 let old = state.objects.get(&path).ok_or(Error::RangeTruncated)?.len();
                 self.budget(state, len.saturating_sub(old))?;
-                let data = state.objects.get_mut(&path).expect("文件已检查");
+                let data = state.objects.get_mut(&path).expect("File checked");
                 if len > old {
                     data.try_reserve(len - old)
                         .map_err(|_| Error::OutOfMemory)?;
@@ -236,7 +236,7 @@ impl MemoryDevice {
                 valid_path(&path)?;
                 parent_exists(state, &path)?;
                 if state.files.contains_key(&path) {
-                    return Err(Error::InvalidFormat("目录路径被文件占用"));
+                    return Err(Error::InvalidFormat("Directory path is occupied by a file"));
                 }
                 if !state.directories.contains(&path) && state.directories.len() >= self.capacity {
                     return Err(Error::CapacityExceeded);
@@ -263,7 +263,7 @@ impl MemoryDevice {
                 valid_path(&destination)?;
                 parent_exists(state, &destination)?;
                 if state.directories.contains(&destination) {
-                    return Err(Error::InvalidFormat("目标路径是目录"));
+                    return Err(Error::InvalidFormat("The target path is a directory"));
                 }
                 let object = *state
                     .files
@@ -319,7 +319,10 @@ impl MemoryDevice {
                 {
                     if name.parent() == Some(path.as_path()) {
                         result.push(DirectoryEntry {
-                            name: name.file_name().expect("内存路径已验证").to_os_string(),
+                            name: name
+                                .file_name()
+                                .expect("Memory path verified")
+                                .to_os_string(),
                             kind,
                         })?;
                     }
@@ -363,7 +366,9 @@ fn valid_path(path: &std::path::Path) -> Result<(), Error> {
             .components()
             .any(|p| !matches!(p, std::path::Component::Normal(_)))
     {
-        return Err(Error::InvalidFormat("内存路径须为规范相对路径"));
+        return Err(Error::InvalidFormat(
+            "The memory path must be a canonical relative path",
+        ));
     }
     Ok(())
 }
@@ -404,7 +409,7 @@ impl Device for MemoryDevice {
             Err(_) => {
                 return Err(RejectedIo {
                     request,
-                    reason: Error::InvalidState("内存设备锁中毒"),
+                    reason: Error::InvalidState("memory_device_lock_poisoned"),
                 });
             }
         };
@@ -412,7 +417,7 @@ impl Device for MemoryDevice {
             return Err(RejectedIo {
                 request,
                 reason: if state.closed {
-                    Error::InvalidState("设备已关闭")
+                    Error::InvalidState("Device is turned off")
                 } else {
                     Error::Busy
                 },
@@ -445,7 +450,7 @@ impl Device for MemoryDevice {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("内存设备锁中毒"))?;
+            .map_err(|_| Error::InvalidState("memory_device_lock_poisoned"))?;
         let count = budget.0.get().min(state.pending.len() + state.ready.len());
         output.try_reserve(count).map_err(|_| Error::OutOfMemory)?;
         for _ in 0..count {
@@ -465,7 +470,7 @@ impl Device for MemoryDevice {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("内存设备锁中毒"))?;
+            .map_err(|_| Error::InvalidState("memory_device_lock_poisoned"))?;
         state.closed = true;
         while !state.pending.is_empty() {
             if deadline.expired() {
@@ -477,7 +482,7 @@ impl Device for MemoryDevice {
             } else {
                 state.pending.pop_front()
             }
-            .expect("队列非空");
+            .expect("Queue is not empty");
             let completed = self.execute(&mut state, queued);
             state.ready.push_back(completed);
         }

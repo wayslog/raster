@@ -1,3 +1,3 @@
-//! 物理扫描的页游标和拥有型解码；设备路由与扫描生命周期由引擎驱动。
+//! Physically scanned page cursors and owned decoding;Device routing and scanning lifecycle is driven by the engine.
 pub(crate) mod page;
 pub(crate) mod record;

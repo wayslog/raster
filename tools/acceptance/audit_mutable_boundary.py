@@ -1,47 +1,47 @@
 #!/usr/bin/env python3
-"""复核可变边界查询的成对实验；共享既有矩阵格式，保留所有原始样本。"""
+"""Paired Experiments Reviewing Variable Bounds Queries;Share existing matrix formats,Keep all original samples."""
 import argparse
 import hashlib
-import json
 from pathlib import Path
 import statistics
 
 from audit_serial_precheck import audit
 from audit_result_pool import read_rows, require
+from compat import read_json
 
 
 def audit_p3(root):
-    manifest = json.loads((root / "manifest.json").read_text())
-    report = json.loads((root / "p3/comparison.json").read_text())
-    require(report["驱动SHA256"] == hashlib.sha256((root / "driver.rs").read_bytes()).hexdigest(), "P3 驱动不一致")
-    current = report["结果"]["current"]
-    require(current["提交"] == manifest["基线提交"], "P3 候选基线不符")
-    require(current["候选补丁SHA256"] == hashlib.sha256((root / "candidate.patch").read_bytes()).hexdigest(), "P3 候选补丁不符")
-    require(current["二进制SHA256"] == manifest["二进制SHA256"]["candidate"], "P3 候选二进制不符")
-    require(report["结果"]["old"]["提交"] == "7f2f03b646e85b30c81f31405e3dc2325086da2a", "旧 P3 提交不符")
-    axes = {("原子u64", "单键热点", "1", str(n)) for n in range(1, 4)}
+    manifest = read_json(root / "manifest.json")
+    report = read_json(root / "p3/comparison.json")
+    require(report["driveSHA256"] == hashlib.sha256((root / "driver.rs").read_bytes()).hexdigest(), "P3 Driver inconsistency")
+    current = report["result"]["current"]
+    require(current["commit"] == manifest["baseline_commit"], "P3 Candidate baseline does not match")
+    require(current["candidate_patchSHA256"] == hashlib.sha256((root / "candidate.patch").read_bytes()).hexdigest(), "P3 Candidate patch does not match")
+    require(current["binarySHA256"] == manifest["binarySHA256"]["candidate"], "P3 Candidate binary does not match")
+    require(report["result"]["old"]["commit"] == "7f2f03b646e85b30c81f31405e3dc2325086da2a", "old P3 Submission does not match")
+    axes = {("atomicu64", "single_key_hotspot", "1", str(n)) for n in range(1, 4)}
     values = {}
     for name in ["current", "old"]:
         rows = read_rows(root / "p3" / (name + ".csv"), axes, 200000)
-        require(all(r["拒绝重试"] == "0" for r in rows), "P3 热点出现拒绝重试")
+        require(all(r["Deny retry"] == "0" for r in rows), "P3 Hotspot appears and refuses to retry")
         values[name] = {key: statistics.median(float(r[key]) for r in rows)
-                        for key in ["每秒操作", "P50纳秒", "P95纳秒", "P99纳秒"]}
-        require(values[name] == report["结果"][name]["中位数"], "P3 中位数不符")
-    speed = values["current"]["每秒操作"] / values["old"]["每秒操作"]
-    latency = values["current"]["P99纳秒"] / values["old"]["P99纳秒"]
-    require(speed == report["吞吐比"] and latency == report["P99比"], "P3 比值不符")
-    require(int(speed < 0.75 or latency > 1.3) == report["退出码"], "P3 原复核结论不符")
-    return report["退出码"]
+                        for key in ["operations_per_second", "P50nanoseconds", "P95nanoseconds", "P99nanoseconds"]}
+        require(values[name] == report["result"][name]["median"], "P3 Median does not match")
+    speed = values["current"]["operations_per_second"] / values["old"]["operations_per_second"]
+    latency = values["current"]["P99nanoseconds"] / values["old"]["P99nanoseconds"]
+    require(speed == report["throughput_ratio"] and latency == report["P99ratio"], "P3 The ratio does not match")
+    require(int(speed < 0.75 or latency > 1.3) == report["exit_code"], "P3 The original review conclusion is inconsistent with")
+    return report["exit_code"]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("directory", type=Path, help="归档实验目录")
+    parser.add_argument("directory", type=Path, help="Archive experiment directory")
     args = parser.parse_args()
     for row in audit(args.directory):
-        print(row["布局"], row["分布"], row["线程"], "吞吐比", row["吞吐比"], "P99比", row["P99比"])
-    print("原 P3 对照数据一致，复核退出码：", audit_p3(args.directory))
-    print("可变边界归档一致：192 行完整矩阵及 36 行补充；不代表旧 P3 总体复核完成。")
+        print(row["layout"], row["distribution"], row["threads"], "throughput_ratio", row["throughput_ratio"], "P99ratio", row["P99ratio"])
+    print("Original P3 The control data is consistent,Review exit code:", audit_p3(args.directory))
+    print("Variable Boundary Archive Consistency:192 row complete matrix and 36 line supplement;does not mean old P3 Overall review completed.")
 
 
 if __name__ == "__main__":

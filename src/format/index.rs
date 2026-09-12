@@ -1,4 +1,4 @@
-//! 索引模糊快照的显式编码；进程内 owner/revision 和缓存头不能进入磁盘映像。
+//! Explicit encoding of index fuzzy snapshots;In-process owner/revision and cache headers cannot go into the disk image.
 use super::wire::{Reader, checksum, invalid};
 use crate::types::*;
 const HEADER: usize = 32;
@@ -117,7 +117,8 @@ mod tests {
         bytes[n..].copy_from_slice(&crc.to_le_bytes());
     }
     #[test]
-    fn 固定索引样例精确解码和编码且保留零地址与标签边界() {
+    fn fixed_indexed_samples_are_accurately_decoded_and_encoded_while_preserving_zero_address_and_label_boundaries()
+     {
         let bytes = fixture();
         let image = IndexSnapshot::decode(&bytes).unwrap();
         assert_eq!(image.buckets, 8);
@@ -150,7 +151,7 @@ mod tests {
         );
     }
     #[test]
-    fn 截断尾随和逐位损坏拒绝且计数溢出不分配() {
+    fn truncate_trailing_and_bitwise_corruption_rejects_and_count_overflow_does_not_allocate() {
         let bytes = fixture();
         for end in 0..bytes.len() {
             assert!(IndexSnapshot::decode(&bytes[..end]).is_err());
@@ -169,7 +170,8 @@ mod tests {
         assert!(IndexSnapshot::decode(&bad).is_err());
     }
     #[test]
-    fn 重算校验后仍拒绝未知版本保留位重复桶标签和非法地址() {
+    fn unknown_version_reserved_bits_duplicate_bucket_labels_and_illegal_addresses_are_still_rejected_after_recalculation_and_verification()
+     {
         let bytes = fixture();
         for offset in [4, 6, 42, 43, 44, 45, 46, 47] {
             let mut bad = bytes.clone();

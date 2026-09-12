@@ -1,4 +1,4 @@
-//! 公开扩容、在途请求和业务回调的实际引擎验证。
+//! Public expansion,Actual engine verification of in-flight requests and business callbacks.
 use super::*;
 use crate::{
     api::{maintenance::IndexGrowthReport, operation::RmwOperation},
@@ -17,12 +17,13 @@ fn finish_growth(
         if let Some(report) = ticket.try_report().unwrap() {
             return report;
         }
-        assert!(!end.expired(), "扩容等待超时");
+        assert!(!end.expired(), "Expansion waiting timeout");
         store.maintenance().poll(PollBudget::default()).unwrap();
     }
 }
 #[test]
-fn 公开扩容等待旧表_epoch_释放且容量报告与再次扩容真实() {
+fn public_expansion_waiting_for_old_tables_epoch_release_and_capacity_reporting_and_re_expansion_are_true()
+ {
     let (_root, store) = setup(Some(Box::new(device::memory::MemoryDeviceFactory)));
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     for key in 0..50 {
@@ -78,7 +79,7 @@ impl Keyed<Schema> for Add {
 impl RmwOperation<Schema> for Add {
     type Output = u64;
     fn initial(&mut self) -> Result<(u64, u64), Error> {
-        panic!("原键必须存在")
+        panic!("The original key must exist")
     }
     fn copy_update(&mut self, value: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -93,7 +94,7 @@ impl RmwOperation<Schema> for Add {
     }
 }
 #[test]
-fn 磁盘读改写和读取挂起跨越扩容且盲删只完成一次() {
+fn disk_read_write_and_read_suspension_span_expansion_and_blind_deletion_is_only_completed_once() {
     let (_root, store) = setup(None);
     let mut config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -106,7 +107,7 @@ fn 磁盘读改写和读取挂起跨越扩容且盲删只完成一次() {
         .rmw(Serial(400), Add(calls.clone()), Default::default())
         .unwrap()
     else {
-        panic!("旧页必须挂起")
+        panic!("Old pages must be suspended")
     };
     let worker_store = store.clone();
     let deleter = crate::engine::session_actor::Actor::new(move || {
@@ -124,7 +125,11 @@ fn 磁盘读改写和读取挂起跨越扩容且盲删只完成一次() {
     session.refresh().unwrap();
     deleter.call(|(session, _)| session.refresh().unwrap());
     finish_growth(&store, &growth).as_ref().as_ref().unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "维护轮询不能执行用户回调");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "Maintenance polling cannot execute user callbacks"
+    );
     assert!(matches!(
         session.wait(&mut rmw, deadline()).unwrap().unwrap(),
         crate::api::completion::Outcome::Success(5)
@@ -144,7 +149,7 @@ fn 磁盘读改写和读取挂起跨越扩容且盲删只完成一次() {
         .read(Serial(401), Read(2), Default::default())
         .unwrap()
     else {
-        panic!("旧页必须挂起")
+        panic!("Old pages must be suspended")
     };
     let growth = store.maintenance().grow_index().unwrap();
     session.refresh().unwrap();
@@ -200,7 +205,7 @@ impl UpsertOperation<Schema> for PausedPut {
     }
 }
 #[test]
-fn 扩容不会使暂停回调中已准备的写入因迁移而失败() {
+fn scaling_will_not_cause_prepared_writes_in_pause_callbacks_to_fail_due_to_migration() {
     let (_root, store) = setup(Some(Box::new(device::memory::MemoryDeviceFactory)));
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let (start_tx, start_rx) = std::sync::mpsc::channel();
@@ -253,7 +258,8 @@ fn 扩容不会使暂停回调中已准备的写入因迁移而失败() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 放弃扩容参与会话使票据稳定失败且禁止新的动作() {
+fn abandoning_the_expansion_participation_session_causes_the_ticket_stability_to_fail_and_new_actions_are_prohibited()
+ {
     let (_root, store) = setup(Some(Box::new(device::memory::MemoryDeviceFactory)));
     let session = store.start_session(SessionOptions::default()).unwrap();
     let ticket = store.maintenance().grow_index().unwrap();
@@ -267,7 +273,7 @@ fn 放弃扩容参与会话使票据稳定失败且禁止新的动作() {
 }
 
 #[test]
-fn 多会话磁盘写入与协作扩容并发且完成只计数一次() {
+fn multi_session_disk_writing_and_cooperative_expansion_are_concurrent_and_completed_only_once() {
     let (_root, store) = setup(None);
     let barrier = std::sync::Barrier::new(5);
     let completed = AtomicUsize::new(0);
@@ -348,7 +354,8 @@ fn 多会话磁盘写入与协作扩容并发且完成只计数一次() {
 }
 
 #[test]
-fn 空索引扩容丢弃票据仍能完成且动作期间拒绝关闭() {
+fn empty_index_expansion_and_discarding_tickets_can_still_be_completed_and_the_shutdown_is_refused_during_the_action()
+ {
     let (_root, store) = setup(Some(Box::new(device::memory::MemoryDeviceFactory)));
     let ticket = store.maintenance().grow_index().unwrap();
     assert!(matches!(store.shutdown(deadline()), Err(Error::Busy)));

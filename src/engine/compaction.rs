@@ -1,4 +1,4 @@
-//! 单存储压缩：物理扫描选候选，条件复制重新查证；普通压缩不推进 begin。
+//! Single storage compression:Physical scan selection candidate,Conditional copy re-verification;Ordinary compression does not advance begin.
 use super::{
     Engine,
     conditional_copy::{ConditionalCopy, CopyResult},
@@ -86,7 +86,7 @@ impl Job {
             };
         }
         if let Some(copy) = &mut self.copying {
-            // 在可能发布之前验证计数，错误报告不能漏掉已生效迁移。
+            // Verify count before possible release,Error reports cannot miss migrations that have taken effect.
             let next = self.copied.checked_add(1).ok_or(Error::CapacityExceeded)?;
             match engine.conditional_copy(copy, PollBudget(std::num::NonZeroUsize::new(1).unwrap()))
             {
@@ -133,7 +133,9 @@ impl Job {
                     return Ok(true);
                 }
                 if record.header.version > engine.coordinator.snapshot()?.version {
-                    return Err(Error::InvalidFormat("压缩扫描记录版本超过当前版本"));
+                    return Err(Error::InvalidFormat(
+                        "Compression scan record version exceeds current version",
+                    ));
                 }
                 let mut key = Vec::new();
                 key.try_reserve_exact(record.key.len())
@@ -184,7 +186,7 @@ impl Job {
             engine.coordinator.advance(self.id, Phase::Compacting)?;
             engine.coordinator.finish_action(self.id)?;
         }
-        // 先结束复制动作，再逐项争取后续动作；票据仍代表整个复合任务。
+        // End the copy action first,Then strive for follow-up actions one by one;The ticket still represents the entire composite task.
         self.stage = if self.failure.is_some() {
             Stage::Report
         } else if self.options.checkpoint {
@@ -248,7 +250,7 @@ impl Job {
                 _ => false,
             };
             if child && !self.collect_child()? {
-                // 另一个驱动者仍在发布子结果，不能先用通用错误丢掉部分效果。
+                // Another driver is still publishing sub-results,You can't throw away part of the effect with a generic error first.
                 return Ok(());
             }
             self.fail(cause);
@@ -267,7 +269,7 @@ impl<S: Schema> Engine<S> {
         match self.compaction.try_lock() {
             Ok(runtime) => Ok(runtime.is_active()),
             Err(TryLockError::WouldBlock) => Ok(true),
-            Err(_) => Err(Error::InvalidState("压缩任务锁中毒")),
+            Err(_) => Err(Error::InvalidState("compaction_task_lock_poisoned")),
         }
     }
     pub(crate) fn start_compaction(
@@ -275,18 +277,18 @@ impl<S: Schema> Engine<S> {
         options: CompactionOptions,
     ) -> Result<MaintenanceTicket<CompactionReport>, Error> {
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("存储已关闭或失败"));
+            return Err(Error::InvalidState("storage_closed_or_failed"));
         }
         if options.workers == 0 {
             return Err(Error::InvalidConfig {
                 field: "compaction.workers",
-                reason: "压缩工作线程数必须非零",
+                reason: "The number of compression worker threads must be non-zero",
             });
         }
         if options.workers > self.config.maintenance.max_compaction_workers {
             return Err(Error::InvalidConfig {
                 field: "compaction.workers",
-                reason: "超过配置的压缩线程预算",
+                reason: "Configured compression thread budget exceeded",
             });
         }
         if options.checkpoint {
@@ -298,7 +300,7 @@ impl<S: Schema> Engine<S> {
         }
         let mut runtime = self.compaction.try_lock().map_err(|error| match error {
             TryLockError::WouldBlock => Error::Busy,
-            TryLockError::Poisoned(_) => Error::InvalidState("压缩任务锁中毒"),
+            TryLockError::Poisoned(_) => Error::InvalidState("compaction_task_lock_poisoned"),
         })?;
         if runtime.job.is_some() {
             return Err(Error::Busy);
@@ -338,7 +340,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.compaction.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok((false, false)),
-            Err(_) => return Err(Error::InvalidState("压缩任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("compaction_task_lock_poisoned")),
         };
         let Some(job) = &mut runtime.job else {
             return Ok((false, false));
@@ -352,7 +354,7 @@ impl<S: Schema> Engine<S> {
             Ok(result) => result,
             Err(_) => {
                 self.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("压缩扫描或布局恐慌"))
+                Err(Error::InvalidState("Compression scan or layout panic"))
             }
         };
         let advanced = match result {
@@ -365,10 +367,15 @@ impl<S: Schema> Engine<S> {
                 false
             }
         };
-        // 普通失败先排空再终结动作；恐慌由统一失败关闭路径终结报告并等待关闭归还设备资源。
+        // Ordinary failure means emptying first and then terminating the action.;Panic reported by unity failure shutdown path termination and waiting for shutdown to return device resources.
         if self.failed.load(Ordering::SeqCst) {
-            job.report_failed(self, Error::InvalidState("压缩期间引擎失败关闭"))?;
-            return Err(Error::InvalidState("压缩失败关闭，详见维护报告"));
+            job.report_failed(
+                self,
+                Error::InvalidState("Engine failed to shut down during compression"),
+            )?;
+            return Err(Error::InvalidState(
+                "Compression failed to close,see_maintenance_report",
+            ));
         }
         let finished = job.reported;
         if finished {
@@ -380,10 +387,13 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.compaction.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(_) => return Err(Error::InvalidState("压缩任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("compaction_task_lock_poisoned")),
         };
         if let Some(job) = &mut runtime.job {
-            job.report_failed(self, Error::InvalidState("引擎或全局动作失败，压缩终止"))?;
+            job.report_failed(
+                self,
+                Error::InvalidState("Engine or global action failed,compression terminated"),
+            )?;
         }
         Ok(())
     }
@@ -394,10 +404,10 @@ impl<S: Schema> Engine<S> {
                 .as_ref()
                 .is_some_and(|job| job.id == id && !job.reported)),
             Err(TryLockError::WouldBlock) => Ok(true),
-            Err(_) => Err(Error::InvalidState("压缩任务锁中毒")),
+            Err(_) => Err(Error::InvalidState("compaction_task_lock_poisoned")),
         }
     }
-    /// 失败关闭先使工作线程停止一切发布，再关闭设备并回收保留槽。
+    /// Failure to close first causes the worker thread to stop all publishing,Then shut down the device and reclaim the retention slot.
     pub(crate) fn stop_compaction_workers(&self, deadline: Deadline) -> Result<(), Error> {
         loop {
             let mut runtime = match self.compaction.try_lock() {
@@ -409,7 +419,7 @@ impl<S: Schema> Engine<S> {
                     std::thread::yield_now();
                     continue;
                 }
-                Err(_) => return Err(Error::InvalidState("压缩任务锁中毒")),
+                Err(_) => return Err(Error::InvalidState("compaction_task_lock_poisoned")),
             };
             let Some(job) = &mut runtime.job else {
                 return Ok(());
@@ -427,12 +437,12 @@ impl<S: Schema> Engine<S> {
             std::thread::yield_now();
         }
     }
-    /// 仅在设备关闭已经归还全部请求后清理异常任务，不能提前释放在途段租约。
+    /// Only clean up exception tasks after the device is shut down and all requests have been returned,The lease on the en route cannot be released early.
     pub(crate) fn release_stopped_compaction(&self) -> Result<(), Error> {
         self.fail_compaction()?;
         self.compaction
             .lock()
-            .map_err(|_| Error::InvalidState("压缩任务锁中毒"))?
+            .map_err(|_| Error::InvalidState("compaction_task_lock_poisoned"))?
             .job = None;
         Ok(())
     }

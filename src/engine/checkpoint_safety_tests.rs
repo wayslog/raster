@@ -1,4 +1,4 @@
-//! 旧恢复集与后续原地修改的隔离验证。
+//! Segment verification of old recovery sets and subsequent in-place modifications.
 use super::*;
 use std::sync::{
     Arc,
@@ -71,7 +71,8 @@ fn material_bytes(store: &RasterKV<Schema>, report: &CheckpointReport) -> Vec<Ve
 }
 
 #[test]
-fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材料() {
+fn the_two_generations_of_recovery_sets_retain_different_key_values_and_tombstones_and_subsequent_in_place_updates_do_not_rewrite_the_materials()
+ {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -90,7 +91,7 @@ fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材�
     assert_eq!(
         updates.load(Ordering::SeqCst),
         1,
-        "确认实际执行一次原地修改"
+        "Confirm that an in-place modification is actually performed"
     );
     match session
         .delete(Serial(60), Delete(1), Default::default())
@@ -119,7 +120,7 @@ fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材�
     drop(session);
     store.shutdown(deadline()).unwrap();
     drop(store);
-    // 删去已经关闭的工作段，确认两代恢复只依赖各自材料副本。
+    // Delete a closed session,Confirm that the two generations of restoration only rely on their respective material copies.
     std::fs::remove_dir_all(config.storage.root.join("segments")).unwrap();
     for (report, value, other, cut) in [(first, 0, Some(1), 30), (second, 3, None, 60)] {
         let set = crate::api::maintenance::RecoverySet {
@@ -142,7 +143,8 @@ fn 两代恢复集保留不同键值与墓碑且后续原地更新不改写材�
 mod crash;
 
 #[test]
-fn 已发布检查点保留全部已知引用且恢复重建所选集合目录() {
+fn published_checkpoints_retain_all_known_references_and_resume_rebuilding_the_selected_collection_directory()
+ {
     let (_root, store) = setup(None);
     let config = store.inner.config.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -211,7 +213,7 @@ fn 已发布检查点保留全部已知引用且恢复重建所选集合目录()
     assert!(!runtime.retained.references_token(full.token));
     assert!(
         first_path.exists(),
-        "未知的旧代仍默认保留，不能按运行期目录裁剪磁盘"
+        "Unknown old generations are still retained by default,Disk cannot be trimmed by runtime directory"
     );
     drop(runtime);
     store.shutdown(deadline()).unwrap();

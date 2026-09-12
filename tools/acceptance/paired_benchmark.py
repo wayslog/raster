@@ -1,4 +1,4 @@
-"""在同一主机交替执行两个真实基准二进制，保留固定输入和每轮指标；不以跨主机噪声替代代码归因。"""
+"""Alternately execute two real-world benchmark binaries on the same host,Keep fixed inputs and per-round metrics;Not replacing tag attribution with cross-host noise."""
 import argparse
 import csv
 import hashlib
@@ -14,7 +14,7 @@ DEFAULT_CASES = ["u64-hot-t4-disk-r1", "bytes-uniform-t1-disk-r1", "bytes-hot-t1
 
 
 def clean(text):
-    return text.replace(str(Path.cwd()), "工作树").replace(str(Path.home()), "用户目录")
+    return text.replace(str(Path.cwd()), "worktree").replace(str(Path.home()), "user_directory")
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", action="append", dest="cases")
-    parser.add_argument("--interleaved-control", action="store_true", help="同轮交错运行新版本和两份相同旧二进制，以六种顺序平衡位置")
+    parser.add_argument("--interleaved-control", action="store_true", help="Interleave running of the new version and two copies of the same old binary in the same round,Balance positions in six orders")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     binaries = {name: getattr(args, name).resolve() for name in ["baseline", "candidate"]}
@@ -45,32 +45,32 @@ def main():
                 combined = result.stdout + result.stderr
                 (args.output / f"{case}-pair{number}-{side}.txt").write_text(clean(combined))
                 if result.returncode:
-                    raise RuntimeError(f"{case} 第 {number} 对 {side} 业务失败：{result.returncode}")
+                    raise RuntimeError(f"{case} ordinal {number} Yes {side} business failure:{result.returncode}")
                 rows = list(csv.DictReader((output / "matrix.csv").open()))
-                if len(rows) != 1 or int(rows[0]["操作数"]) != 16384:
-                    raise RuntimeError("基准没有完整执行指定场景")
-                marker = f"基准 {case} 通过：16384 步四操作、"
-                if marker not in combined or "2048 个键与墓碑校验" not in combined:
-                    raise RuntimeError("没有完成业务及恢复校验")
+                if len(rows) != 1 or int(rows[0]["operation_count"]) != 16384:
+                    raise RuntimeError("The benchmark did not fully execute the specified scenario")
+                marker = f"benchmark {case} passed:16384 steps_four_operations,"
+                if marker not in combined or "2048 keys_and_tombstone_validation" not in combined:
+                    raise RuntimeError("Business and recovery verification not completed")
                 row = rows[0]
-                digest = hashlib.sha256((output / (row["输入标识"] + ".trace")).read_bytes()).hexdigest()
+                digest = hashlib.sha256((output / (row["input_id"] + ".trace")).read_bytes()).hexdigest()
                 if expected_hash is not None and digest != expected_hash:
-                    raise RuntimeError("配对输入字节不一致")
+                    raise RuntimeError("Paired input bytes are inconsistent")
                 expected_hash = digest
                 pair[side] = row
-                print(case, number, side, row["每秒操作"], row["P99纳秒"], flush=True)
+                print(case, number, side, row["operations_per_second"], row["P99nanoseconds"], flush=True)
             pairs.append(pair)
             (args.output / (case + "-pairs.json")).write_text(json.dumps(pairs, ensure_ascii=False, indent=2))
-        metrics = ["每秒操作", "P99纳秒", "读取P99纳秒", "写入P99纳秒", "RMWP99纳秒", "删除P99纳秒", "业务后累计读字节", "业务后累计写字节"]
+        metrics = ["operations_per_second", "P99nanoseconds", "readP99nanoseconds", "writeP99nanoseconds", "RMWP99nanoseconds", "deleteP99nanoseconds", "post_workload_read_bytes", "post_workload_write_bytes"]
         medians = {side: {metric: statistics.median(float(pair[side][metric]) for pair in pairs) for metric in metrics} for side in binaries}
-        throughput = medians["candidate"]["每秒操作"] / medians["baseline"]["每秒操作"]
-        latency = medians["candidate"]["P99纳秒"] / medians["baseline"]["P99纳秒"]
+        throughput = medians["candidate"]["operations_per_second"] / medians["baseline"]["operations_per_second"]
+        latency = medians["candidate"]["P99nanoseconds"] / medians["baseline"]["P99nanoseconds"]
         summaries.append({"case": case, "input_sha256": expected_hash, "medians": medians,
                           "throughput_ratio": throughput, "p99_ratio": latency,
                           "review_required": throughput < .75 or latency > 1.30})
         if args.interleaved_control:
-            control_throughput = medians["control"]["每秒操作"] / medians["baseline"]["每秒操作"]
-            control_latency = medians["control"]["P99纳秒"] / medians["baseline"]["P99纳秒"]
+            control_throughput = medians["control"]["operations_per_second"] / medians["baseline"]["operations_per_second"]
+            control_latency = medians["control"]["P99nanoseconds"] / medians["baseline"]["P99nanoseconds"]
             summaries[-1].update(control_throughput_ratio=control_throughput, control_p99_ratio=control_latency,
                                  control_review_required=control_throughput < .75 or control_latency > 1.30)
         (args.output / "comparison.json").write_text(json.dumps(summaries, ensure_ascii=False, indent=2))

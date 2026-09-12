@@ -1,4 +1,4 @@
-//! 目录结果按名称和条目双重预算计费；超限不得输出可能误判依赖的部分目录。
+//! Directory results are billed on a dual budget of name and entry;Partial directories that may misjudge dependencies must not be output if the limit is exceeded..
 use super::*;
 pub(super) struct DirectorySnapshot {
     entries: Vec<DirectoryEntry>,

@@ -1,4 +1,4 @@
-//! 真实引擎轨迹适配；只依赖公开入口，结果与模型分别计算。
+//! Real engine trajectory adaptation;Rely only on public entrance,Results and models are calculated separately.
 use crate::support::{
     model::{ResultValue, Submission as ModelSubmission},
     trace::{Operation, Step, Value},
@@ -42,7 +42,7 @@ impl ValueCodec for Codec {
                 b[1..].try_into().unwrap(),
             ))),
             Some(1) => Ok(Value::Bytes(b[1..].to_vec())),
-            _ => Err(Error::Codec("轨迹值损坏")),
+            _ => Err(Error::Codec("Corrupted trajectory values")),
         }
     }
 }
@@ -90,7 +90,7 @@ fn add(old: &Value, operand: &Value) -> Result<Value, Error> {
             v.extend(b);
             Ok(Value::Bytes(v))
         }
-        _ => Err(Error::Codec("类型不匹配")),
+        _ => Err(Error::Codec("type mismatch")),
     }
 }
 impl RmwOperation<Schema> for Request {
@@ -159,7 +159,7 @@ pub fn actual(
         Err(rejected) => {
             assert!(
                 matches!(rejected.reason, Error::InvalidState(_)),
-                "未预期的拒绝：{}",
+                "unexpected rejection:{}",
                 rejected.reason
             );
             assert_eq!(rejected.request.key, step.key);
@@ -178,7 +178,7 @@ pub fn actual(
             loop {
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "请求等待超时：{step:?}"
+                    "Request wait timeout:{step:?}"
                 );
                 session.poll(PollBudget::default()).unwrap();
                 if let raster::api::completion::TicketState::Ready(result) =
@@ -195,10 +195,10 @@ pub fn actual(
         Ok(Outcome::NotFound) => ResultValue::NotFound,
         Ok(Outcome::Aborted(AbortReason::Tombstone)) => ResultValue::Tombstone,
         Err(OperationError {
-            cause: Error::Codec("类型不匹配"),
+            cause: Error::Codec("type mismatch"),
             effect: Effect::NotApplied,
         }) => ResultValue::TypeMismatch,
-        result => panic!("未预期的引擎结果：{step:?} => {result:?}"),
+        result => panic!("Unexpected engine results:{step:?} => {result:?}"),
     };
     ModelSubmission::Accepted(value)
 }

@@ -1,4 +1,4 @@
-//! 一个有界调度线程复用压缩与 GC 票据；空闲不持有存储，停止不撤销已接受任务。
+//! A bounded-scheduled thread reuse compression with GC bill;Free does not hold storage,Stop without undoing accepted tasks.
 use super::Engine;
 use crate::{
     api::maintenance::{
@@ -73,10 +73,10 @@ impl Control {
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>, Error> {
         self.state
             .lock()
-            .map_err(|_| Error::InvalidState("自动维护状态锁中毒"))
+            .map_err(|_| Error::InvalidState("Automatic maintenance status lock poisoning"))
     }
     fn fail(&self, error: Error) {
-        // 异常收尾仍保存原因；中毒本身已经意味着失败，不能恢复成功调度。
+        // The reason why the abnormal ending is still saved;Poisoning itself already means failure,Unable to restore successful schedule.
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.failed = true;
         state.stop = true;
@@ -94,7 +94,7 @@ impl Control {
         drop(
             self.wake
                 .wait_timeout(state, duration)
-                .map_err(|_| Error::InvalidState("自动维护等待锁中毒"))?,
+                .map_err(|_| Error::InvalidState("Automatic maintenance waiting lock poisoning"))?,
         );
         Ok(())
     }
@@ -113,7 +113,7 @@ impl AutoCompactionRuntime {
         Ok(())
     }
     pub(crate) fn wait_change(&self, deadline: Deadline) -> Result<(), Error> {
-        // 单次等待很短，Session 等待者仍可及时刷新自己的检查点屏障。
+        // Single wait is very short,Session Waiters can still refresh their checkpoint barriers in time.
         let duration = deadline
             .0
             .saturating_duration_since(Instant::now())
@@ -123,7 +123,7 @@ impl AutoCompactionRuntime {
             self.shared
                 .wake
                 .wait_timeout(state, duration)
-                .map_err(|_| Error::InvalidState("自动维护等待锁中毒"))?,
+                .map_err(|_| Error::InvalidState("Automatic maintenance waiting lock poisoning"))?,
         );
         Ok(())
     }
@@ -131,11 +131,12 @@ impl AutoCompactionRuntime {
         let mut thread = self
             .thread
             .lock()
-            .map_err(|_| Error::InvalidState("自动维护线程锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Automatic maintenance thread lock poisoning"))?;
         if thread.as_ref().is_some_and(|thread| thread.is_finished()) {
-            if thread.take().expect("线程存在").join().is_err() {
-                self.shared
-                    .fail(Error::InvalidState("自动维护线程意外退出"));
+            if thread.take().expect("Thread exists").join().is_err() {
+                self.shared.fail(Error::InvalidState(
+                    "Automatic maintenance thread exits unexpectedly",
+                ));
             }
             let mut state = self.shared.lock()?;
             state.phase = if state.failed {
@@ -160,12 +161,12 @@ impl AutoCompactionRuntime {
 }
 impl Drop for AutoCompactionRuntime {
     fn drop(&mut self) {
-        // 最后一个 Engine 引用可能在本线程的一步末尾释放，析构不能 join 自己。
+        // the last one Engine The reference may be released at the end of a step in this thread,Destruction cannot join myself.
         let _ = self.request_stop();
     }
 }
 
-/// 使用真实安全冷区和向下页对齐；预算是触发阈值，不是严格拒写上限。
+/// Use true safe cold areas and page-down alignment;Budget is the trigger threshold,It's not a strict upper limit..
 fn target(
     policy: &AutoCompactionPolicy,
     page: u64,
@@ -175,7 +176,7 @@ fn target(
         .tail
         .0
         .checked_sub(f.begin.0)
-        .ok_or(Error::InvalidState("日志跨度倒置"))?;
+        .ok_or(Error::InvalidState("Log span inversion"))?;
     let threshold = (policy.log_size_budget as f64 * policy.trigger_fraction).ceil() as u64;
     if span < threshold {
         return Ok(None);
@@ -203,11 +204,13 @@ impl<S: Schema> Engine<S> {
         let mut handle = runtime
             .thread
             .lock()
-            .map_err(|_| Error::InvalidState("自动维护线程锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Automatic maintenance thread lock poisoning"))?;
         {
             let mut state = runtime.shared.lock()?;
             if state.phase != Phase::Disabled || state.stop {
-                return Err(Error::InvalidState("自动维护不能重复启动"));
+                return Err(Error::InvalidState(
+                    "Automatic maintenance cannot be started repeatedly",
+                ));
             }
             state.phase = Phase::Idle;
         }
@@ -215,7 +218,7 @@ impl<S: Schema> Engine<S> {
         let control = runtime.shared.clone();
         *handle = Some(
             thread::Builder::new()
-                .name("raster自动压缩".into())
+                .name("rasterautomatic_compression".into())
                 .spawn(move || {
                     let result = catch_unwind(AssertUnwindSafe(|| run(weak.clone(), &control)));
                     match result {
@@ -224,7 +227,7 @@ impl<S: Schema> Engine<S> {
                             if let Some(engine) = weak.upgrade()
                                 && engine.failed.load(Ordering::SeqCst)
                             {
-                                // 接受阶段也可能由设备能力查询触发失败；同步终结当时存在的手动全局动作。
+                                // The acceptance phase may also fail triggered by a device capability query;Synchronously terminate existing manual global actions.
                                 let _ = engine.poll_maintenance(PollBudget::default());
                             }
                             control.fail(error);
@@ -234,10 +237,11 @@ impl<S: Schema> Engine<S> {
                                 engine.failed.store(true, Ordering::SeqCst);
                                 let _ = engine.poll_maintenance(PollBudget::default());
                             }
-                            control.fail(Error::InvalidState("自动维护调度恐慌"));
+                            control
+                                .fail(Error::InvalidState("Automated maintenance schedule panic"));
                         }
                     }
-                    // Stopped/Failed 由观察者在 join 后发布。
+                    // Stopped/Failed by the observer in join Posted later.
                     if let Ok(mut state) = control.lock() {
                         state.phase = Phase::Stopping;
                     }
@@ -254,7 +258,7 @@ impl<S: Schema> Engine<S> {
             .tail
             .0
             .checked_sub(f.begin.0)
-            .ok_or(Error::InvalidState("日志跨度倒置"))?;
+            .ok_or(Error::InvalidState("Log span inversion"))?;
         let budget = self
             .config
             .maintenance
@@ -313,7 +317,7 @@ fn collect(control: &Control) -> Result<bool, Error> {
 fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error> {
     let mut next_check = Instant::now();
     loop {
-        // 每一步才升级强引用，睡眠和空闲期间存储可以正常销毁。
+        // Upgrade strong references at each step,Storage can be destroyed normally during sleep and idle periods.
         let duration = {
             let Some(engine) = weak.upgrade() else {
                 return Ok(());
@@ -327,13 +331,13 @@ fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error>
             };
             let policy = &engine.config.maintenance.auto_compaction_policy;
             if active {
-                // 失败推进仍会完成失败票据并停止工作者；先收真实结果再结束线程。
+                // A failed push will still complete the failed ticket and stop the worker;Collect the real results first and then end the thread.
                 let result = match catch_unwind(AssertUnwindSafe(|| {
                     engine.poll_maintenance(PollBudget::default())
                 })) {
                     Ok(result) => result,
                     Err(_) => {
-                        // 设备轮询等外层 panic 也先进入统一失败协议，不能留下健康的全局动作阻碍关闭。
+                        // Device polling and other outer layers panic Also enter the unified failure protocol first,Can't leave healthy global actions blocking closure.
                         engine.failed.store(true, Ordering::SeqCst);
                         engine.poll_maintenance(PollBudget::default())
                     }
@@ -346,7 +350,9 @@ fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error>
                 }
                 Duration::from_micros(100)
             } else if engine.failed.load(Ordering::SeqCst) {
-                return Err(Error::InvalidState("引擎失败，自动维护停止"));
+                return Err(Error::InvalidState(
+                    "engine failure,Automatic maintenance stopped",
+                ));
             } else if Instant::now() < next_check {
                 next_check.saturating_duration_since(Instant::now())
             } else {
@@ -356,7 +362,7 @@ fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error>
                 if state.stop {
                     return Ok(());
                 }
-                // 与停止请求在同一锁内线性化接受；锁外执行复制和 I/O 推进。
+                // Linearize acceptance within the same lock as stop request;Execution of copy and lock-out I/O advance.
                 let accepted = catch_unwind(AssertUnwindSafe(|| {
                     if state.reclaim {
                         engine.start_gc(f.begin).map(Task::Reclaim).map(Some)
@@ -382,7 +388,9 @@ fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error>
                     Ok(result) => result,
                     Err(_) => {
                         engine.failed.store(true, Ordering::SeqCst);
-                        return Err(Error::InvalidState("自动维护接受任务恐慌"));
+                        return Err(Error::InvalidState(
+                            "Automatic maintenance acceptance task panics",
+                        ));
                     }
                 };
                 let delay = match accepted {
@@ -399,7 +407,7 @@ fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error>
                         policy.check_interval
                     }
                     Err(Error::Busy | Error::RangeTruncated) => {
-                        // 未接受期间其他维护可移动 begin；下一轮从实际边界重新规划。
+                        // Other maintenance during the non-acceptance period can be moved begin;Next round re-planning from actual boundaries.
                         state.phase = Phase::Scheduled;
                         policy.check_interval.min(Duration::from_millis(10))
                     }
@@ -422,7 +430,8 @@ fn run<S: Schema>(weak: Weak<Engine<S>>, control: &Control) -> Result<(), Error>
 mod tests {
     use super::*;
     #[test]
-    fn 自动目标只覆盖阈值以上的完整安全冷页且受单次预算限制() {
+    fn the_automatic_target_only_covers_complete_safe_cold_pages_above_the_threshold_and_is_limited_by_the_single_budget()
+     {
         let policy = AutoCompactionPolicy {
             log_size_budget: 20000,
             trigger_fraction: 0.5,
@@ -465,7 +474,8 @@ mod tests {
         assert_eq!(target(&policy, 4096, f).unwrap(), Some(LogAddress(4096)));
     }
     #[test]
-    fn 自动配置拒绝零预算无效比例间隔及不足一页的上限() {
+    fn automatic_configuration_rejects_zero_budget_invalid_ratio_interval_and_upper_limit_of_less_than_one_page()
+     {
         let mut config = crate::config::Config::default();
         config.validate().unwrap();
         config.maintenance.auto_compaction = true;

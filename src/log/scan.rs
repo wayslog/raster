@@ -1,7 +1,7 @@
-//! 单条驻留记录复制；返回前释放所有页引用，不生成全局一致快照。
+//! Single resident record copy;Release all page references before returning,Do not generate globally consistent snapshots.
 use super::*;
 impl<V: ValueLayout> HybridLog<V> {
-    /// 测试专用：模拟 P7 发布已刷盘范围的逻辑 begin，不执行物理删除。
+    /// For testing only:Simulation P7 The logic of publishing the flushed range begin,No physical deletion is performed.
     #[cfg(test)]
     pub fn advance_begin_for_scan_test(&self, begin: LogAddress) {
         let mut state = self.state.lock().unwrap();
@@ -9,7 +9,7 @@ impl<V: ValueLayout> HybridLog<V> {
         state.frontiers.begin = begin;
     }
 
-    /// 开放扫描前验证逻辑范围和驻留槽边界；冷页的非对齐边界由页游标另行检查。
+    /// Verify logical range and resident slot boundaries before opening scan;Non-aligned boundaries of cold pages are checked separately by the page cursor.
     pub fn validate_scan_range(
         &self,
         begin: LogAddress,
@@ -20,11 +20,11 @@ impl<V: ValueLayout> HybridLog<V> {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
         let mut frontiers = state.frontiers;
         frontiers.tail = self.pool.tail()?;
         if begin > end || end > frontiers.tail {
-            return Err(Error::InvalidFormat("扫描范围无效"));
+            return Err(Error::InvalidFormat("Scan range is invalid"));
         }
         if begin < frontiers.begin {
             return Err(Error::RangeTruncated);
@@ -38,19 +38,21 @@ impl<V: ValueLayout> HybridLog<V> {
         let records = self
             .records
             .lock()
-            .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         for boundary in [begin, end] {
             if boundary >= frontiers.head
                 && let Some((address, value)) = records.range(..boundary).next_back()
                 && address.checked_add(value.record_bytes() as u64)? > boundary
             {
-                return Err(Error::InvalidFormat("扫描边界位于记录中间"));
+                return Err(Error::InvalidFormat(
+                    "Scan boundary is in the middle of the record",
+                ));
             }
         }
         Ok(frontiers)
     }
 
-    /// 只用于当前内存范围。head 前移导致 RangeTruncated 时，驱动者可重新选择磁盘路径。
+    /// Only used for current memory range.head forward movement leads to RangeTruncated time,Drivers can reselect disk paths.
     pub fn snapshot_next(
         &self,
         begin: LogAddress,
@@ -62,9 +64,9 @@ impl<V: ValueLayout> HybridLog<V> {
             let state = self
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("日志边界锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Log boundary lock poisoning"))?;
             if begin > end || end > self.pool.tail()? {
-                return Err(Error::InvalidFormat("扫描范围无效"));
+                return Err(Error::InvalidFormat("Scan range is invalid"));
             }
             if begin < state.frontiers.begin || begin < state.frontiers.head {
                 return Err(Error::RangeTruncated);
@@ -72,19 +74,21 @@ impl<V: ValueLayout> HybridLog<V> {
             if begin == end {
                 return Ok(None);
             }
-            // 不跨过尚未发布的槽；让调用者稍后重试，而不是遗漏迟到记录。
+            // Do not cross unpublished slots;Let the caller try again later,Rather than missing late records.
             if state.reservations != 0 {
                 return Err(Error::Busy);
             }
             let records = self
                 .records
                 .lock()
-                .map_err(|_| Error::InvalidState("记录表锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
             for boundary in [begin, end] {
                 if let Some((address, value)) = records.range(..boundary).next_back()
                     && address.checked_add(value.record_bytes() as u64)? > boundary
                 {
-                    return Err(Error::InvalidFormat("扫描边界位于记录中间"));
+                    return Err(Error::InvalidFormat(
+                        "Scan boundary is in the middle of the record",
+                    ));
                 }
             }
             records
@@ -95,7 +99,7 @@ impl<V: ValueLayout> HybridLog<V> {
         let Some((address, value)) = selected else {
             return Ok(None);
         };
-        // 编码专家布局时不持有边界或记录表锁；记录自身许可排除并发更新。
+        // Coding Expert lays out without holding bounds or record table locks;Record own permission to exclude concurrent updates.
         let bytes = value.snapshot_record()?;
         drop(value);
         if begin < self.frontiers()?.begin {
@@ -120,7 +124,8 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn 扫描副本独立于后续原地修改且不冻结记录() {
+    fn scanned_copies_are_independent_of_subsequent_in_place_modifications_and_do_not_freeze_records()
+     {
         let log = log();
         let address = log
             .finish_initialization(
@@ -161,13 +166,13 @@ mod tests {
         assert_eq!(Record::decode(&bytes).unwrap().value, 7u64.to_le_bytes());
     }
     #[test]
-    fn 扫描跳过放弃槽且拒绝半记录边界和未发布槽() {
+    fn scanning_skips_abandoned_slots_and_rejects_half_record_boundaries_and_unreleased_slots() {
         let log = log();
         let first = log
             .finish_initialization(log.reserve_record(b"a", None, 1).unwrap())
             .unwrap();
         let after_first = log.frontiers().unwrap().tail;
-        drop(log.reserve_record("放弃".as_bytes(), None, 2).unwrap());
+        drop(log.reserve_record("give up".as_bytes(), None, 2).unwrap());
         let next = log
             .finish_initialization(log.reserve_record(b"b", Some(first), 3).unwrap())
             .unwrap();
@@ -197,7 +202,8 @@ mod publication_tests {
     use super::*;
     use crate::schema::builtin::AtomicU64Value;
     #[test]
-    fn 已初始化未判定发布的槽保持扫描背压且冲突可清理() {
+    fn initialized_undecided_release_slots_maintain_scan_backpressure_and_conflicts_can_be_cleaned_up()
+     {
         let log = HybridLog::new(
             LogConfig {
                 page_bytes: 4096,

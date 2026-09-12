@@ -1,4 +1,4 @@
-//! 独立枚举完整调用区间的合法顺序；不读取索引、页或维护阶段。
+//! Legal order for independent enumeration of complete calling ranges;Do not read index,page or maintenance phase.
 use raster::{
     api::operation::*,
     schema::{

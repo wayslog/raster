@@ -1,4 +1,4 @@
-//! 压缩共用的条件复制：查证最新源，在同步源许可内复制，等待 I/O 时只保留拥有型状态。
+//! Compress shared conditional replication:Check the latest sources,Copy within sync source license,wait I/O Only the ownership status is retained.
 use super::{Engine, io_hub::CompletionHub, version_permit::VersionPermit};
 use crate::{
     coordination::{Action, Phase},
@@ -41,7 +41,10 @@ impl ConditionalCopy {
     pub fn published_address(&self) -> Option<LogAddress> {
         self.published
     }
-    #[allow(clippy::result_large_err, reason = "错误路由原样归还拥有缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Error routes are returned unchanged with buffers"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -50,7 +53,7 @@ impl ConditionalCopy {
         let Some((_, lookup)) = self.lookup.as_mut() else {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("条件复制未等待磁盘查询"),
+                reason: Error::InvalidState("Conditional replication not waiting for disk query"),
             });
         };
         lookup.accept(storage, completion)
@@ -67,7 +70,7 @@ impl ConditionalCopy {
         }
         Ok(())
     }
-    /// 失败收尾不提交新读取；调度器须先归还已有完成，再结束所属全局动作。
+    /// Failure closing does not commit new reads;The scheduler must first return completed,Then end the corresponding global action.
     pub fn drain(&mut self, storage: &SegmentedStorage) -> Result<bool, Error> {
         if let Some(id) = self.id
             && let Some(completion) = self.hub.take(id)?
@@ -86,7 +89,7 @@ impl ConditionalCopy {
 }
 impl Drop for ConditionalCopy {
     fn drop(&mut self) {
-        // 正常调度先 drain；异常销毁仅注销历史邮箱，设备仍拥有已接受的缓冲。
+        // Normal scheduling first drain;Abnormal destruction only logs out the historical mailbox,The device still has accepted buffers.
         if let Some(id) = self.id.take() {
             let io = if self.has_inflight() {
                 None
@@ -114,7 +117,9 @@ impl<S: Schema> Engine<S> {
                 || state.action != Some(Action::Compact)
                 || state.phase != Phase::Compacting
             {
-                return Err(Error::InvalidState("条件复制需要有效的压缩动作"));
+                return Err(Error::InvalidState(
+                    "Conditional replication requires valid compaction action",
+                ));
             }
             source.validate()?;
             let frontiers = self.log.frontiers()?;
@@ -122,11 +127,11 @@ impl<S: Schema> Engine<S> {
                 return Err(Error::RangeTruncated);
             }
             if source >= frontiers.tail {
-                return Err(Error::InvalidFormat("压缩源超出日志范围"));
+                return Err(Error::InvalidFormat("Compressed source exceeds log range"));
             }
             let (_, hash) =
                 decode_canonical(self.schema.key_codec(), &key).inspect_err(|error| {
-                    // 键适配器在自己的边界把恐慌转换为 InvalidState；仍须向引擎传播失败关闭。
+                    // The key adapter converts panics on its own boundaries to InvalidState;Failure to close must still be propagated to the engine.
                     if matches!(error, Error::InvalidState(_)) {
                         self.failed.store(true, Ordering::SeqCst);
                     }
@@ -152,7 +157,7 @@ impl<S: Schema> Engine<S> {
             Ok(result) => result,
             Err(_) => {
                 self.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("条件复制键准备恐慌"))
+                Err(Error::InvalidState("Conditional copy key prepare to panic"))
             }
         }
     }
@@ -162,10 +167,12 @@ impl<S: Schema> Engine<S> {
         budget: PollBudget,
     ) -> Result<CopyResult, Error> {
         if !Arc::ptr_eq(&self.io, &request.hub) {
-            return Err(Error::InvalidState("条件复制属于其他引擎实例"));
+            return Err(Error::InvalidState(
+                "Conditional replication belongs to other engine instances",
+            ));
         }
         if request.ended {
-            return Err(Error::InvalidState("条件复制已经终结"));
+            return Err(Error::InvalidState("Conditional replication has ended"));
         }
         let state = self.coordinator.snapshot()?;
         if self.failed.load(Ordering::SeqCst)
@@ -174,12 +181,16 @@ impl<S: Schema> Engine<S> {
             || state.phase != Phase::Compacting
             || state.version != request.version
         {
-            return Err(Error::InvalidState("条件复制动作或版本已失效"));
+            return Err(Error::InvalidState(
+                "The conditional copy action or version has expired",
+            ));
         }
         if !request
             .permit
             .as_ref()
-            .ok_or(Error::InvalidState("条件复制缺少版本许可"))?
+            .ok_or(Error::InvalidState(
+                "Conditional replication missing version license",
+            ))?
             .ready()?
         {
             request.monitor.pending();
@@ -192,7 +203,11 @@ impl<S: Schema> Engine<S> {
                     request.monitor.pending();
                     return Ok(CopyResult::Retry);
                 }
-                Err(_) => return Err(Error::InvalidState("条件复制遇到业务仲裁锁中毒")),
+                Err(_) => {
+                    return Err(Error::InvalidState(
+                        "Conditional replication encounters business arbitration lock poisoning",
+                    ));
+                }
             };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.copy_step(request, budget)
@@ -201,7 +216,9 @@ impl<S: Schema> Engine<S> {
             Ok(result) => result,
             Err(_) => {
                 self.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("条件复制布局或发布恐慌"))
+                Err(Error::InvalidState(
+                    "Conditional copy layout or publish panic",
+                ))
             }
         };
         if matches!(result, Ok(CopyResult::Retry)) {
@@ -228,7 +245,7 @@ impl<S: Schema> Engine<S> {
                 } else {
                     Effect::NotApplied
                 }),
-                Ok(CopyResult::Retry) => unreachable!("重试已单独处理"),
+                Ok(CopyResult::Retry) => unreachable!("Retries are handled separately"),
             };
             request.monitor.finish(summary, io);
         }
@@ -239,9 +256,9 @@ impl<S: Schema> Engine<S> {
         request: &mut ConditionalCopy,
         budget: PollBudget,
     ) -> Result<CopyResult, Error> {
-        let id = request
-            .id
-            .ok_or(Error::InvalidState("条件复制缺少完成路由"))?;
+        let id = request.id.ok_or(Error::InvalidState(
+            "Conditional replication missing completion route",
+        ))?;
         if let Some(completion) = self.io.take(id)? {
             request
                 .accept(&self.storage, completion)
@@ -261,7 +278,7 @@ impl<S: Schema> Engine<S> {
             )?;
             request.lookup = Some((resolved.entry, lookup));
         }
-        let (expected, lookup) = request.lookup.as_mut().expect("查询已创建");
+        let (expected, lookup) = request.lookup.as_mut().expect("query_created");
         let step = lookup.step(&self.log, &self.storage, budget)?;
         if matches!(step, LookupStep::AwaitingIo | LookupStep::Continue) {
             return Ok(CopyResult::Retry);
@@ -270,7 +287,9 @@ impl<S: Schema> Engine<S> {
             step,
             LookupStep::Present | LookupStep::Tombstone | LookupStep::Missing
         ) {
-            return Err(Error::InvalidState("条件复制元数据查询返回了活跃值"));
+            return Err(Error::InvalidState(
+                "Conditional replication metadata query returned active values",
+            ));
         }
         let current = self.resolve_index(request.hash, &request.key)?;
         if current.entry != *expected {
@@ -280,14 +299,14 @@ impl<S: Schema> Engine<S> {
         if lookup.matched_address() != Some(request.source) {
             return Ok(CopyResult::Obsolete);
         }
-        let (_, lookup) = request.lookup.take().expect("终结查询存在");
+        let (_, lookup) = request.lookup.take().expect("Terminate query exists");
         let mut publishing = false;
         let result = lookup.with_matched_record(&self.log, &self.storage, |bytes| {
             publishing = true;
             self.publish_copy(request, current.entry, current.head, bytes)
         });
         match result {
-            // 仅源许可争用可重试；专家布局返回 Busy 仍是本次复制的终结错误。
+            // Only source license contention can be retried;Expert layout returns Busy Still the terminating error for this copy.
             Err(Error::Busy) if !publishing => Ok(CopyResult::Retry),
             Err(Error::RangeTruncated)
                 if !publishing && request.source >= self.log.frontiers()?.begin =>
@@ -313,7 +332,9 @@ impl<S: Schema> Engine<S> {
                 .previous
                 .is_some_and(|previous| previous >= request.source)
         {
-            return Err(Error::InvalidFormat("条件复制源记录无效"));
+            return Err(Error::InvalidFormat(
+                "The conditional copy source record is invalid",
+            ));
         }
         let reservation = if record.header.tombstone {
             match self.log.reserve_tombstone(&request.key, head) {

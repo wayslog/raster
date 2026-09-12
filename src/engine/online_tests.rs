@@ -1,4 +1,4 @@
-//! P6.4：在同一实例交错缓存、Pending 写入、扩容、扫描和 Full 检查点，再核对恢复结果。
+//! P6.4:Interleaved caching on the same instance,Pending write,Expansion,scan and Full checkpoint,Check the recovery results again.
 use super::*;
 use crate::{
     api::{
@@ -23,7 +23,7 @@ impl Keyed<Schema> for Add {
 impl RmwOperation<Schema> for Add {
     type Output = u64;
     fn initial(&mut self) -> Result<(u64, u64), Error> {
-        panic!("键 1 必须存在")
+        panic!("key 1 must exist")
     }
     fn copy_update(&mut self, value: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -38,7 +38,12 @@ impl RmwOperation<Schema> for Add {
     }
 }
 fn collect_one(scanner: &mut RecordScanner<Schema>, rows: &mut Vec<ScannedRecord<Schema>>) {
-    rows.push(scanner.next_record().unwrap().expect("原物理范围仍有记录"));
+    rows.push(
+        scanner
+            .next_record()
+            .unwrap()
+            .expect("The original physical range is still recorded"),
+    );
 }
 fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
     let root = Directory(std::env::temp_dir().join(format!(
@@ -98,7 +103,7 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         .rmw(Serial(402), Add(calls.clone()), Default::default())
         .unwrap()
     else {
-        panic!("冷页读改写必须挂起");
+        panic!("Cold page read and write must be suspended");
     };
     let worker_store = store.clone();
     let deleter = crate::engine::session_actor::Actor::new(move || {
@@ -134,12 +139,12 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
     assert_eq!(
         calls.load(Ordering::SeqCst),
         0,
-        "维护和扫描不能执行 RMW 用户上下文"
+        "Maintenance and scan cannot be performed RMW user context"
     );
     assert_eq!(
         store.inner.cache.allocated_bytes(),
         0,
-        "扩容已经规范化缓存索引头"
+        "Expand the normalized cache index header"
     );
     assert!(matches!(
         session.wait(&mut changed, deadline()).unwrap().unwrap(),
@@ -160,7 +165,7 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         .read(Serial(403), Read(3), Default::default())
         .unwrap()
     else {
-        panic!("未缓存的冷键必须挂起");
+        panic!("Uncached cold keys must be suspended");
     };
     let checkpoint = store
         .maintenance()
@@ -168,7 +173,7 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         .unwrap();
     assert!(matches!(store.maintenance().grow_index(), Err(Error::Busy)));
     collect_one(&mut scanner, &mut rows);
-    // 扫描器保持打开但不加入会话切分屏障；检查点等待真正的旧版本会话请求。
+    // The scanner remains open but does not join the session splitting barrier;Checkpoint waits for real old version session request.
     let checkpoint = wait(&mut session, &checkpoint);
     assert_eq!(
         checkpoint
@@ -188,7 +193,7 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
         index: checkpoint.token,
         log: checkpoint.token,
     };
-    // 检查点之后继续写入，迫使扫描原范围的驻留页全部淘汰。扫描固定 end 不扩大。
+    // Continue writing after checkpoint,Force all resident pages in the original scanned range to be eliminated.Scan fixed end Do not expand.
     for key in 400..800 {
         put(&mut session, key + 4, key);
     }
@@ -227,7 +232,7 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
     assert_eq!(
         store.inner.cache.allocated_bytes(),
         0,
-        "恢复后尚未访问前缓存必须为空"
+        "The cache must be empty before accessing after recovery"
     );
     let resumed = store.continue_session(session_id).unwrap();
     assert_eq!(resumed.progress.serial, Serial(403));
@@ -243,7 +248,8 @@ fn scenario(cache: bool) -> (Vec<Option<u64>>, Vec<Option<u64>>) {
     (live, restored)
 }
 #[test]
-fn 缓存开关下挂起写入扩容扫描检查点及恢复交错结果一致() {
+fn the_result_of_pending_write_expansion_scan_checkpoint_and_recovery_interleaving_under_cache_switch_is_consistent()
+ {
     assert_eq!(scenario(false), scenario(true));
 }
 
@@ -345,7 +351,8 @@ mod paused_scan {
         }))
     }
     #[test]
-    fn 扫描拥有值解码暂停期间检查点仍完成且新写不会混入恢复切分() {
+    fn checkpoints_are_still_completed_during_scan_owned_value_decoding_pauses_and_new_writes_are_not_mixed_into_recovery_shards()
+     {
         for cache in [false, true] {
             let root = Directory(std::env::temp_dir().join(format!(
                 "raster-online-pause-{:x?}",
@@ -401,7 +408,7 @@ mod paused_scan {
                     .serial,
                 Serial(0)
             );
-            // 扫描只占有已经复制的字节，不能让日志冻结等待其用户解码。
+            // Scan only takes possession of bytes that have been copied,Cannot have a log frozen waiting for its user to decode.
             assert!(matches!(
                 session.upsert(Serial(1), Put(77)).unwrap(),
                 Submission::Ready(Ok(_))

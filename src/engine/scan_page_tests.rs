@@ -1,11 +1,12 @@
-//! 原生设备页读取接入扫描游标；尚不替代公开扫描器的缓冲与生命周期验收。
+//! Native device page reading access scan cursor;Not yet a replacement for public scanner buffering and lifecycle acceptance.
 use super::*;
 use crate::{
     api::completion::TicketState, engine::io_hub::CompletionHub, log::read_page::PageRead,
 };
 
 #[test]
-fn 原生磁盘页扫描输出独立且共享轮询不执行另一会话回调() {
+fn native_disk_page_scan_output_is_independent_and_shared_polling_does_not_execute_another_session_callback()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     for key in 0..400 {
@@ -23,7 +24,7 @@ fn 原生磁盘页扫描输出独立且共享轮询不执行另一会话回调()
         .read(Serial(400), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("冷页用户读取必须挂起")
+        panic!("Cold page user reads must be suspended")
     };
     let id = store
         .inner
@@ -36,10 +37,10 @@ fn 原生磁盘页扫描输出独立且共享轮询不执行另一会话回调()
         let mut read = PageRead::new(page, 4096, CompletionHub::route(id)).unwrap();
         let stop = Instant::now() + Duration::from_secs(10);
         let page = loop {
-            assert!(Instant::now() < stop, "磁盘扫描读取超时");
+            assert!(Instant::now() < stop, "disk scan read timeout");
             match read.submit_next(&store.inner.storage) {
                 Ok(_) | Err(Error::Busy) => {}
-                Err(error) => panic!("提交扫描读取失败：{error:?}"),
+                Err(error) => panic!("Submit scan read failed:{error:?}"),
             }
             store
                 .inner
@@ -64,7 +65,7 @@ fn 原生磁盘页扫描输出独立且共享轮询不执行另一会话回调()
         }
     }
     store.inner.io.release(id).unwrap();
-    // 其他路由已经被轮询，但用户上下文必须由自己的会话推进。
+    // Other routes have been polled,But the user context must be advanced by its own session.
     assert!(matches!(
         user_read.try_take().unwrap(),
         TicketState::Pending
@@ -88,7 +89,7 @@ fn 原生磁盘页扫描输出独立且共享轮询不执行另一会话回调()
 }
 
 #[test]
-fn 公开三种模式完整遍历并在结束后释放扫描名额() {
+fn expose_the_three_modes_to_complete_the_traversal_and_release_the_scanning_quota_after_the_end() {
     use crate::api::scan::{Buffering, ScanOptions};
     let (_root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -136,7 +137,7 @@ fn 公开三种模式完整遍历并在结束后释放扫描名额() {
 }
 
 #[test]
-fn 公开磁盘扫描保留无效记录标志并省略其值() {
+fn public_disk_scan_retains_the_invalid_record_flag_and_omits_its_value() {
     use crate::api::scan::{Buffering, ScanOptions};
     use std::io::{Seek, SeekFrom, Write};
     let (_root, store) = setup(None);
@@ -177,7 +178,7 @@ fn 公开磁盘扫描保留无效记录标志并省略其值() {
     }
     .encode()
     .unwrap();
-    // 注入一个校验正确的 invalid 物理槽；不修改不可变检查点材料。
+    // Inject a verified invalid Physics slot;Immutable checkpoint material is not modified.
     let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write_all(&changed).unwrap();
@@ -201,7 +202,8 @@ fn 公开磁盘扫描保留无效记录标志并省略其值() {
 }
 
 #[test]
-fn 公开预读与挂起用户读取共享路由且关闭不吞掉用户完成() {
+fn public_read_ahead_and_pending_users_read_shared_routes_and_close_without_swallowing_user_completion()
+ {
     use crate::api::scan::{Buffering, ScanOptions};
     let (_root, store) = setup(None);
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -213,7 +215,7 @@ fn 公开预读与挂起用户读取共享路由且关闭不吞掉用户完成()
         .read(Serial(400), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("需要冷页读取");
+        panic!("Requires cold page reads");
     };
     let mut scan = store
         .scan(ScanOptions {

@@ -1,4 +1,4 @@
-//! 故障脚本和请求生命周期预言机，尚未连接真实引擎。
+//! Failure scripts and request lifecycle oracles,Not yet connected to the real engine.
 use raster::types::Effect;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub struct FaultScript {
 impl FaultScript {
     pub fn new(event: Event, occurrence: usize) -> Result<Self, &'static str> {
         if occurrence == 0 {
-            return Err("故障次数从一开始");
+            return Err("Number of failures from the beginning");
         }
         Ok(Self {
             event,
@@ -77,7 +77,7 @@ pub struct Lifecycle {
 impl Lifecycle {
     pub fn accept(&mut self) -> Result<(), &'static str> {
         if self.accepted {
-            return Err("请求不能重复接受");
+            return Err("Requests cannot be accepted repeatedly");
         }
         self.accepted = true;
         self.attempts = 1;
@@ -85,14 +85,14 @@ impl Lifecycle {
     }
     pub fn retry_computation(&mut self) -> Result<(), &'static str> {
         if !self.accepted || self.terminal || self.failed || self.may_apply {
-            return Err("请求不可重试");
+            return Err("The request cannot be retried");
         }
         self.attempts += 1;
         Ok(())
     }
     pub fn finish(&mut self, effect: Effect, error: bool) -> Result<(), &'static str> {
         if !self.accepted || self.terminal {
-            return Err("请求只能在接受后终结一次");
+            return Err("A request can only be terminated once after acceptance");
         }
         self.terminal = true;
         self.failed = error && effect != Effect::NotApplied;
@@ -100,7 +100,7 @@ impl Lifecycle {
     }
     pub fn begin_mutation(&mut self) -> Result<(), &'static str> {
         if !self.accepted || self.terminal || self.may_apply {
-            return Err("不能开始修改");
+            return Err("Can't start modification");
         }
         self.may_apply = true;
         Ok(())

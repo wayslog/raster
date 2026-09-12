@@ -1,11 +1,11 @@
-name: P9 随机契约对照（保留原始差异）
+name: P9 Random Contract Comparison (Keep Original Differences)
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   comparison:
-    name: 原生随机对照 / ${{ matrix.backend }}
+    name: native randomized control / ${{ matrix.backend }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -13,22 +13,22 @@ jobs:
       matrix:
         backend: ["null", file]
     steps:
-      - name: 检出 RasterKV
+      - name: Check out RasterKV
         uses: actions/checkout@v6
-      - name: 检出固定上游
+      - name: Checkout fixed upstream
         uses: actions/checkout@v6
         with:
           repository: microsoft/FASTER
           ref: 321d872eabda6a0345c8bd76419f89723ed864ae
           path: target/upstream-source
           persist-credentials: false
-      - name: 安装固定 Rust 工具链
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.98.1
-      - name: 安装上游构建依赖
+      - name: Install upstream build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends g++ libaio-dev libtbb-dev uuid-dev
-      - name: 记录原生环境并构建执行器
+      - name: Record the native environment and build the executor
         shell: bash
         run: |
           mkdir -p target/p9-random
@@ -40,13 +40,13 @@ jobs:
             g++ --version
             uname -srm
             cat /etc/os-release
-            stat -f -c '文件系统：%T' .
+            stat -f -c 'file_system:%T' .
           } > target/p9-random/environment.txt
           set -o pipefail
           sh tools/upstream/build.sh target/upstream-source target/p9-build 2>&1 |
-            sed -e "s|$GITHUB_WORKSPACE|工作树|g" -e "s|$HOME|用户目录|g" |
+            sed -e "s|$GITHUB_WORKSPACE|worktree|g" -e "s|$HOME|user_directory|g" |
             tee target/p9-random/build.txt
-      - name: 逐操作比较固定边界及五个随机种子
+      - name: Operation-by-operation comparison of fixed bounds and five random seeds
         shell: bash
         env:
           BACKEND: ${{ matrix.backend }}
@@ -54,12 +54,12 @@ jobs:
           set -o pipefail
           export CARGO_TERM_COLOR=never
           export RUST_BACKTRACE=0
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=工作树 --remap-path-prefix=$HOME=用户目录"
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           options=()
           if [ "$BACKEND" = file ]; then options+=(--disk); fi
           python3 -B tools/upstream/compare.py --cpp target/p9-build/faster-replay --corrected-cpp target/p9-build/faster-replay-retained --output target/p9-random/comparison "${options[@]}" |
             tee target/p9-random/checks.txt
-      - name: 保存原始输入输出及全部差异
+      - name: Save original input and output and all differences
         if: always()
         uses: actions/upload-artifact@v4
         with:

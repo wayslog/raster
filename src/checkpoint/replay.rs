@@ -1,4 +1,4 @@
-//! 按地址重放已验证的页，过滤版本并修复跨越被过滤记录的前驱。
+//! Replay verified pages by address,Filter versions and fix predecessors that span filtered records.
 use crate::{
     format::{IndexEntry, IndexSnapshot, PageFrame, Record},
     schema::{KeyCodec, key::decode_canonical},
@@ -13,7 +13,7 @@ pub(crate) struct ReplayOptions {
     pub version: CheckpointVersion,
     pub buckets: usize,
     pub generation: Generation,
-    /// 限制本次重放保存的源记录链接数量；达到上限返回错误而不扩展预算。
+    /// Limit the number of source record links saved in this replay;Reaching cap returns error without extending budget.
     pub max_records: usize,
 }
 #[derive(Clone, Copy)]
@@ -36,7 +36,9 @@ impl Replay {
             || !options.end.0.is_multiple_of(options.page_bytes as u64)
             || !options.buckets.is_power_of_two()
         {
-            return Err(Error::InvalidFormat("重放范围或桶配置无效"));
+            return Err(Error::InvalidFormat(
+                "Invalid replay scope or bucket configuration",
+            ));
         }
         Ok(Self {
             next_page: options.begin.0 / options.page_bytes as u64,
@@ -45,10 +47,10 @@ impl Replay {
             heads: BTreeMap::new(),
         })
     }
-    /// 整页校验和编码成功后才推进状态；返回页供调用者写入独立恢复日志。
+    /// The status is advanced only after the full page checksum encoding is successful.;Returns a page for the caller to write to the independent recovery log.
     pub fn page<K: KeyCodec>(&mut self, bytes: &[u8], codec: &K) -> Result<Vec<u8>, Error> {
         if self.next_page >= self.options.end.0 / self.options.page_bytes as u64 {
-            return Err(Error::InvalidState("重放范围已结束"));
+            return Err(Error::InvalidState("Replay range has ended"));
         }
         let frame = PageFrame::decode(bytes, PageId(self.next_page), self.options.page_bytes)?;
         let mut payload = Vec::new();
@@ -79,10 +81,12 @@ impl Replay {
                     let link = links
                         .get(&previous)
                         .or_else(|| self.links.get(&previous))
-                        .ok_or(Error::InvalidFormat("日志前驱不是已验证的记录"))?;
-                    // 历史索引增长可改变桶号，但同一前驱链的 tag 必须相同。
+                        .ok_or(Error::InvalidFormat(
+                            "Log predecessor is not a verified record",
+                        ))?;
+                    // Historical index growth can change the bucket number,But the same precursor chain tag must be the same.
                     if link.tag != tag {
-                        return Err(Error::InvalidFormat("日志前驱标签不匹配"));
+                        return Err(Error::InvalidFormat("Log precursor tag does not match"));
                     }
                     link.retained
                 }
@@ -119,20 +123,21 @@ impl Replay {
     pub fn complete(&self) -> bool {
         self.next_page == self.options.end.0 / self.options.page_bytes as u64
     }
-    /// 用于核对模糊索引的原链头；新版本链头可能解析为旧地址或空链。
+    /// Original link header used to check fuzzy index;The new version link head may be resolved to an old address or an empty link.
     pub fn resolve_head(&self, address: LogAddress, tag: u16) -> Result<Option<LogAddress>, Error> {
-        let link = self
-            .links
-            .get(&address)
-            .ok_or(Error::InvalidFormat("索引链头不是重放记录"))?;
+        let link = self.links.get(&address).ok_or(Error::InvalidFormat(
+            "The index chain head is not a replay record",
+        ))?;
         if link.tag != tag {
-            return Err(Error::InvalidFormat("索引链头标签与记录不一致"));
+            return Err(Error::InvalidFormat(
+                "The index chain head label is inconsistent with the record",
+            ));
         }
         Ok(link.retained)
     }
     pub fn index(&self) -> Result<IndexSnapshot, Error> {
         if !self.complete() {
-            return Err(Error::InvalidState("日志重放尚未完成"));
+            return Err(Error::InvalidState("Log replay has not yet completed"));
         }
         let mut entries = Vec::new();
         entries
@@ -204,7 +209,8 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn 同页过滤新版本并修复旧键经过碰撞新键的链() {
+    fn filter_new_versions_on_the_same_page_and_fix_the_chain_of_old_keys_past_the_collision_of_new_keys()
+     {
         assert_eq!(U64Key.hash(&8969).tag(), U64Key.hash(&9239).tag());
         let bytes = page(
             0,
@@ -237,7 +243,7 @@ mod tests {
         assert!(replay.page(&bytes, &U64Key).is_err());
     }
     #[test]
-    fn 跨页修复并保留旧版本墓碑而过滤新墓碑() {
+    fn cross_page_fix_and_keep_old_versions_of_tombstones_while_filtering_new_tombstones() {
         let mut replay = Replay::new(options(768, 3)).unwrap();
         replay
             .page(&page(0, &[(0, 8969, 0, None, false, false)]), &U64Key)
@@ -264,7 +270,8 @@ mod tests {
         assert_eq!(replay.index().unwrap().entries[0].address, LogAddress(512));
     }
     #[test]
-    fn 错页悬空前驱标签错误和预算失败均不推进页状态() {
+    fn wrong_page_dangling_predecessor_label_error_and_budget_failure_do_not_advance_the_page_status()
+     {
         let mut replay = Replay::new(options(512, 2)).unwrap();
         assert!(replay.page(&page(1, &[]), &U64Key).is_err());
         replay
@@ -300,7 +307,8 @@ mod tests {
         );
     }
     #[test]
-    fn 截断前驱归空且无效记录不能成为后续链头() {
+    fn the_predecessor_will_be_truncated_and_the_invalid_record_will_not_become_a_subsequent_link_head()
+     {
         let mut config = options(512, 1);
         config.begin = LogAddress(256);
         let mut replay = Replay::new(config).unwrap();

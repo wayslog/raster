@@ -1,11 +1,11 @@
-//! 保留错误分类、原因与写入影响；拒绝和接受后的失败分开表达。
+//! Keep error classification,Causes and effects of writing;Express rejection and failure after acceptance separately.
 
 use std::fmt;
 
-/// 检查点失效与材料删除分开确认；未知结果不能当作仍可恢复。
+/// Checkpoint failure and material deletion are confirmed separately;Unknown results cannot be assumed to be recoverable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckpointRetirement {
-    /// 本次没有发出失效操作；不证明未知或此前失效的 token 可恢复。
+    /// No invalidation operation was issued this time;Not proven to be unknown or previously invalid token Recoverable.
     NotAttempted,
     PossiblyRetired,
     Retired,
@@ -13,7 +13,7 @@ pub enum CheckpointRetirement {
 
 #[derive(Debug)]
 pub enum Error {
-    /// 不保留或回显 TOML 原文及文件路径；offset 是 UTF-8 字节位置。
+    /// Do not retain or echo TOML Original text and file path;offset Yes UTF-8 Byte position.
     ConfigDocument {
         field: &'static str,
         offset: Option<usize>,
@@ -25,18 +25,18 @@ pub enum Error {
         confirmed_absent_materials: u64,
         cause: Box<Error>,
     },
-    /// 回收失败保留已经生效的逻辑边界和确认完成的物理删除数。
+    /// Recycling failure retains the logical boundaries that have taken effect and the number of confirmed physical deletions.
     GcFailed {
         begin: super::LogAddress,
         index_cleaned: bool,
         deleted_segments: u64,
         cause: Box<Error>,
     },
-    /// 压缩失败保留已发布的迁移数；until 是请求的截止地址，不表示已完成扫描范围。
+    /// Compaction failure retains number of published migrations;until is the end address of the request,Does not indicate that the scan range has been completed.
     CompactionFailed {
         until: super::LogAddress,
         copied: u64,
-        /// 已完成后续步骤；GC 失败的部分效果仍由 cause 中的 GcFailed 给出。
+        /// Next steps completed;GC Some of the effects of the failure are still represented by cause in GcFailed given.
         checkpoint: Option<Box<crate::api::maintenance::CheckpointReport>>,
         gc: Option<Box<crate::api::maintenance::GcReport>>,
         cause: Box<Error>,
@@ -74,7 +74,10 @@ impl fmt::Display for Error {
                 field,
                 offset,
                 reason,
-            } => write!(f, "配置文档 {field} 错误（字节位置 {offset:?}）：{reason}"),
+            } => write!(
+                f,
+                "Configuration document {field} Error(Byte position {offset:?}):{reason}"
+            ),
             Self::CheckpointReleaseFailed {
                 token,
                 retirement,
@@ -82,7 +85,7 @@ impl fmt::Display for Error {
                 cause,
             } => write!(
                 f,
-                "检查点释放失败：token {:x?}，失效状态 {retirement:?}，已确认不存在 {confirmed_absent_materials} 个材料，原因：{cause}",
+                "Checkpoint release failed:token {:x?},Failure state {retirement:?},Confirmed not to exist {confirmed_absent_materials} materials,Reason:{cause}",
                 token.0
             ),
             Self::GcFailed {
@@ -92,7 +95,7 @@ impl fmt::Display for Error {
                 cause,
             } => write!(
                 f,
-                "回收失败：begin {}，索引清理 {index_cleaned}，已确认删除 {deleted_segments} 段，原因：{cause}",
+                "Recycling failed:begin {},Index cleaning {index_cleaned},Deletion confirmed {deleted_segments} segment,Reason:{cause}",
                 begin.0
             ),
             Self::CompactionFailed {
@@ -103,24 +106,32 @@ impl fmt::Display for Error {
                 cause,
             } => write!(
                 f,
-                "压缩失败：目标地址 {}，已迁移 {copied} 条，已完成检查点 {}，已完成 GC {}，原因：{cause}",
+                "Compression failed:destination address {},Migrated {copied} Article,Checkpoint completed {},Completed GC {},Reason:{cause}",
                 until.0,
                 checkpoint.is_some(),
                 gc.is_some()
             ),
-            Self::NotImplemented { module } => write!(f, "模块尚未实现：{module}"),
-            Self::InvalidConfig { field, reason } => write!(f, "配置无效：{field}，{reason}"),
-            Self::InvalidState(reason) => write!(f, "状态无效：{reason}"),
-            Self::InvalidFormat(reason) => write!(f, "格式无效：{reason}"),
-            Self::Codec(reason) => write!(f, "编码失败：{reason}"),
-            Self::CapacityExceeded => f.write_str("容量预算不足"),
-            Self::OutOfMemory => f.write_str("内存分配失败"),
-            Self::DeadlineExceeded => f.write_str("等待已超过截止时间"),
-            Self::Busy => f.write_str("存在尚未完成的互斥动作"),
-            Self::UnsupportedDurability => f.write_str("设备不支持要求的持久化语义"),
-            Self::RangeTruncated => f.write_str("扫描范围已被截断"),
-            Self::SessionAbandoned => f.write_str("会话未正常关闭，写入影响可能未知"),
-            Self::Io(source) => write!(f, "设备错误：{source}"),
+            Self::NotImplemented { module } => write!(f, "Module not implemented yet:{module}"),
+            Self::InvalidConfig { field, reason } => {
+                write!(f, "Invalid configuration:{field},{reason}")
+            }
+            Self::InvalidState(reason) => write!(f, "Invalid status:{reason}"),
+            Self::InvalidFormat(reason) => write!(f, "Invalid format:{reason}"),
+            Self::Codec(reason) => write!(f, "Encoding failed:{reason}"),
+            Self::CapacityExceeded => f.write_str("Insufficient capacity budget"),
+            Self::OutOfMemory => f.write_str("Memory allocation failed"),
+            Self::DeadlineExceeded => f.write_str("Waiting time exceeded"),
+            Self::Busy => {
+                f.write_str("There are mutually exclusive actions that have not yet been completed")
+            }
+            Self::UnsupportedDurability => {
+                f.write_str("The device does not support the required persistence semantics")
+            }
+            Self::RangeTruncated => f.write_str("Scan range has been truncated"),
+            Self::SessionAbandoned => {
+                f.write_str("Session was not closed gracefully,Write impact may be unknown")
+            }
+            Self::Io(source) => write!(f, "Device error:{source}"),
         }
     }
 }
@@ -148,14 +159,14 @@ pub enum Effect {
     Unknown,
 }
 
-/// 接受后的操作失败，错误链和格式化输出都保留原因与生效范围。
+/// Operation failed after acceptance,Both the error chain and formatted output retain the cause and effective range..
 ///
 /// ```
 /// use raster::types::{Effect, Error, OperationError};
-/// let failure = OperationError { cause: Error::Codec("输出编码失败"), effect: Effect::Applied };
-/// assert!(failure.to_string().contains("已生效"));
+/// let failure = OperationError { cause: Error::Codec("Output encoding failed"), effect: Effect::Applied };
+/// assert!(failure.to_string().contains("Already effective"));
 /// assert_eq!(std::error::Error::source(&failure).unwrap().to_string(), failure.cause.to_string());
-/// // 已生效或影响未知的修改不能因为输出失败而自动重放。
+/// // Modifications that have taken effect or have unknown impact cannot be automatically replayed due to failed output..
 /// ```
 #[derive(Debug)]
 pub struct OperationError {
@@ -165,11 +176,11 @@ pub struct OperationError {
 impl fmt::Display for OperationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let effect = match self.effect {
-            Effect::NotApplied => "未生效",
-            Effect::Applied => "已生效",
-            Effect::Unknown => "影响未知",
+            Effect::NotApplied => "Not effective",
+            Effect::Applied => "Already effective",
+            Effect::Unknown => "Impact unknown",
         };
-        write!(f, "操作失败（{effect}）：{}", self.cause)
+        write!(f, "Operation failed({effect}):{}", self.cause)
     }
 }
 impl std::error::Error for OperationError {

@@ -1,11 +1,11 @@
-//! 有界工作线程文件设备；线程只处理设备请求与拥有型缓冲。
+//! bounded worker thread file device;Threads only handle device requests and owned buffers.
 use super::*;
 #[derive(Clone, Debug)]
 pub struct ThreadPoolDeviceFactory {
-    /// 执行文件请求的工作线程数，必须非零。
+    /// Number of worker threads executing file requests,Must be non-zero.
     pub workers: usize,
-    /// 已接受未收取请求的合计上限，同时也是独立的打开文件/锁句柄数上限。
-    /// 工作段绑定会占用句柄，直到回收或设备关闭；还需为检查点临时文件留出余量。
+    /// Total limit of accepted uncharged requests,It also opens the file independently./Maximum number of lock handles.
+    /// Work segment binding will occupy the handle,Until recycling or equipment shutdown;Also need to leave margin for checkpoint temporary files.
     pub queue_capacity: usize,
 }
 impl DeviceFactory for ThreadPoolDeviceFactory {
@@ -17,7 +17,7 @@ impl DeviceFactory for ThreadPoolDeviceFactory {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = options;
-            Err(Error::unimplemented("文件工作线程平台"))
+            Err(Error::unimplemented("File worker thread platform"))
         }
     }
 }
@@ -62,7 +62,7 @@ mod backend {
             if factory.workers == 0 || factory.queue_capacity == 0 {
                 return Err(Error::InvalidConfig {
                     field: "thread_pool",
-                    reason: "线程数和容量必须非零",
+                    reason: "Thread count and capacity must be non-zero",
                 });
             }
             let mut pending = VecDeque::new();
@@ -95,11 +95,11 @@ mod backend {
                 shared
                     .state
                     .lock()
-                    .map_err(|_| Error::InvalidState("设备队列锁中毒"))?
+                    .map_err(|_| Error::InvalidState("device_queue_lock_poisoned"))?
                     .alive += 1;
                 let worker = shared.clone();
                 match std::thread::Builder::new()
-                    .name(format!("raster-文件-{i}"))
+                    .name(format!("raster-file-{i}"))
                     .spawn(move || run(worker))
                 {
                     Ok(thread) => threads.push(thread),
@@ -108,7 +108,7 @@ mod backend {
                             let mut state = shared
                                 .state
                                 .lock()
-                                .map_err(|_| Error::InvalidState("设备队列锁中毒"))?;
+                                .map_err(|_| Error::InvalidState("device_queue_lock_poisoned"))?;
                             state.alive -= 1;
                             state.closed = true;
                             shared.changed.notify_all();
@@ -129,16 +129,25 @@ mod backend {
     fn run(shared: Arc<Shared>) {
         loop {
             let queued = {
-                let mut state = shared.state.lock().expect("工作线程控制锁未中毒");
+                let mut state = shared
+                    .state
+                    .lock()
+                    .expect("Worker thread control lock is not poisoned");
                 while state.pending.is_empty() && !state.closed {
-                    state = shared.changed.wait(state).expect("工作线程等待锁未中毒");
+                    state = shared
+                        .changed
+                        .wait(state)
+                        .expect("Worker thread wait lock is not poisoned");
                 }
                 if state.pending.is_empty() {
                     state.alive -= 1;
                     shared.changed.notify_all();
                     return;
                 }
-                let queued = state.pending.pop_front().expect("待处理队列非空");
+                let queued = state
+                    .pending
+                    .pop_front()
+                    .expect("The pending queue is not empty");
                 state.inflight += 1;
                 queued
             };
@@ -158,7 +167,10 @@ mod backend {
                     buffer,
                 }
             } else if let IoOperation::Cancel(target) = queued.request.operation {
-                let mut state = shared.state.lock().expect("工作线程控制锁未中毒");
+                let mut state = shared
+                    .state
+                    .lock()
+                    .expect("Worker thread control lock is not poisoned");
                 if let Some(target) = state.pending.iter_mut().find(|q| q.id == target) {
                     target.cancelled = true;
                 }
@@ -171,7 +183,10 @@ mod backend {
             } else {
                 shared.files.execute(queued.id, queued.request)
             };
-            let mut state = shared.state.lock().expect("工作线程控制锁未中毒");
+            let mut state = shared
+                .state
+                .lock()
+                .expect("Worker thread control lock is not poisoned");
             state.inflight -= 1;
             state.ready.push_back(completion);
             shared.changed.notify_all();
@@ -196,7 +211,7 @@ mod backend {
                 Err(_) => {
                     return Err(RejectedIo {
                         request,
-                        reason: Error::InvalidState("设备队列锁中毒"),
+                        reason: Error::InvalidState("device_queue_lock_poisoned"),
                     });
                 }
             };
@@ -206,7 +221,7 @@ mod backend {
                 return Err(RejectedIo {
                     request,
                     reason: if state.closed {
-                        Error::InvalidState("设备已关闭")
+                        Error::InvalidState("Device is turned off")
                     } else {
                         Error::Busy
                     },
@@ -238,11 +253,16 @@ mod backend {
                 .shared
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("设备队列锁中毒"))?;
+                .map_err(|_| Error::InvalidState("device_queue_lock_poisoned"))?;
             let n = budget.0.get().min(state.ready.len());
             output.try_reserve(n).map_err(|_| Error::OutOfMemory)?;
             for _ in 0..n {
-                output.push(state.ready.pop_front().expect("完成队列非空"));
+                output.push(
+                    state
+                        .ready
+                        .pop_front()
+                        .expect("Completion queue is not empty"),
+                );
             }
             Ok(())
         }
@@ -251,7 +271,7 @@ mod backend {
                 .shared
                 .state
                 .lock()
-                .map_err(|_| Error::InvalidState("设备队列锁中毒"))?;
+                .map_err(|_| Error::InvalidState("device_queue_lock_poisoned"))?;
             state.closed = true;
             self.shared.changed.notify_all();
             while state.alive != 0 {
@@ -262,19 +282,19 @@ mod backend {
                     .shared
                     .changed
                     .wait_timeout(state, remaining)
-                    .map_err(|_| Error::InvalidState("关闭等待锁中毒"))?
+                    .map_err(|_| Error::InvalidState("Close wait lock poisoning"))?
                     .0;
             }
             drop(state);
             for thread in self
                 .threads
                 .lock()
-                .map_err(|_| Error::InvalidState("线程表锁中毒"))?
+                .map_err(|_| Error::InvalidState("Thread table lock poisoning"))?
                 .drain(..)
             {
                 thread
                     .join()
-                    .map_err(|_| Error::InvalidState("文件工作线程恐慌"))?;
+                    .map_err(|_| Error::InvalidState("File worker thread panics"))?;
             }
             self.shared.files.close_all()
         }
@@ -285,7 +305,7 @@ mod backend {
                 state.closed = true;
                 self.shared.changed.notify_all();
             }
-            // 未显式 shutdown 时不无限等待系统 I/O；工作线程仍拥有 Shared，缓冲不会提前释放。
+            // Not explicit shutdown There is no infinite waiting system I/O;The worker thread still owns Shared,The buffer will not be released early.
         }
     }
 }

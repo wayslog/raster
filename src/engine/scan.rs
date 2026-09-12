@@ -1,4 +1,5 @@
-//! 扫描独立于会话屏障登记；关闭中的读取继续占用名额，直到设备完成归还。
+//! Scanning is independent of session barrier registration; a closed read continues
+//! to occupy its quota until the device returns it.
 use super::{Engine, io_hub::CompletionHub};
 use crate::{
     api::scan::{Buffering, RecordScanner, ScanOptions, ScannedRecord},
@@ -52,7 +53,7 @@ impl ScanRegistry {
         let mut registry = self
             .0
             .lock()
-            .map_err(|_| Error::InvalidState("扫描注册锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Scan registration lock poisoning"))?;
         if registry.scans.len() >= limit {
             return Err(Error::Busy);
         }
@@ -65,7 +66,7 @@ impl ScanRegistry {
         let registry = self
             .0
             .lock()
-            .map_err(|_| Error::InvalidState("扫描注册锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Scan registration lock poisoning"))?;
         let mut entries = Vec::new();
         entries
             .try_reserve_exact(registry.scans.len())
@@ -81,7 +82,7 @@ impl ScanRegistry {
     fn remove(&self, id: u64) -> Result<(), Error> {
         self.0
             .lock()
-            .map_err(|_| Error::InvalidState("扫描注册锁中毒"))?
+            .map_err(|_| Error::InvalidState("Scan registration lock poisoning"))?
             .scans
             .remove(&id);
         Ok(())
@@ -126,12 +127,14 @@ impl ScanPage {
             error: None,
         })
     }
-    /// 每个槽最多一个在途请求；取消只收取已有完成，不再提交后续分段读取。
+    /// At most one request in transit per slot;Cancellation only charges completed,Subsequent segmented reads are no longer committed.
     fn progress<S: Schema>(&mut self, engine: &Engine<S>, cancel: bool) -> Result<(), Error> {
         let Some(read) = &mut self.read else {
             return Ok(());
         };
-        let id = self.id.ok_or(Error::InvalidState("扫描读取缺少完成邮箱"))?;
+        let id = self
+            .id
+            .ok_or(Error::InvalidState("Scan read missing completion mailbox"))?;
         if let Some(completion) = engine.io.take(id)? {
             read.accept(&engine.storage, completion)
                 .map_err(|rejected| rejected.reason)?;
@@ -168,7 +171,9 @@ impl<S: Schema> Engine<S> {
             || self.shutdown_requested.load(Ordering::SeqCst)
             || self.failed.load(Ordering::SeqCst)
         {
-            return Err(Error::InvalidState("引擎关闭或失败，不能注册扫描"));
+            return Err(Error::InvalidState(
+                "Engine shuts down or fails,Unable to register for scan",
+            ));
         }
         self.scan_available()?;
         self.io.poll(&*self.storage.device, PollBudget::default())?;
@@ -201,7 +206,7 @@ impl<S: Schema> Engine<S> {
             state: state.clone(),
         };
         drop(done);
-        // 先登记再执行可能等待的边界读取；并发 shutdown 会看到活跃扫描。
+        // Register first and then perform boundary reads that may wait;Concurrency shutdown You will see active scanning.
         let validation = (|| {
             let mut state = state.state.try_lock().map_err(lock_error)?;
             if state.next != state.end {
@@ -248,7 +253,9 @@ impl<S: Schema> Engine<S> {
             || self.shutdown_requested.load(Ordering::SeqCst)
             || self.coordinator.snapshot()?.phase == crate::coordination::Phase::Failed
         {
-            return Err(Error::InvalidState("引擎关闭或失败，不能推进扫描"));
+            return Err(Error::InvalidState(
+                "Engine shuts down or fails,Can't advance scan",
+            ));
         }
         Ok(())
     }
@@ -279,7 +286,7 @@ impl<S: Schema> Engine<S> {
         }
         if shared.abandoned.load(Ordering::SeqCst) || state.closing || state.closed || state.failed
         {
-            return Err(Error::InvalidState("扫描已关闭或失败"));
+            return Err(Error::InvalidState("Scan is closed or failed"));
         }
         let deadline = self.scan_deadline()?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -287,7 +294,7 @@ impl<S: Schema> Engine<S> {
         }))
         .unwrap_or_else(|_| {
             self.failed.store(true, Ordering::SeqCst);
-            Err(Error::InvalidState("扫描执行恐慌"))
+            Err(Error::InvalidState("Scan execution panic"))
         });
         if let Err(error) = &result
             && !matches!(
@@ -300,7 +307,7 @@ impl<S: Schema> Engine<S> {
             }
             state.failed = true;
             state.closing = true;
-            // 只尝试非阻塞收尾；尚在途的槽保留在注册表，后续轮询继续排空。
+            // Only try non-blocking closing;In-flight slots remain in the registry,Subsequent polling will continue to empty the.
             let _ = self.close_scan_step(id, &mut state);
         }
         result
@@ -345,7 +352,7 @@ impl<S: Schema> Engine<S> {
                         continue;
                     }
                     Err(Error::Busy) => {}
-                    // head 可能在选取记录前推进；下一轮按最新边界转向磁盘。
+                    // head May advance before selecting a record;Next round turns to disk according to latest boundary.
                     Err(Error::RangeTruncated) => continue,
                     Err(error) => return Err(error),
                 }
@@ -374,12 +381,11 @@ impl<S: Schema> Engine<S> {
                 for slot in &mut state.pages {
                     slot.progress(self, false)?;
                 }
-                let slot = state
-                    .pages
-                    .first_mut()
-                    .ok_or(Error::InvalidState("扫描当前磁盘页缺失"))?;
+                let slot = state.pages.first_mut().ok_or(Error::InvalidState(
+                    "Scan for missing pages on current disk",
+                ))?;
                 if slot.page != page {
-                    return Err(Error::InvalidState("扫描页窗口顺序错误"));
+                    return Err(Error::InvalidState("Scan page windows in wrong order"));
                 }
                 if let Some(error) = slot.error.take() {
                     return Err(error);
@@ -440,7 +446,7 @@ impl<S: Schema> Engine<S> {
         }
     }
     pub(crate) fn abandon_scan(&self, id: u64, shared: &ScanHandle) {
-        // 即使收尾线程暂持状态锁，也不能丢失 Drop 通知。
+        // Even if the finishing thread holds the state lock temporarily,Can't be lost either Drop Notification.
         shared.abandoned.store(true, Ordering::SeqCst);
         if let Ok(mut state) = shared.state.try_lock() {
             state.closing = true;
@@ -448,19 +454,19 @@ impl<S: Schema> Engine<S> {
         }
     }
     pub(crate) fn progress_scans(&self) -> Result<(), Error> {
-        // 先复制注册引用再释放注册锁；永不在注册锁内等待扫描锁或执行解码。
+        // Copy the registration reference first and then release the registration lock;Never wait within a registration lock to scan the lock or perform decoding.
         for (id, shared) in self.scans.entries()? {
             let mut state = match shared.state.try_lock() {
                 Ok(state) => state,
                 Err(TryLockError::WouldBlock) => continue,
-                Err(_) => return Err(Error::InvalidState("扫描状态锁中毒")),
+                Err(_) => return Err(Error::InvalidState("Scan status lock poisoning")),
             };
             state.closing |= shared.abandoned.load(Ordering::SeqCst);
             if state.closing {
                 self.close_scan_step(id, &mut state)?;
             } else {
-                // 只推进已有窗口的字节读取，不解码用户值或生成额外预读页。
-                // 扫描器闲置时，其他会话轮询也可及时归还已完成页的段租约。
+                // Only advance byte reads of existing windows,Do not decode user values or generate additional readahead pages.
+                // When the scanner is idle,Other session polls can also promptly return segment leases for completed pages..
                 for slot in &mut state.pages {
                     slot.progress(self, false)?;
                 }
@@ -468,7 +474,7 @@ impl<S: Schema> Engine<S> {
         }
         Ok(())
     }
-    /// 设备确认排空后，才可释放因设备协议错误无法正常收尾的扫描槽。
+    /// After the equipment is confirmed to be empty,Only then can the scan slots that cannot be ended normally due to device protocol errors be released..
     pub(crate) fn release_stopped_scans(&self) -> Result<(), Error> {
         for (id, shared) in self.scans.entries()? {
             let mut state = shared.state.try_lock().map_err(lock_error)?;
@@ -507,7 +513,7 @@ impl<S: Schema> Engine<S> {
 fn lock_error<T>(error: TryLockError<T>) -> Error {
     match error {
         TryLockError::WouldBlock => Error::Busy,
-        TryLockError::Poisoned(_) => Error::InvalidState("扫描状态或关闭锁中毒"),
+        TryLockError::Poisoned(_) => Error::InvalidState("Scan status or close lock poisoning"),
     }
 }
 

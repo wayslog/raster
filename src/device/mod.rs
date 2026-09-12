@@ -1,4 +1,4 @@
-//! 拥有型设备接口；不接收 Schema、用户回调或会话操作上下文。
+//! Owned device interface;Do not accept Schema,User callback or session action context.
 
 mod buffer;
 pub mod memory;
@@ -28,34 +28,34 @@ pub struct DeviceOpenOptions {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct DeviceCapabilities {
-    /// 是否支持基本文件读写；与持久化同步能力分开。
+    /// Whether to support basic file reading and writing;Separate from persistent synchronization capabilities.
     pub supports_files: bool,
     pub memory_alignment: usize,
     pub transfer_alignment: usize,
     pub supports_file_sync: bool,
     pub supports_directory_sync: bool,
     pub supports_atomic_publish: bool,
-    /// 可按条目数和名称字节预算枚举目录，结果拥有数据且不保证并发快照。
+    /// Enumerable directories by number of entries and name byte budget,Result owns data and concurrent snapshots are not guaranteed.
     pub supports_directory_listing: bool,
-    /// 独立打开句柄上的跨实例文件锁；不能用进程内互斥冒充。
+    /// Independently open cross-instance file locks on handles;Cannot be faked with in-process mutex.
     pub supports_file_locks: bool,
 }
 
 pub trait DeviceFactory: Send + Sync + 'static {
-    /// 创建尚未对外服务的设备；实现必须报告真实能力。
+    /// Create a device that has not yet been exposed to external services;Implementations must report true capabilities.
     fn open(&self, options: DeviceOpenOptions) -> Result<Box<dyn Device>, Error>;
 }
 pub trait Device: Send + Sync + 'static {
     fn capabilities(&self) -> DeviceCapabilities;
-    /// 拒绝时归还整个请求；接受后设备负责终结并归还缓冲。
+    /// Return the entire request on rejection;After acceptance, the device is responsible for finalizing and returning the buffer.
     #[allow(
         clippy::result_large_err,
-        reason = "拒绝时必须原样归还请求，避免在容量不足路径再次分配"
+        reason = "In the event of rejection, the request must be returned intact,Avoid reallocation on insufficient paths"
     )]
     fn submit(&self, request: IoRequest) -> Result<IoId, RejectedIo>;
-    /// 全局错误不能吞掉在途请求的终结事件。
+    /// Global errors cannot swallow the final event of requests in transit.
     fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error>;
-    /// 超时不能提前释放内核仍可访问的缓冲。
+    /// Timeouts cannot prematurely release buffers that are still accessible to the kernel..
     fn shutdown(&self, deadline: Deadline) -> Result<(), Error>;
 }
 
@@ -95,14 +95,15 @@ pub enum IoOperation {
         destination: PathBuf,
     },
     RemoveFile(PathBuf),
-    /// 空路径表示设备根目录；超出任一预算整体失败，不返回不完整的目录。
+    /// An empty path represents the device root directory;Overall failure beyond either budget,Do not return incomplete directories.
     ReadDirectory {
         path: PathBuf,
         max_entries: usize,
         max_name_bytes: usize,
     },
-    /// 打开或创建不截断的锁文件，并仅尝试一次加锁；竞争通过完成返回 Busy。
-    /// 成功返回 Locked，必须保留句柄直至 Close；协议内不得删除或替换锁文件。
+    /// Open or create a lock file without truncation and attempt to lock it once;
+    /// contention is returned as Busy through completion.
+    /// Return successfully Locked,The handle must be retained until Close;Lock files cannot be deleted or replaced within the agreement.
     TryLock {
         path: PathBuf,
         mode: FileLockMode,
@@ -120,13 +121,13 @@ pub struct IoCompletion {
     pub id: IoId,
     pub route: CompletionRoute,
     pub result: Result<IoOutcome, Error>,
-    /// 即使请求失败，也必须归还它拥有的读写缓冲。
+    /// Even if the request fails,It must also return the read and write buffers it owns.
     pub buffer: Option<AlignedBuffer>,
 }
 #[derive(Debug)]
 pub enum IoOutcome {
     Opened(FileId),
-    /// 独立锁句柄只可关闭，不能用于数据 I/O；设备成功 shutdown 也会释放它。
+    /// Independent lock handles can only be closed,cannot be used for data I/O;Device successful shutdown will also release it.
     Locked(FileId),
     Directory(Vec<DirectoryEntry>),
     Transferred(usize),
@@ -147,7 +148,7 @@ pub enum DirectoryEntryKind {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirectoryEntry {
-    /// 单个文件名，保留非 UTF-8 字节；不包含父路径，也不跟随符号链接。
+    /// single file name,Reserve non UTF-8 bytes;Does not contain parent path,Also doesn't follow symlinks.
     pub name: std::ffi::OsString,
     pub kind: DirectoryEntryKind,
 }

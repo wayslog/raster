@@ -1,4 +1,4 @@
-//! 测试用 Schema 不访问裸内存，仅验证骨架的类型与拒绝边界。
+//! for testing Schema No access to raw memory,Only validate the skeleton's type and rejection bounds.
 use raster::{
     RasterKV,
     api::{
@@ -38,7 +38,7 @@ impl KeyCodec for TestKey {
     }
     fn encode(&self, key: &u64, output: &mut [u8]) -> Result<(), Error> {
         if output.len() != 8 {
-            return Err(Error::Codec("测试键长度错误"));
+            return Err(Error::Codec("Test key length error"));
         }
         output.copy_from_slice(&key.to_le_bytes());
         Ok(())
@@ -49,12 +49,12 @@ impl KeyCodec for TestKey {
     fn decode_owned(&self, encoded: &[u8]) -> Result<u64, Error> {
         let bytes = encoded
             .try_into()
-            .map_err(|_| Error::Codec("测试键长度错误"))?;
+            .map_err(|_| Error::Codec("Test key length error"))?;
         Ok(u64::from_le_bytes(bytes))
     }
 }
 struct TestLayout;
-// SAFETY: 测试布局所有许可相关方法均拒绝，不解引用指针、不构造记录视图。
+// SAFETY: Test layout all permission related methods rejected,Do not dereference pointers,Do not construct record view.
 unsafe impl ValueLayout for TestLayout {
     type Owned = u64;
     type Read<'a> = &'a u64;
@@ -71,35 +71,33 @@ unsafe impl ValueLayout for TestLayout {
         })
     }
     fn decode_owned(&self, bytes: &[u8]) -> Result<u64, Error> {
-        Ok(u64::from_le_bytes(
-            bytes
-                .try_into()
-                .map_err(|_| Error::Codec("整数需要八字节"))?,
-        ))
+        Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+            Error::Codec("Integers require eight bytes")
+        })?))
     }
     fn plan_decode(&self, _: &[u8]) -> Result<ValuePlan, Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
     fn initialize(&self, _p: InitPermit<'_>, _v: u64) -> Result<(), Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
     fn read<'a>(&'a self, _p: ReadPermit<'a>) -> Result<Self::Read<'a>, Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
     fn update<'a>(&'a self, _p: UpdatePermit<'a>) -> Result<Self::Update<'a>, Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
     fn stable_encoded_len(&self, _: StablePermit<'_>) -> Result<usize, Error> {
-        Err(Error::Codec("测试布局不支持稳定编码"))
+        Err(Error::Codec("Test layout does not support stable encoding"))
     }
     fn encode_stable(&self, _p: StablePermit<'_>, _out: &mut [u8]) -> Result<(), Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
     fn decode_initialize(&self, _input: &[u8], _p: InitPermit<'_>) -> Result<(), Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
     fn drop_value(&self, _p: DropPermit<'_>) -> Result<(), Error> {
-        Err(Error::unimplemented("测试布局"))
+        Err(Error::unimplemented("test_layout"))
     }
 }
 type TestSchema = SchemaPair<TestKey, TestLayout>;
@@ -107,12 +105,12 @@ struct SpyFactory(Arc<AtomicUsize>);
 impl DeviceFactory for SpyFactory {
     fn open(&self, _options: DeviceOpenOptions) -> Result<Box<dyn Device>, Error> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Err(Error::unimplemented("测试设备"))
+        Err(Error::unimplemented("Test equipment"))
     }
 }
 
 #[test]
-fn 创建传递设备失败且无效恢复身份不打开设备() {
+fn creating_delivery_device_fails_with_invalid_recovery_identity_does_not_open_device() {
     let calls = Arc::new(AtomicUsize::new(0));
     let build = || {
         RasterKV::builder(SchemaPair::new(TestKey, TestLayout))
@@ -121,7 +119,7 @@ fn 创建传递设备失败且无效恢复身份不打开设备() {
     assert!(matches!(
         build().create(),
         Err(Error::NotImplemented {
-            module: "测试设备"
+            module: "Test equipment"
         })
     ));
     let set = RecoverySet {
@@ -149,12 +147,12 @@ impl ReadOperation<TestSchema> for LocalRead {
     }
 }
 #[test]
-fn 共享引擎与本线程上下文类型可以同时成立() {
+fn the_shared_engine_and_this_thread_context_types_can_be_established_at_the_same_time() {
     fn shared<T: Send + Sync>() {}
     fn local<O: ReadOperation<TestSchema>>(_operation: O) {}
     shared::<RasterKV<TestSchema>>();
     local(LocalRead {
         key: 1,
-        result: Rc::new(String::from("本线程输出")),
+        result: Rc::new(String::from("Output of this thread")),
     });
 }

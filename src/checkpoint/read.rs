@@ -1,4 +1,4 @@
-//! 恢复文件按声明长度有界读取；验证 EOF 并关闭后才交出字节。
+//! Recovery files are read bounded by declared length;Verify EOF and hand over the bytes only after closing.
 use crate::{device::*, storage::SegmentedStorage, types::*};
 use std::{path::PathBuf, sync::Arc};
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -42,14 +42,14 @@ impl MaterialRead {
         if spec.chunk == 0 || !caps.memory_alignment.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "recovery.chunk",
-                reason: "读取块须非零且内存对齐有效",
+                reason: "The read block must be non-zero and the memory alignment must be valid",
             });
         }
         let expected = usize::try_from(spec.bytes).map_err(|_| Error::CapacityExceeded)?;
         if expected > spec.limit {
             return Err(Error::CapacityExceeded);
         }
-        // 额外一个字节只用于 EOF 探测，不进入结果分配。
+        // The extra byte is only used for EOF detection,Do not enter result distribution.
         spec.bytes.checked_add(1).ok_or(Error::CapacityExceeded)?;
         let path = storage.checkpoint_path(spec.token, spec.name)?;
         let mut bytes = Vec::new();
@@ -76,12 +76,14 @@ impl MaterialRead {
             self.stage = Stage::Close;
         } else {
             self.stage = Stage::Done;
-            self.result = Some(Err(self.failure.take().expect("保存首个错误")));
+            self.result = Some(Err(self.failure.take().expect("Save first error")));
         }
     }
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
         if !Arc::ptr_eq(&self.owner, &storage.identity) {
-            return Err(Error::InvalidState("恢复读取属于其他存储"));
+            return Err(Error::InvalidState(
+                "Resume reads belonging to other storage",
+            ));
         }
         if self.pending.is_some() || self.stage == Stage::Done {
             return Ok(None);
@@ -109,12 +111,12 @@ impl MaterialRead {
                     }
                 };
                 IoOperation::Read {
-                    file: self.file.expect("读取已打开文件"),
+                    file: self.file.expect("Read an open file"),
                     offset: self.bytes.len() as u64,
                     buffer,
                 }
             }
-            Stage::Close => IoOperation::Close(self.file.expect("关闭保留句柄")),
+            Stage::Close => IoOperation::Close(self.file.expect("Close retained handle")),
             Stage::Done => return Ok(None),
         };
         match storage.device.submit(IoRequest {
@@ -134,7 +136,10 @@ impl MaterialRead {
             },
         }
     }
-    #[allow(clippy::result_large_err, reason = "错误完成原样归还缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Error completion returns buffer intact"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -146,33 +151,35 @@ impl MaterialRead {
         {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("恢复读取完成身份不匹配"),
+                reason: Error::InvalidState("Recovery read completion identity mismatch"),
             });
         }
-        let (_, length) = self.pending.take().expect("已匹配在途身份");
+        let (_, length) = self.pending.take().expect("Matched status in transit");
         match (self.stage, completion.result) {
             (Stage::Open, Ok(IoOutcome::Opened(file))) => {
                 self.file = Some(file);
                 if completion.buffer.is_some() {
-                    self.fail(Error::InvalidState("打开读取文件返回意外缓冲"));
+                    self.fail(Error::InvalidState(
+                        "Opening file for reading returns unexpected buffering",
+                    ));
                 } else {
                     self.stage = Stage::Read;
                 }
             }
             (Stage::Read, Ok(IoOutcome::Transferred(read))) => {
                 if read > length || completion.buffer.as_ref().is_none_or(|b| b.len() != length) {
-                    self.fail(Error::InvalidState("读取长度或返回缓冲不匹配"));
+                    self.fail(Error::InvalidState("Read length or return buffer mismatch"));
                 } else if self.bytes.len() == self.expected {
                     if read == 0 {
                         self.stage = Stage::Close;
                     } else {
-                        self.fail(Error::InvalidFormat("恢复文件含尾随字节"));
+                        self.fail(Error::InvalidFormat("Recover files with trailing bytes"));
                     }
                 } else if read == 0 {
                     self.fail(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
                 } else {
                     self.bytes.extend_from_slice(
-                        &completion.buffer.expect("已验证缓冲").as_slice()[..read],
+                        &completion.buffer.expect("Buffering verified").as_slice()[..read],
                     );
                 }
             }
@@ -185,14 +192,14 @@ impl MaterialRead {
                 });
             }
             (_, Err(error)) => self.fail(error),
-            _ => self.fail(Error::InvalidState("恢复文件完成类型错误")),
+            _ => self.fail(Error::InvalidState("Recovery file completion type error")),
         }
         Ok(())
     }
     pub fn take_result(&mut self) -> Option<Result<Vec<u8>, Error>> {
         self.result.take()
     }
-    /// 失败仍有句柄时须由驱动者继续清理或设备 shutdown 接管，Drop 不提交 I/O。
+    /// If there is still a handle after the failure, the driver must continue to clean up or install the device. shutdown take over,Drop Do not submit I/O.
     pub fn has_resources(&self) -> bool {
         self.pending.is_some() || self.file.is_some()
     }

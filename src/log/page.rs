@@ -1,4 +1,4 @@
-//! 页分配器只分配独占范围；初始化、发布及持久化由记录所有者负责。
+//! Page allocator only allocates exclusive ranges;initialization,Publishing and persistence are the responsibility of the record owner.
 use crate::{sync::Mutex, types::*};
 use std::{
     alloc::{Layout, alloc_zeroed, dealloc},
@@ -10,21 +10,21 @@ struct Allocation {
     pointer: NonNull<u8>,
     layout: Layout,
 }
-// SAFETY: 分配在最后一个 Arc 退出前存活；仅由独占且不重叠的 PageRange 暴露可变字节。
+// SAFETY: assigned to the last Arc Survive before exiting;Only exclusive and non-overlapping PageRange Expose variable bytes.
 unsafe impl Send for Allocation {}
-// SAFETY: 页本身不暴露共享字节引用，控制锁保证每个范围只被分配一次。
+// SAFETY: The page itself does not expose shared byte references,Control locks ensure that each range is allocated only once.
 unsafe impl Sync for Allocation {}
 impl Allocation {
     fn new(bytes: usize) -> Result<Self, Error> {
         let layout = Layout::from_size_align(bytes, bytes).map_err(|_| Error::CapacityExceeded)?;
-        // SAFETY: Layout 已验证且页长度非零；空指针转换为分配失败。
+        // SAFETY: Layout Verified and page length is non-zero;Conversion of null pointer to allocation failed.
         let pointer = NonNull::new(unsafe { alloc_zeroed(layout) }).ok_or(Error::OutOfMemory)?;
         Ok(Self { pointer, layout })
     }
 }
 impl Drop for Allocation {
     fn drop(&mut self) {
-        // SAFETY: pointer 来自相同 Layout 的 alloc_zeroed，Arc 最后一个所有者恰好释放一次。
+        // SAFETY: pointer from the same Layout of alloc_zeroed,Arc The last owner released exactly once.
         unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
     }
 }
@@ -45,7 +45,7 @@ pub(crate) struct PagePool {
     max_pages: usize,
     state: Mutex<State>,
 }
-/// 不可克隆的独占范围；移动不改变地址，遗忘只会阻碍整页释放。
+/// Unclonable exclusive scope;Move without changing address,Forgetting only prevents full page release.
 pub(crate) struct PageRange {
     page: Arc<Allocation>,
     id: PageId,
@@ -68,11 +68,11 @@ impl PageRange {
         self.len
     }
     pub fn pointer(&self) -> NonNull<u8> {
-        // SAFETY: 分配时验证 offset + len 不越页，len 非零。
+        // SAFETY: Validate on assignment offset + len Do not exceed the page,len non-zero.
         unsafe { NonNull::new_unchecked(self.page.pointer.as_ptr().add(self.offset)) }
     }
     pub fn bytes_mut(&mut self) -> &mut [u8] {
-        // SAFETY: PageRange 不可克隆；范围互不重叠，&mut self 排除同范围的其他安全访问。
+        // SAFETY: PageRange Not cloneable;The ranges do not overlap with each other,&mut self Exclude other secure access to the same scope.
         unsafe { std::slice::from_raw_parts_mut(self.pointer().as_ptr(), self.len) }
     }
 }
@@ -84,7 +84,7 @@ impl PagePool {
         {
             return Err(Error::InvalidConfig {
                 field: "page_pool",
-                reason: "页大小须为可分配的二次幂且页数非零",
+                reason: "The page size must be the allocable power of two and the number of pages must be non-zero",
             });
         }
         bytes
@@ -101,27 +101,29 @@ impl PagePool {
             }),
         })
     }
-    /// 恢复时旧页全部由磁盘提供，首个内存页从给定逻辑页号开始。
+    /// During recovery, all old pages are provided by disk,The first memory page starts with the given logical page number.
     pub fn new_at(bytes: usize, max_pages: usize, first: PageId) -> Result<Self, Error> {
         let mut pool = Self::new(bytes, max_pages)?;
         LogAddress::from_page_offset(first, 0, bytes as u64)?;
         pool.state
             .get_mut()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?
             .next_id = first.0;
         Ok(pool)
     }
-    /// 创建或恢复发布前预分配全部内存页；不创建逻辑页、记录或磁盘文件。
+    /// Preallocate all memory pages before creating or restoring a release;Do not create logical pages,log or disk file.
     pub fn preallocate(&mut self) -> Result<(), Error> {
         let state = self
             .state
             .get_mut()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         if state.preallocated {
             return Ok(());
         }
         if !state.entries.is_empty() {
-            return Err(Error::InvalidState("页池已开始分配，不能切换预分配策略"));
+            return Err(Error::InvalidState(
+                "Page pool allocation has begun,Cannot switch preallocation policy",
+            ));
         }
         let mut spare = Vec::new();
         spare
@@ -138,12 +140,12 @@ impl PagePool {
         state.preallocated = true;
         Ok(())
     }
-    /// 页负载分配量包含尚未使用及回收后保留的预分配页，不含池元数据或 OS RSS。
+    /// Page load allocation includes unused and pre-allocated pages retained after recycling,Does not contain pool metadata or OS RSS.
     pub fn memory_usage(&self) -> Result<(usize, usize), Error> {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         let active = state
             .entries
             .iter()
@@ -159,7 +161,7 @@ impl PagePool {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         state
             .entries
             .iter()
@@ -167,10 +169,10 @@ impl PagePool {
             .map(|entry| entry.generation)
             .ok_or(Error::RangeTruncated)
     }
-    /// 只读取已发布记录时不访问分配器状态，仍拒绝已中毒的页池。
+    /// Do not access allocator state when reading only published records,Still reject poisoned page pool.
     pub fn ensure_healthy(&self) -> Result<(), Error> {
         if self.state.is_poisoned() {
-            Err(Error::InvalidState("页池锁中毒"))
+            Err(Error::InvalidState("Page pool lock poisoning"))
         } else {
             Ok(())
         }
@@ -179,41 +181,44 @@ impl PagePool {
         let state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         if state.entries.is_empty() {
             return LogAddress::from_page_offset(PageId(state.next_id), 0, self.bytes as u64);
         }
-        let id = state
-            .next_id
-            .checked_sub(1)
-            .ok_or(Error::InvalidState("已分配页缺少逻辑编号"))?;
-        let entry = state
-            .entries
-            .iter()
-            .find(|entry| entry.id.0 == id)
-            .ok_or(Error::InvalidState("最新逻辑页不存在"))?;
-        // 满页的尾部是下一页起点，不能使用要求页内偏移小于页长的转换。
+        let id = state.next_id.checked_sub(1).ok_or(Error::InvalidState(
+            "The allocated page is missing a logical number",
+        ))?;
+        let entry =
+            state
+                .entries
+                .iter()
+                .find(|entry| entry.id.0 == id)
+                .ok_or(Error::InvalidState(
+                    "The latest logical page does not exist",
+                ))?;
+        // The end of the full page is the starting point of the next page,Transformations that require an intra-page offset smaller than the page length cannot be used.
         LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
             .checked_add(entry.next as u64)
     }
-    /// 封闭最新页的剩余分配空间；不创建记录，也不改变已有范围的所有权。
+    /// Close the remaining allocated space of the latest page;No record created,Nor does it change ownership of existing ranges.
     pub fn pad_tail(&self) -> Result<LogAddress, Error> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         if state.entries.is_empty() {
             return LogAddress::from_page_offset(PageId(state.next_id), 0, self.bytes as u64);
         }
-        let id = state
-            .next_id
-            .checked_sub(1)
-            .ok_or(Error::InvalidState("已分配页缺少逻辑编号"))?;
+        let id = state.next_id.checked_sub(1).ok_or(Error::InvalidState(
+            "The allocated page is missing a logical number",
+        ))?;
         let entry = state
             .entries
             .iter_mut()
             .find(|entry| entry.id.0 == id)
-            .ok_or(Error::InvalidState("最新逻辑页不存在"))?;
+            .ok_or(Error::InvalidState(
+                "The latest logical page does not exist",
+            ))?;
         let end = LogAddress::from_page_offset(PageId(id), 0, self.bytes as u64)?
             .checked_add(self.bytes as u64)?;
         entry.next = self.bytes;
@@ -226,10 +231,10 @@ impl PagePool {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         let current_id = state.next_id.checked_sub(1);
         for entry in &mut state.entries {
-            // 日志只在最新逻辑页追加，不能回填旧页空隙导致地址倒退。
+            // The log is only appended to the latest logical page,Unable to backfill old page gaps causing address regression.
             if Some(entry.id.0) != current_id {
                 continue;
             }
@@ -298,24 +303,25 @@ impl PagePool {
             len,
         })
     }
-    /// 只能在逻辑退役与外部保留约束满足后调用；尚有范围所有者时拒绝。
+    /// Can only be called after logical retirement and external retention constraints are satisfied;Reject if scope owner still exists.
     pub fn release(&self, id: PageId, generation: Generation) -> Result<(), Error> {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| Error::InvalidState("页池锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Page pool lock poisoning"))?;
         let entry = state
             .entries
             .iter_mut()
             .find(|e| e.id == id && e.generation == generation && e.page.is_some())
             .ok_or(Error::RangeTruncated)?;
-        if Arc::strong_count(entry.page.as_ref().expect("已检查页存在")) != 1 {
+        if Arc::strong_count(entry.page.as_ref().expect("Checked page existence")) != 1 {
             return Err(Error::Busy);
         }
-        let mut page = entry.page.take().expect("已检查页存在");
+        let mut page = entry.page.take().expect("Checked page existence");
         if state.preallocated {
-            let allocation = Arc::get_mut(&mut page).expect("分配不暴露 Weak 且所有范围已经退出");
-            // SAFETY: 页池独占最后一个 Arc，旧 PageRange 已全部退出；原页释放条件同样保证值析构完成。
+            let allocation = Arc::get_mut(&mut page)
+                .expect("allocation not exposed Weak and all scopes have exited");
+            // SAFETY: Page pool exclusive last one Arc,old PageRange All logged out;The original page release condition also ensures that the value destruction is completed..
             unsafe {
                 allocation
                     .pointer
@@ -332,7 +338,8 @@ impl PagePool {
 mod tests {
     use super::*;
     #[test]
-    fn 冷启动页号不占内存预算且尾部不会回到零() {
+    fn the_cold_start_page_number_does_not_occupy_the_memory_budget_and_the_tail_does_not_return_to_zero()
+     {
         let pool = PagePool::new_at(64, 1, PageId(100)).unwrap();
         assert_eq!(pool.tail().unwrap(), LogAddress(6400));
         assert_eq!(pool.pad_tail().unwrap(), LogAddress(6400));
@@ -349,7 +356,8 @@ mod tests {
         assert!(PagePool::new_at(64, 1, PageId(u64::MAX)).is_err());
     }
     #[test]
-    fn 跨页后小记录也不能回填旧页且释放尾页不倒退() {
+    fn small_records_cannot_backfill_the_old_page_after_a_page_spread_and_the_last_page_will_not_go_backwards_when_released()
+     {
         let pool = PagePool::new(64, 2).unwrap();
         let first = pool.reserve(24, 8).unwrap();
         let second = pool.reserve(48, 8).unwrap();
@@ -368,7 +376,7 @@ mod tests {
         assert_eq!(first.address().unwrap(), LogAddress(0));
     }
     #[test]
-    fn 范围对齐不重叠且页预算不会静默扩展() {
+    fn range_alignment_does_not_overlap_and_page_budget_does_not_expand_silently() {
         let pool = PagePool::new(64, 1).unwrap();
         let mut first = pool.reserve(7, 1).unwrap();
         let mut second = pool.reserve(8, 16).unwrap();
@@ -383,7 +391,7 @@ mod tests {
         assert!(pool.reserve(1, 1).is_err());
     }
     #[test]
-    fn 所有范围退出后才释放且复用代次递增() {
+    fn it_is_released_after_all_scopes_exit_and_the_reuse_generation_is_incremented() {
         let pool = PagePool::new(64, 1).unwrap();
         let range = pool.reserve(64, 8).unwrap();
         let id = range.page_id();
@@ -398,7 +406,8 @@ mod tests {
         assert!(pool.release(id, generation).is_err());
     }
     #[test]
-    fn 独占范围可跨线程移动且池销毁不影响存活范围() {
+    fn the_exclusive_scope_can_be_moved_across_threads_and_pool_destruction_does_not_affect_the_surviving_scope()
+     {
         let pool = PagePool::new(64, 1).unwrap();
         let mut a = pool.reserve(16, 8).unwrap();
         let mut b = pool.reserve(16, 8).unwrap();
@@ -411,7 +420,7 @@ mod tests {
         assert_eq!(b.bytes_mut(), [2; 16]);
     }
     #[test]
-    fn 无效长度对齐溢出与遗忘范围均安全拒绝() {
+    fn invalid_length_alignment_overflows_and_forgotten_ranges_are_safely_rejected() {
         assert!(PagePool::new(0, 1).is_err());
         assert!(PagePool::new(3, 1).is_err());
         assert!(PagePool::new(64, 0).is_err());
@@ -434,7 +443,7 @@ mod mutable_poison_tests {
     use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
 
     #[test]
-    fn 可变查找拒绝已有的页池边界及记录表中毒() {
+    fn variable_lookup_rejects_existing_page_pool_boundaries_and_record_table_poisoning() {
         for kind in 0..3 {
             let log = HybridLog::new(
                 LogConfig {
@@ -451,19 +460,23 @@ mod mutable_poison_tests {
             let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match kind {
                 0 => {
                     let _guard = log.pool.state.lock().unwrap();
-                    panic!("页池测试中毒");
+                    panic!("Page pool test poisoning");
                 }
                 1 => {
                     let _guard = log.state.lock().unwrap();
-                    panic!("边界测试中毒");
+                    panic!("Boundary test poisoning");
                 }
                 _ => {
                     let _guard = log.records.lock().unwrap();
-                    panic!("记录表测试中毒");
+                    panic!("Record table test poisoning");
                 }
             }));
             assert!(poison.is_err());
-            let expected = ["页池锁中毒", "日志边界锁中毒", "记录表锁中毒"][kind];
+            let expected = [
+                "Page pool lock poisoning",
+                "Log boundary lock poisoning",
+                "Record table lock poisoning",
+            ][kind];
             assert!(
                 matches!(log.find_mutable(b"key", Some(address)), Err(Error::InvalidState(reason)) if reason == expected)
             );
@@ -475,7 +488,8 @@ mod mutable_poison_tests {
 mod preallocation_tests {
     use super::*;
     #[test]
-    fn 预分配不占逻辑地址且所有租约退出才清零复用同一物理页() {
+    fn pre_allocation_does_not_occupy_logical_addresses_and_all_leases_are_cleared_before_reuse_of_the_same_physical_page()
+     {
         let mut pool = PagePool::new_at(4096, 2, PageId(7)).unwrap();
         assert_eq!(pool.memory_usage().unwrap(), (0, 0));
         pool.preallocate().unwrap();

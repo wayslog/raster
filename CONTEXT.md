@@ -1,51 +1,37 @@
-# RasterKV 领域术语
+# RasterKV domain terminology
 
-RasterKV 是按 FASTER C++ FasterKv 功能与行为设计的嵌入式键值存储。第一阶段采用独立文件格式，F2 冷热分层属于后续范围。
+RasterKV is a Rust embedded key-value store that reproduces the functional and behavioral baseline of FASTER C++. Phase I uses an independent on-disk format. F2 and hot/cold tiering are deferred to a later phase.
 
-## 语言
+## Language
 
-**存储实例（RasterKV）**：一个键空间及其索引、日志和恢复历史的整体。
-_避免_：将它称为一个会话。
+**Storage instance (RasterKV):** The complete keyspace, index, log, and recovery history. Do not call it a session.
 
-**会话（Session）**：应用的一条有序操作流，具有独立身份和可恢复进度。
-_避免_：事务、连接。
+**Session:** An ordered stream of application operations with an independent identity and resumable progress. Do not use "affair" or "connection" for this concept.
 
-**操作序号（Serial）**：应用在同一会话中为提交操作指定的单调标识。
-_避免_：将其等同于日志地址、完成次序或全局事务号。
+**Operation number (serial):** The monotonic identifier supplied for a commit operation within one session. It is distinct from a log address, completion order, and global transaction number.
 
-**请求完成（Operation completion）**：操作已有最终结果，可以被调用者收取。
-_避免_：持久化完成、提交检查点。
+**Operation completion:** An operation has final results that the caller can collect. Completion does not imply persistence or checkpoint submission.
 
-**持久化进度（Durable progress）**：成功检查点所保证的会话恢复边界。
-_避免_：把最大已返回序号称为持久化进度。
+**Durable progress:** The session recovery boundary guaranteed by successful checkpoints. It is not simply the largest sequence number returned to the caller.
 
-**检查点（Checkpoint）**：索引、日志或二者的可持久化状态及相关恢复信息。
-_避免_：普通刷盘、多键事务。
+**Checkpoint:** Persistable index state, log state, or both, together with the recovery information that binds them.
 
-**恢复集（Recovery set）**：一个可组合使用的索引检查点与日志检查点，以及验证二者匹配的信息。
-_避免_：任意两个 token。
+**Recovery set:** A composable index checkpoint and log checkpoint plus the information required to verify that they match.
 
-**逻辑地址（Log address）**：记录在混合日志地址空间中的位置。
-_避免_：内存指针、有效键数量。
+**Log address:** The location of a record in the hybrid-log address space. It is not a memory pointer or a count of valid keys.
 
-**混合日志（Hybrid log）**：同时包含内存可变记录、稳定记录和磁盘历史记录的地址有序记录空间。
-_避免_：将其简称为仅追加的 WAL。
+**Hybrid log:** An address-ordered record space containing mutable in-memory records as well as stable log and disk history. It is not an append-only WAL abstraction.
 
-**墓碑（Tombstone）**：表示键被删除、用于遮蔽旧记录的日志记录状态。
-_避免_：物理文件已经删除。
+**Tombstone:** A record that marks a key as deleted and masks older records. It does not mean that a physical file was deleted.
 
-**盲删（Blind delete）**：不为确定删除前是否存在活跃值而读取旧磁盘记录；成功表示删除已生效，返回受可找到的索引入口影响。
+**Blind delete:** A delete that does not read old disk records to determine whether a live value existed. Success means that the delete took effect; the returned result still depends on discoverable index entries.
 
-**强制墓碑（Forced tombstone）**：删除保留可查询墓碑，禁止使其不可达的索引入口移除；后续覆盖与显式截断仍遵循正常生命周期。
+**Forced tombstone:** A delete that retains a queryable tombstone and keeps the corresponding index entry reachable. Later overwrites and explicit truncation still follow the normal lifecycle.
 
-**安全边界（Safe frontier）**：参与中的访问已满足某项安全条件后，可以执行刷盘或回收的位置。
-_避免_：把目标边界直接称为安全边界。
+**Safe frontier:** The location after participating access has met the required safety conditions, so disk flush or recycling can proceed. Do not call this the target boundary.
 
-**压缩（Compaction）**：识别并迁移需要保留的记录，减少过期历史占用。
-_避免_：字节压缩、无条件截断。
+**Compaction:** Identify and migrate records that must be retained in order to reduce expired history. It is not byte compression or unconditional truncation.
 
-**逻辑截断（Shift begin）**：使一段旧日志不再属于有效地址范围。
-_避免_：认为它会自动保留被截断范围中的最新值。
+**Shift begin:** Make an old part of the log fall outside the valid address range. It does not automatically preserve the newest value in the truncated range.
 
-**记录扫描（Record scan）**：按日志地址读取物理记录的遍历。
-_避免_：当前有效键快照、范围有序查询。
+**Record scan:** Traverse physical records by log address. It is not a current valid-key snapshot or a range-ordered query.

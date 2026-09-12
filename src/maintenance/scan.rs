@@ -1,4 +1,4 @@
-//! 压缩的逐步物理扫描：最多一页读取，跨轮询仅保存拥有字节和物理段租约。
+//! Compressed step-by-step physical scan:Read at most one page,Only owned bytes and physical segment leases are saved across polls.
 use crate::{
     engine::{Engine, io_hub::CompletionHub},
     format::{PageFrame, Record},
@@ -26,7 +26,7 @@ struct Reading {
 }
 impl Drop for Reading {
     fn drop(&mut self) {
-        // 正常释放先归还在途完成；异常销毁只撤销历史路由，不夺回设备拥有的缓冲。
+        // Normal release, return first and complete in transit;Exception destruction only revokes historical routes,Does not recapture device-owned buffers.
         let _ = self.hub.release(self.id);
     }
 }
@@ -47,7 +47,7 @@ impl Scan {
         Ok(Self {
             next: begin,
             end,
-            // 在开始搬迁之前检查冷页内的结束边界，避免发现截断记录时已经搬迁部分范围。
+            // Check end boundaries within cold pages before starting migration,Avoid discovering that part of the range has been relocated when truncating a record.
             validate_end: begin != end
                 && end < frontiers.head
                 && !end.0.is_multiple_of(engine.config.log.page_bytes as u64),
@@ -55,7 +55,7 @@ impl Scan {
             cursor: None,
         })
     }
-    /// 一个步骤最多提交一段 I/O 或产出一条记录；不等待设备或执行循环式同步扫描。
+    /// A step can submit at most one paragraph I/O or output a record;Do not wait for devices or perform cyclic synchronous scans.
     pub fn step<S: Schema>(&mut self, engine: &Engine<S>) -> Result<ScanStep, Error> {
         if self.next < engine.log.frontiers()?.begin {
             return Err(Error::RangeTruncated);
@@ -158,7 +158,7 @@ impl Scan {
         });
         Ok(())
     }
-    /// 收尾只消费已经提交的读取，不继续短传输或后续页；成功后可释放所属压缩动作。
+    /// Closing only consumes committed reads,Do not continue with short transfers or subsequent pages;After success, the corresponding compression action can be released..
     pub fn drain(&mut self, storage: &SegmentedStorage) -> Result<bool, Error> {
         if let Some(reading) = &mut self.reading {
             if let Some(completion) = reading.hub.take(reading.id)? {

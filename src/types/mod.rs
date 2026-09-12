@@ -1,4 +1,4 @@
-//! 跨模块共享的身份、地址、时间预算与错误；不依赖引擎。
+//! Identities shared across modules,address,Time budget and errors;Not engine dependent.
 
 mod error;
 mod id;

@@ -1,4 +1,4 @@
-//! 访问安全 epoch；全部状态转换在同一控制锁下线性化，不执行回收回调。
+//! Access security epoch;All state transitions are linearized under the same control lock,Do not execute recycling callback.
 use crate::{sync::Mutex, types::*};
 use std::{marker::PhantomData, rc::Rc};
 
@@ -56,7 +56,7 @@ impl EpochManager {
     fn lock(&self) -> Result<crate::sync::MutexGuard<'_, State>, Error> {
         self.state
             .lock()
-            .map_err(|_| Error::InvalidState("epoch 控制锁中毒"))
+            .map_err(|_| Error::InvalidState("epoch Control lock poisoning"))
     }
     pub fn register(&self) -> Result<ParticipantId, Error> {
         let mut state = self.lock()?;
@@ -87,7 +87,7 @@ impl EpochManager {
     }
     pub fn enter(&self, id: ParticipantId) -> Result<EpochGuard<'_>, Error> {
         if id.owner != self.owner {
-            return Err(Error::InvalidState("参与者属于其他管理器"));
+            return Err(Error::InvalidState("Participants belong to other managers"));
         }
         let mut state = self.lock()?;
         let current = state.current;
@@ -103,7 +103,7 @@ impl EpochManager {
             local: PhantomData,
         })
     }
-    /// 调用者先从可见结构摘除对象，再排队；不允许自行传入过旧 epoch。
+    /// The caller first removes the object from the visible structure,Queue again;It is not allowed to pass in old data by yourself epoch.
     pub fn defer(&self, action: DeferredAction) -> Result<(), Error> {
         let mut state = self.lock()?;
         let current = state.current;
@@ -125,7 +125,7 @@ impl EpochManager {
         );
         Ok(state.current)
     }
-    /// 只交付已越过安全边界的动作，实际销毁在控制锁外执行。
+    /// Only deliver actions that have crossed the safety boundary,The actual destruction is performed outside the control lock.
     pub fn collect(&self) -> Result<Vec<DeferredAction>, Error> {
         let mut state = self.lock()?;
         let oldest = state
@@ -151,7 +151,7 @@ impl EpochManager {
     }
     pub fn unregister(&self, id: ParticipantId) -> Result<(), Error> {
         if id.owner != self.owner {
-            return Err(Error::InvalidState("参与者属于其他管理器"));
+            return Err(Error::InvalidState("Participants belong to other managers"));
         }
         let mut state = self.lock()?;
         let slot = slot(&mut state, id)?;
@@ -166,15 +166,15 @@ fn slot(state: &mut State, id: ParticipantId) -> Result<&mut Slot, Error> {
     let slot = state
         .slots
         .get_mut(id.slot)
-        .ok_or(Error::InvalidState("参与者槽不存在"))?;
+        .ok_or(Error::InvalidState("Participant slot does not exist"))?;
     if !slot.registered || slot.generation != id.generation {
-        return Err(Error::InvalidState("参与者代次失效"));
+        return Err(Error::InvalidState("Participant generation expired"));
     }
     Ok(slot)
 }
 impl Drop for EpochGuard<'_> {
     fn drop(&mut self) {
-        // 中毒时保守保留活动计数，所有后续管理操作拒绝，不冒险回收。
+        // Conservatively retain activity counts when poisoned,All subsequent management operations denied,No risk recycling.
         if let Ok(mut state) = self.manager.state.lock()
             && let Ok(slot) = slot(&mut state, self.participant)
         {
@@ -188,7 +188,7 @@ mod tests {
     use super::*;
     const ACTION: DeferredAction = DeferredAction::ReleaseIndex(Generation(4));
     #[test]
-    fn 管理器身份隔离且真实线程退出后才交付动作() {
+    fn the_action_is_delivered_after_the_managers_identity_is_isolated_and_the_real_thread_exits() {
         let manager = EpochManager::new().unwrap();
         let other = EpochManager::new().unwrap();
         let id = manager.register().unwrap();
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn 最慢读者和嵌套许可退出前不回收() {
+    fn slowest_readers_and_nested_permissions_are_not_recycled_before_exiting() {
         let manager = EpochManager::new().unwrap();
         let id = manager.register().unwrap();
         let first = manager.enter(id).unwrap();
@@ -233,7 +233,7 @@ mod tests {
         manager.unregister(id).unwrap();
     }
     #[test]
-    fn 新读者不阻碍旧对象且旧槽不能复用() {
+    fn new_readers_do_not_block_old_objects_and_old_slots_cannot_be_reused() {
         let manager = EpochManager::new().unwrap();
         let old = manager.register().unwrap();
         manager.unregister(old).unwrap();
@@ -249,7 +249,7 @@ mod tests {
         drop(guard);
     }
     #[test]
-    fn 遗忘许可只阻碍回收且代次不回绕() {
+    fn the_forgetting_permission_only_blocks_recycling_and_does_not_wrap_around_generations() {
         let manager = EpochManager::new().unwrap();
         let id = manager.register().unwrap();
         std::mem::forget(manager.enter(id).unwrap());
@@ -266,8 +266,8 @@ mod tests {
         assert!(manager.collect().unwrap().is_empty());
     }
     #[test]
-    fn 穷举两个参与者与回收者的线性化交错() {
-        // 每个转换持同一把锁；穷举三条操作流的全部交错，不模拟另一套 epoch 实现。
+    fn exhaustive_linearized_interleaving_of_two_actors_and_recyclers() {
+        // Each transition holds the same lock;Exhaustively enumerate all interleavings of the three operation flows,Not simulating another set epoch realize.
         fn schedules(prefix: &mut Vec<usize>, left: &mut [usize; 3], all: &mut Vec<Vec<usize>>) {
             if left.iter().all(|n| *n == 0) {
                 all.push(prefix.clone());

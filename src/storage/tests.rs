@@ -1,4 +1,4 @@
-//! 真实设备验证段代次隔离及提交命名操作，不替代 P5 检查点协议。
+//! Real device verification segment generation isolation and submission naming operation,No replacement P5 checkpoint protocol.
 use super::*;
 use crate::device::{thread_pool::ThreadPoolDeviceFactory, *};
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ fn execute(s: &SegmentedStorage, operation: IoOperation) -> IoCompletion {
     let until = deadline();
     let mut out = vec![];
     while out.is_empty() {
-        assert!(!until.expired(), "文件完成超时");
+        assert!(!until.expired(), "File completion timeout");
         s.device.poll(PollBudget::default(), &mut out).unwrap();
         std::thread::yield_now();
     }
@@ -37,7 +37,7 @@ fn open(s: &SegmentedStorage, path: PathBuf, create_new: bool) -> FileId {
         .result
         .unwrap()
     else {
-        panic!("文件打开结果类型错误")
+        panic!("File opening result type error")
     };
     file
 }
@@ -59,7 +59,7 @@ fn storage() -> (Directory, SegmentedStorage) {
     (root, storage)
 }
 #[test]
-fn 旧段实际写入不会污染新代次且迟到结果被拒绝() {
+fn actual_writes_to_old_segments_do_not_pollute_the_new_generation_and_late_results_are_rejected() {
     let (_root, s) = storage();
     execute(&s, IoOperation::CreateDirectory("segments".into()))
         .result
@@ -70,7 +70,7 @@ fn 旧段实际写入不会污染新代次且迟到结果被拒绝() {
     let (_, generation) = s.invalidate(0, Generation(0)).unwrap();
     let new_file = open(&s, s.segment_path(0, generation), true);
     s.bind(0, generation, new_file).unwrap();
-    // 在新段绑定后才执行旧请求，覆盖最不利的迟到写入顺序。
+    // Execute the old request only after the new segment is bound,Override the most unfavorable late write order.
     let mut buffer = AlignedBuffer::new_zeroed(3, 8).unwrap();
     buffer.as_mut_slice().copy_from_slice(b"old");
     let done = execute(
@@ -111,7 +111,7 @@ fn 旧段实际写入不会污染新代次且迟到结果被拒绝() {
     s.device.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 提交材料同步后重命名并重开读取() {
+fn submit_the_material_and_rename_it_after_synchronization_and_restart_reading() {
     let (root, s) = storage();
     let token = CheckpointToken([3; 16]);
     let pending = s.checkpoint_path(token, "commit.pending").unwrap();
@@ -121,7 +121,7 @@ fn 提交材料同步后重命名并重开读取() {
     )
     .result
     .unwrap();
-    // 新建目录的父目录项也必须先同步；计划只负责最终发布两步。
+    // The parent directory items of the newly created directory must also be synchronized first.;The plan is only responsible for the final two steps of release.
     for directory in [PathBuf::new(), PathBuf::from("checkpoints")] {
         execute(&s, IoOperation::SyncDirectory(directory))
             .result
@@ -164,7 +164,8 @@ fn 提交材料同步后重命名并重开读取() {
 }
 
 #[test]
-fn 新实例不能覆盖已有段而恢复模式可以显式打开() {
+fn new_instances_cannot_overwrite_existing_segments_and_recovery_mode_can_be_turned_on_explicitly()
+{
     use super::open::SegmentOpen;
     fn drive(storage: &SegmentedStorage, create_new: bool) -> Result<FileId, Error> {
         let mut task = SegmentOpen::new(storage, 0, Generation(0), create_new, CompletionRoute(9))?;

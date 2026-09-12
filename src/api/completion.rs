@@ -1,4 +1,4 @@
-//! 本线程的一次性结果槽；票据不借用 Session，销毁票据不取消请求。
+//! One-time result slot for this thread;Notes are not borrowed Session,Destroying the ticket does not cancel the request.
 use crate::types::{OperationError, RequestId, TicketError};
 use std::{cell::RefCell, rc::Rc};
 
@@ -29,7 +29,7 @@ enum Slot<T> {
     Taken,
 }
 
-/// 同会话的本线程票据，不允许发送到其他线程。
+/// This thread ticket for the same session,Not allowed to send to other threads.
 ///
 /// ```compile_fail
 /// use raster::Ticket;
@@ -72,7 +72,7 @@ impl<T: 'static> Ticket<T> {
     pub fn id(&self) -> RequestId {
         self.id
     }
-    /// 只观察/收取，不推进设备；关闭 Session 后仍可收取已完成结果。
+    /// Just observe/charge,Not advancing equipment;close Session You can still receive the completed results after.
     pub fn try_take(&mut self) -> Result<TicketState<T>, TicketError> {
         let mut slot = self
             .slot
@@ -86,7 +86,7 @@ impl<T: 'static> Ticket<T> {
                     self.credit = None;
                     Ok(TicketState::Ready(result))
                 } else {
-                    unreachable!("同一独占借用中的槽状态不会改变")
+                    unreachable!("Slot status within the same exclusive borrow does not change")
                 }
             }
         }
@@ -119,7 +119,7 @@ mod tests {
         }
     }
     #[test]
-    fn 结果只能终结和收取一次() {
+    fn results_can_only_be_finalized_and_collected_once() {
         let (mut ticket, complete) = Ticket::pair(id());
         assert!(matches!(ticket.try_take(), Ok(TicketState::Pending)));
         assert_eq!(complete.finish(Ok(Outcome::Success(7))), Ok(()));
@@ -134,18 +134,18 @@ mod tests {
         assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
     }
     #[test]
-    fn 完成端销毁后票据仍拥有结果() {
+    fn the_ticket_still_has_the_result_after_the_completion_end_is_destroyed() {
         let (mut ticket, complete) = Ticket::pair(id());
         complete
-            .finish(Ok(Outcome::Success(String::from("完成"))))
+            .finish(Ok(Outcome::Success(String::from("completed"))))
             .unwrap();
         drop(complete);
         assert!(
-            matches!(ticket.try_take(), Ok(TicketState::Ready(Ok(Outcome::Success(value)))) if value == "完成")
+            matches!(ticket.try_take(), Ok(TicketState::Ready(Ok(Outcome::Success(value)))) if value == "completed")
         );
     }
     #[test]
-    fn 放弃票据不阻止请求终结() {
+    fn abandoning_a_ticket_does_not_prevent_the_request_from_finalizing() {
         let (ticket, complete) = Ticket::pair(id());
         drop(ticket);
         assert_eq!(complete.finish(Ok(Outcome::Success(1))), Ok(()));

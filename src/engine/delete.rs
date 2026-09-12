@@ -1,4 +1,4 @@
-//! Delete 只检查驻留记录，盲删发布后执行一次完成回调。
+//! Delete Check only resident records,Execute a completion callback after blind deletion is published.
 use super::{
     Engine, SessionRuntime,
     pending::{PendingTask, TaskStep},
@@ -63,7 +63,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
                     return Ok(Some(Outcome::Success(
                         self.request
                             .take()
-                            .expect("请求尚未完成")
+                            .expect("The request has not been completed")
                             .complete(if remove {
                                 DeleteOutcome::IndexRemoved
                             } else {
@@ -95,7 +95,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
                 Ok(Some(Outcome::Success(
                     self.request
                         .take()
-                        .expect("请求尚未完成")
+                        .expect("The request has not been completed")
                         .complete(DeleteOutcome::TombstoneWritten),
                 )))
             }
@@ -122,7 +122,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
         }
         if self.engine.failed.load(Ordering::SeqCst) {
             self.abandon(OperationError {
-                cause: Error::InvalidState("引擎已失败关闭"),
+                cause: Error::InvalidState("engine_failed_closed"),
                 effect: self.effect,
             });
             return TaskStep::Complete;
@@ -142,7 +142,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
             Ok(result) => result,
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("写入回调恐慌"))
+                Err(Error::InvalidState("Write callback panic"))
             }
         };
         if matches!(result, Ok(None)) {
@@ -153,7 +153,7 @@ impl<S: Schema, O: DeleteOperation<S>> DeleteTask<S, O> {
         }
         self.finish(
             result
-                .map(|value| value.expect("已排除等待空间"))
+                .map(|value| value.expect("Waiting space excluded"))
                 .map_err(|cause| OperationError {
                     cause,
                     effect: self.effect,
@@ -173,7 +173,9 @@ impl<S: Schema, O: DeleteOperation<S>> PendingTask for DeleteTask<S, O> {
         self.version
     }
     fn on_io(&mut self, _: IoCompletion) -> Result<(), Error> {
-        Err(Error::InvalidState("盲删没有等待磁盘查询"))
+        Err(Error::InvalidState(
+            "Blind deletion without waiting for disk query",
+        ))
     }
     fn step(&mut self, budget: PollBudget) -> TaskStep {
         let engine = self.engine.clone();
@@ -183,7 +185,7 @@ impl<S: Schema, O: DeleteOperation<S>> PendingTask for DeleteTask<S, O> {
                 Err(std::sync::TryLockError::WouldBlock) => return TaskStep::Retry,
                 Err(_) => {
                     self.abandon(OperationError {
-                        cause: Error::InvalidState("操作仲裁锁中毒"),
+                        cause: Error::InvalidState("Operation arbitration lock poisoning"),
                         effect: self.effect,
                     });
                     return TaskStep::Complete;
@@ -272,9 +274,10 @@ impl<S: Schema> Engine<S> {
             permit,
         };
         if matches!(task.run_locked(PollBudget::default()), TaskStep::Complete) {
-            let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")
+            let TicketState::Ready(result) =
+                ticket.try_take().expect("Internal bills can be collected")
             else {
-                unreachable!("任务已经完成")
+                unreachable!("The task has been completed")
             };
             Ok(Submission::Ready(result))
         } else {

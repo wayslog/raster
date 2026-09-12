@@ -1,4 +1,4 @@
-//! 真实维护子任务串接验证；内部票据不暴露，不把计划步骤冒充已完成输出。
+//! Real maintenance subtask serial verification;Internal tickets are not exposed,Do not pass off plan steps as completed output.
 use super::*;
 use crate::api::maintenance::{
     CompactionAlgorithm, CompactionOptions, PhysicalReclamation, RecoverySet,
@@ -19,7 +19,8 @@ fn options(
     }
 }
 #[test]
-fn 两算法后续检查点先于截断且各选项保留数据墓碑和会话进度() {
+fn both_algorithms_follow_checkpoints_before_truncation_and_each_option_retains_data_tombstones_and_session_progress()
+ {
     for algorithm in [CompactionAlgorithm::Lookup, CompactionAlgorithm::ScanDedup] {
         for (checkpoint, shift) in [(true, false), (false, true), (true, true)] {
             let (_root, store) = setup(None);
@@ -70,7 +71,10 @@ fn 两算法后续检查点先于截断且各选项保留数据墓碑和会话�
             }
             let session_id = session.id();
             if let Some(checkpoint) = &report.checkpoint {
-                assert_eq!(checkpoint.begin, before.begin, "先持久化检查点再截断");
+                assert_eq!(
+                    checkpoint.begin, before.begin,
+                    "Persist checkpoint first and then truncate"
+                );
                 assert_eq!(
                     checkpoint
                         .sessions
@@ -115,7 +119,8 @@ fn 两算法后续检查点先于截断且各选项保留数据墓碑和会话�
     }
 }
 #[test]
-fn 复合任务动作间隙允许其他维护但关闭不能越过未完成票据() {
+fn composite_task_action_gaps_allow_other_maintenance_but_closure_cannot_cross_outstanding_tickets()
+{
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .device(Box::new(device::null::NullDeviceFactory))
         .create()
@@ -134,7 +139,7 @@ fn 复合任务动作间隙允许其他维护但关闭不能越过未完成票�
         .unwrap();
     session.close(deadline()).unwrap();
     for step in 0..1000 {
-        assert!(step < 999, "未到达复制结束间隙");
+        assert!(step < 999, "Copy end gap not reached");
         store.inner.progress_compaction().unwrap();
         if store.inner.coordinator.snapshot().unwrap().id.is_none() {
             break;
@@ -146,10 +151,13 @@ fn 复合任务动作间隙允许其他维护但关闭不能越过未完成票�
     assert_eq!(
         store.inner.progress_compaction().unwrap(),
         (false, false),
-        "不占用动作等待自己，其他动作竞争只是 Busy"
+        "Don't occupy the action and wait for yourself,Other action competitions are just Busy"
     );
     for step in 0..10000 {
-        assert!(step < 9999, "无会话驱动没有完成后续动作");
+        assert!(
+            step < 9999,
+            "No session driver did not complete the follow-up actions"
+        );
         store.maintenance().poll(PollBudget::default()).unwrap();
         if ticket.try_report().unwrap().is_some() {
             break;
@@ -170,7 +178,8 @@ fn 复合任务动作间隙允许其他维护但关闭不能越过未完成票�
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 不支持检查点的设备在复合压缩接受前拒绝且没有迁移() {
+fn devices_that_do_not_support_checkpointing_are_rejected_and_not_migrated_before_composite_compression_is_accepted()
+ {
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
         .device(Box::new(device::null::NullDeviceFactory))
         .create()
@@ -264,7 +273,8 @@ mod failure {
         }
     }
     #[test]
-    fn 后续检查点或回收实际生效后失败不重放复制且保留完整错误与已完成报告() {
+    fn subsequent_checkpoints_or_recycles_that_fail_after_they_actually_take_effect_do_not_replay_the_replication_and_retain_complete_error_and_completion_reports()
+     {
         for point in [Point::Checkpoint, Point::Gc] {
             let root = Directory(std::env::temp_dir().join(format!(
                 "raster-chain-fault-{:x?}",
@@ -300,8 +310,8 @@ mod failure {
                     true,
                 ))
                 .unwrap();
-            // 这里包含 400 条复制、完整检查点和原生目录同步；共享 CI 的总预算独立于 API 的短等待测试。
-            // 切片超时始终复用原票据，不重新提交。总预算耗尽时保留阶段和实际 I/O 进度以诊断停滞。
+            // Contains here 400 Article copy,Full checkpoints and native directory synchronization;Share CI The total budget is independent of API short wait test.
+            // Slice timeout always reuses the original ticket,Do not resubmit.Keep stage and actual when total budget is exhausted I/O Progress stalled with diagnosis.
             let started = Instant::now();
             let limit = Deadline(started + Duration::from_secs(60));
             let result = loop {
@@ -310,7 +320,7 @@ mod failure {
                     Ok(result) => break result,
                     Err(Error::DeadlineExceeded) if !limit.expired() => {
                         eprintln!(
-                            "复合故障 {point:?} 等待切片结束：阶段 {:?}，边界 {:?}，完成 I/O {}，故障待触发 {}",
+                            "compound fault {point:?} Wait for slicing to end:stage {:?},border {:?},completed I/O {},Fault to be triggered {}",
                             store.inner.coordinator.snapshot(),
                             store.inner.log.frontiers(),
                             control.completions.load(Ordering::SeqCst),
@@ -318,7 +328,7 @@ mod failure {
                         );
                     }
                     Err(error) => panic!(
-                        "复合故障 {point:?} 未终结：{error:?}，阶段 {:?}，边界 {:?}，完成 I/O {}，故障待触发 {}",
+                        "compound fault {point:?} Not ended:{error:?},stage {:?},border {:?},completed I/O {},Fault to be triggered {}",
                         store.inner.coordinator.snapshot(),
                         store.inner.log.frontiers(),
                         control.completions.load(Ordering::SeqCst),
@@ -327,7 +337,7 @@ mod failure {
                 }
             };
             eprintln!(
-                "复合故障 {point:?} 已终结：耗时 {:?}，完成 I/O {}",
+                "compound fault {point:?} ended:Time consuming {:?},completed I/O {}",
                 started.elapsed(),
                 control.completions.load(Ordering::SeqCst)
             );
@@ -339,14 +349,14 @@ mod failure {
                 cause,
             }) = &*result
             else {
-                panic!("应返回带部分效果的复合错误：{result:?}");
+                panic!("should return a compound error with partial effects:{result:?}");
             };
             assert_eq!(*until, before.tail);
             assert_eq!(*copied, 400);
             assert!(gc.is_none());
             assert!(
                 !control.armed.load(Ordering::SeqCst),
-                "未命中故障点 {point:?}，实际结果：{result:?}"
+                "Failure point missed {point:?},actual results:{result:?}"
             );
             match point {
                 Point::Checkpoint => {
@@ -355,14 +365,14 @@ mod failure {
                     assert_eq!(
                         store.inner.log.frontiers().unwrap().begin,
                         before.begin,
-                        "检查点失败后不截断"
+                        "Do not truncate after checkpoint failure"
                     );
                     assert!(store.inner.failed.load(Ordering::SeqCst));
                 }
                 Point::Gc => {
                     let checkpoint = checkpoint
                         .as_ref()
-                        .expect("已持久化检查点必须保留在错误报告中");
+                        .expect("Persistent checkpoints must be retained in error reports");
                     assert_eq!(checkpoint.begin, before.begin);
                     assert!(
                         matches!(&**cause,Error::GcFailed {begin,deleted_segments:0,cause,..} if *begin==before.tail && matches!(&**cause,Error::Io(error) if error.raw_os_error()==Some(5)))
@@ -376,7 +386,7 @@ mod failure {
                     assert_eq!(
                         store.inner.log.frontiers().unwrap().tail,
                         tail,
-                        "失败不自动重放复制"
+                        "Failure does not automatically replay replication"
                     );
                     let retry = store.maintenance().shift_begin(before.tail).unwrap();
                     session
@@ -420,14 +430,15 @@ impl Keyed<Schema> for Panicking {
 impl UpsertOperation<Schema> for Panicking {
     type Output = ();
     fn replacement(&mut self) -> Result<(u64, ()), Error> {
-        panic!("测试业务计算恐慌")
+        panic!("Test business computing panic")
     }
     fn update_in_place(&mut self, _: ValueUpdate<'_, Schema>) -> Result<UpdateDecision<()>, Error> {
-        panic!("测试原地计算恐慌")
+        panic!("Testing in situ computing panic")
     }
 }
 #[test]
-fn 回收期间业务恐慌的失败关闭仍报告已完成检查点和已推进begin() {
+fn failed_shutdown_of_business_panic_during_reclamation_still_reports_checkpoint_completed_and_advancedbegin()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     for key in 0..64 {
@@ -445,7 +456,7 @@ fn 回收期间业务恐慌的失败关闭仍报告已完成检查点和已推�
         .unwrap();
     let until = deadline();
     loop {
-        assert!(!until.expired(), "未进入 GC 索引阶段");
+        assert!(!until.expired(), "Not entered GC indexing phase");
         session
             .poll(PollBudget(std::num::NonZeroUsize::new(1).unwrap()))
             .unwrap();
@@ -468,7 +479,7 @@ fn 回收期间业务恐慌的失败关闭仍报告已完成检查点和已推�
     let result = session.wait_maintenance(&ticket, deadline()).unwrap();
     assert!(
         matches!(&*result,Err(Error::CompactionFailed {copied:64,checkpoint:Some(_),cause,..}) if matches!(&**cause,Error::GcFailed {begin,..} if *begin==before.tail)),
-        "失败报告：{result:?}"
+        "failure report:{result:?}"
     );
     session.close(deadline()).unwrap();
     store.shutdown(deadline()).unwrap();

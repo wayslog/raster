@@ -1,4 +1,4 @@
-//! 检查点目录的跨实例仲裁；每次动作独立打开锁文件，关闭完成后才解除持有。
+//! Cross-instance quorum for checkpoint directories;Open the lock file independently for each action,The holding will be released after the closing is completed..
 use crate::{device::*, storage::SegmentedStorage, types::*};
 use std::sync::Arc;
 #[derive(Clone, Copy)]
@@ -46,17 +46,21 @@ impl CatalogLock {
     pub fn exclusive_handle(&self, storage: &SegmentedStorage) -> Result<FileId, Error> {
         self.check_owner(storage)?;
         if !self.held() || self.mode != FileLockMode::Exclusive {
-            return Err(Error::InvalidState("目录枚举需要持续持有独占锁"));
+            return Err(Error::InvalidState(
+                "Directory enumeration requires an exclusive lock to be held continuously",
+            ));
         }
-        Ok(self.file.expect("已取得独占锁"))
+        Ok(self.file.expect("Obtained exclusive lock"))
     }
     pub fn take_contention(&mut self) -> bool {
         std::mem::take(&mut self.contended)
     }
-    /// 仅在未接受加锁或已收到 Busy 完成时取消，不能丢弃在途加锁。
+    /// Only if the lock has not been accepted or has been received Busy Cancel when complete,Cannot be discarded and locked in transit.
     pub fn cancel_unacquired(&mut self) -> Result<(), Error> {
         if !matches!(self.phase, Phase::Acquire) || self.pending.is_some() {
-            return Err(Error::InvalidState("目录锁仍在途或已取得"));
+            return Err(Error::InvalidState(
+                "Directory lock is still pending or acquired",
+            ));
         }
         self.phase = Phase::Closed;
         Ok(())
@@ -68,12 +72,16 @@ impl CatalogLock {
                 Ok(())
             }
             Phase::Close | Phase::Closed => Ok(()),
-            _ => Err(Error::InvalidState("尚未取得或已经失败的目录锁不能释放")),
+            _ => Err(Error::InvalidState(
+                "Directory locks that have not been acquired or have failed cannot be released",
+            )),
         }
     }
     fn check_owner(&self, storage: &SegmentedStorage) -> Result<(), Error> {
         if !Arc::ptr_eq(&self.owner, &storage.identity) {
-            return Err(Error::InvalidState("目录锁属于其他存储"));
+            return Err(Error::InvalidState(
+                "Directory lock belongs to other storage",
+            ));
         }
         Ok(())
     }
@@ -87,9 +95,9 @@ impl CatalogLock {
                 path: "checkpoint.lock".into(),
                 mode: self.mode,
             },
-            Phase::Close => IoOperation::Close(self.file.expect("目录锁持有句柄")),
+            Phase::Close => IoOperation::Close(self.file.expect("directory lock holds handle")),
             Phase::Held | Phase::Closed => return Ok(None),
-            Phase::Failed => return Err(Error::InvalidState("目录锁已经失败")),
+            Phase::Failed => return Err(Error::InvalidState("Directory lock has failed")),
         };
         match storage.device.submit(IoRequest {
             route: self.route,
@@ -117,7 +125,9 @@ impl CatalogLock {
             || self.route != completion.route
             || completion.buffer.is_some()
         {
-            return Err(Error::InvalidState("目录锁完成身份或缓冲错误"));
+            return Err(Error::InvalidState(
+                "Directory lock completion identity or buffering error",
+            ));
         }
         self.pending = None;
         match (self.phase, completion.result) {
@@ -138,10 +148,10 @@ impl CatalogLock {
             }
             _ => {
                 self.phase = Phase::Failed;
-                return Err(Error::InvalidState("目录锁完成类型错误"));
+                return Err(Error::InvalidState("Directory lock completion type error"));
             }
         }
         Ok(())
     }
 }
-// Drop 不提交 I/O。失败任务必须由拥有者保留至设备 shutdown；设备文件表持有未确认句柄。
+// Drop Do not submit I/O.Failed tasks must be retained by the owner to the device shutdown;Device file table holds unacknowledged handle.

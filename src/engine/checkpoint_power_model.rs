@@ -1,4 +1,4 @@
-//! 测试专用掉电模型：文件内容与目录项分别持久化，掉电丢弃未同步状态。
+//! Test dedicated power-down model:File contents and directory entries are persisted separately,Discard unsynchronized status after power failure.
 use crate::device::{FileId, IoCompletion, IoOperation, IoOutcome};
 use std::{
     collections::BTreeMap,
@@ -62,7 +62,7 @@ impl DurableModel {
             Change::Open(path) => {
                 self.ensure(&path, false);
                 let Ok(IoOutcome::Opened(file)) = &completion.result else {
-                    panic!("打开完成类型错误")
+                    panic!("Open completion type error")
                 };
                 self.handles.insert(file.slot, path);
             }
@@ -72,7 +72,7 @@ impl DurableModel {
             Change::SyncFile(file) => {
                 let path = &self.handles[&file.slot];
                 let id = self.paths[path];
-                // 完成真实同步后保存内容；后续未同步写入不会修改此快照。
+                // Save content after real sync is complete;Subsequent unsynchronized writes will not modify this snapshot.
                 self.nodes[id].data = std::fs::read(root.join(path)).unwrap();
             }
             Change::SyncDirectory(path) => {
@@ -87,17 +87,22 @@ impl DurableModel {
                     .collect();
             }
             Change::Rename(source, destination) => {
-                let id = self.paths.remove(&source).expect("重命名源已登记");
+                let id = self
+                    .paths
+                    .remove(&source)
+                    .expect("Rename source is registered");
                 self.paths.insert(destination, id);
             }
             Change::Remove(path) => {
-                self.paths.remove(&path).expect("删除源已登记");
+                self.paths
+                    .remove(&path)
+                    .expect("Delete source is registered");
             }
             Change::Other => {}
         }
     }
     pub(super) fn materialize(&self, root: &Path) {
-        assert!(!root.exists(), "掉电镜像必须使用新目录");
+        assert!(!root.exists(), "Power-down images must use a new directory");
         let id = self.paths[Path::new("")];
         self.write_node(id, root);
     }
@@ -115,13 +120,14 @@ impl DurableModel {
 }
 
 #[test]
-fn 掉电模型分别保留文件同步与目录同步且丢弃未同步内容() {
+fn the_power_off_model_retains_file_synchronization_and_directory_synchronization_respectively_and_discards_unsynchronized_content()
+ {
     let base = std::env::temp_dir().join(format!(
         "raster-power-{:x?}",
         crate::types::StoreId::generate().unwrap().0
     ));
     std::fs::create_dir(&base).unwrap();
-    let live = base.join("源");
+    let live = base.join("source");
     std::fs::create_dir(&live).unwrap();
     let file = FileId {
         slot: 0,
@@ -140,46 +146,50 @@ fn 掉电模型分别保留文件同步与目录同步且丢弃未同步内容()
         result: Ok(IoOutcome::Done),
         buffer: None,
     };
-    std::fs::write(live.join("旧名"), "已同步".as_bytes()).unwrap();
-    model.apply(&live, Change::Open("旧名".into()), &opened);
+    std::fs::write(live.join("old_name"), "synced".as_bytes()).unwrap();
+    model.apply(&live, Change::Open("old_name".into()), &opened);
     model.apply(&live, Change::SyncFile(file), &done);
-    model.materialize(&base.join("无目录同步"));
-    assert!(!base.join("无目录同步/旧名").exists());
+    model.materialize(&base.join("No directory synchronization"));
+    assert!(!base.join("No directory synchronization/old_name").exists());
     model.apply(&live, Change::SyncDirectory(PathBuf::new()), &done);
-    std::fs::write(live.join("旧名"), "未同步的新值".as_bytes()).unwrap();
-    model.materialize(&base.join("内容未同步"));
+    std::fs::write(live.join("old_name"), "Unsynchronized new value".as_bytes()).unwrap();
+    model.materialize(&base.join("Content not synced"));
     assert_eq!(
-        std::fs::read(base.join("内容未同步/旧名")).unwrap(),
-        "已同步".as_bytes()
+        std::fs::read(base.join("Content not synced/old_name")).unwrap(),
+        "synced".as_bytes()
     );
-    std::fs::rename(live.join("旧名"), live.join("新名")).unwrap();
-    model.apply(&live, Change::Rename("旧名".into(), "新名".into()), &done);
-    model.materialize(&base.join("重命名未同步"));
-    assert!(base.join("重命名未同步/旧名").exists());
-    assert!(!base.join("重命名未同步/新名").exists());
+    std::fs::rename(live.join("old_name"), live.join("new_name")).unwrap();
+    model.apply(
+        &live,
+        Change::Rename("old_name".into(), "new_name".into()),
+        &done,
+    );
+    model.materialize(&base.join("Rename not synced"));
+    assert!(base.join("Rename not synced/old_name").exists());
+    assert!(!base.join("Rename not synced/new_name").exists());
     model.apply(&live, Change::SyncDirectory(PathBuf::new()), &done);
-    model.materialize(&base.join("重命名已同步"));
-    assert!(!base.join("重命名已同步/旧名").exists());
+    model.materialize(&base.join("Rename synchronized"));
+    assert!(!base.join("Rename synchronized/old_name").exists());
     assert_eq!(
-        std::fs::read(base.join("重命名已同步/新名")).unwrap(),
-        "已同步".as_bytes()
+        std::fs::read(base.join("Rename synchronized/new_name")).unwrap(),
+        "synced".as_bytes()
     );
-    std::fs::remove_file(live.join("新名")).unwrap();
-    model.apply(&live, Change::Remove("新名".into()), &done);
-    model.materialize(&base.join("删除未同步"));
+    std::fs::remove_file(live.join("new_name")).unwrap();
+    model.apply(&live, Change::Remove("new_name".into()), &done);
+    model.materialize(&base.join("Delete unsynced"));
     assert_eq!(
-        std::fs::read(base.join("删除未同步/新名")).unwrap(),
-        "已同步".as_bytes()
+        std::fs::read(base.join("Delete unsynced/new_name")).unwrap(),
+        "synced".as_bytes()
     );
     model.apply(&live, Change::SyncDirectory(PathBuf::new()), &done);
-    model.materialize(&base.join("删除已同步"));
-    assert!(!base.join("删除已同步/新名").exists());
-    std::fs::write(live.join("未同步文件"), "内容".as_bytes()).unwrap();
-    model.apply(&live, Change::Open("未同步文件".into()), &opened);
+    model.materialize(&base.join("Delete synchronized"));
+    assert!(!base.join("Delete synchronized/new_name").exists());
+    std::fs::write(live.join("Files not synced"), "content".as_bytes()).unwrap();
+    model.apply(&live, Change::Open("Files not synced".into()), &opened);
     model.apply(&live, Change::SyncDirectory(PathBuf::new()), &done);
-    model.materialize(&base.join("仅目录同步"));
+    model.materialize(&base.join("Directory sync only"));
     assert!(
-        std::fs::read(base.join("仅目录同步/未同步文件"))
+        std::fs::read(base.join("Directory sync only/Files not synced"))
             .unwrap()
             .is_empty()
     );

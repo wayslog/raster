@@ -1,4 +1,4 @@
-//! 指标不执行用户代码、不改变请求结果；资源计数独立于可关闭的历史采样。
+//! Indicator does not execute user code,Does not change the request result;Resource counting independent of history sampling which can be turned off.
 use crate::{
     api::completion::{OperationResult, Outcome},
     diagnostics::*,
@@ -229,7 +229,8 @@ impl Monitor {
     }
     pub fn pending(&mut self) {
         if self.pending.is_none() && !self.finished {
-            // 资源计数不依赖采样；挂起对象本身提供有界的生命周期。
+            // Resource counters do not depend on sampling; the suspended object itself
+            // provides a bounded lifetime.
             self.pending = Some(Instant::now());
             if !matches!(self.kind, Kind::Copy) {
                 self.metrics.pending.fetch_add(1, Ordering::SeqCst);
@@ -309,7 +310,8 @@ impl Drop for Monitor {
 mod tests {
     use super::*;
     #[test]
-    fn 采样在接受时固定且终结幂等遗漏测量不能伪装零次完成() {
+    fn sampling_is_fixed_and_terminated_on_acceptance_idempotent_missing_measurements_cannot_be_faked_as_zero_completions()
+     {
         let metrics = Arc::new(Metrics::new(false));
         let mut unsampled = metrics.accept(Kind::Upsert);
         unsampled.pending();
@@ -335,7 +337,8 @@ mod tests {
         assert_eq!(metrics.activity().unwrap(), (0, 0));
     }
     #[test]
-    fn 溢出饱和并保留失败影响和条件复制独立计数() {
+    fn overflow_saturates_and_retains_failure_impact_and_conditional_replication_independent_counts()
+     {
         let metrics = Arc::new(Metrics::new(true));
         let mut copy = metrics.accept(Kind::Copy);
         copy.pending();

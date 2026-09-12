@@ -1,4 +1,4 @@
-//! 会话登记、双版本上下文与顶层动作仲裁；与安全回收 epoch 分开。
+//! session registration,Dual-version context and top-level action arbitration;and safe recycling epoch separate.
 use crate::types::*;
 use std::collections::BTreeMap;
 mod action;
@@ -67,7 +67,7 @@ impl Coordinator {
         let registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         let mut ids = Vec::new();
         ids.try_reserve_exact(
             registry
@@ -89,7 +89,7 @@ impl Coordinator {
         if max_sessions == 0 {
             return Err(Error::InvalidConfig {
                 field: "session.max_sessions",
-                reason: "会话容量须非零",
+                reason: "Session capacity must be non-zero",
             });
         }
         Ok(Self {
@@ -117,7 +117,7 @@ impl Coordinator {
         let registry = coordinator
             .registry
             .get_mut()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         registry.system.version =
             CheckpointVersion(version.0.checked_add(1).ok_or(Error::CapacityExceeded)?);
         for &(id, serial) in sessions {
@@ -134,7 +134,7 @@ impl Coordinator {
                 )
                 .is_some()
             {
-                return Err(Error::InvalidFormat("恢复会话重复"));
+                return Err(Error::InvalidFormat("Resume session duplication"));
             }
         }
         Ok(coordinator)
@@ -146,9 +146,9 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.closed || registry.system.phase == Phase::Failed {
-            return Err(Error::InvalidState("存储已关闭或失败"));
+            return Err(Error::InvalidState("storage_closed_or_failed"));
         }
         if registry.action.is_some() {
             return Err(Error::Busy);
@@ -166,13 +166,15 @@ impl Coordinator {
         let entry = registry
             .sessions
             .get_mut(&session)
-            .ok_or(Error::InvalidState("没有该会话的恢复进度"))?;
+            .ok_or(Error::InvalidState(
+                "There is no recovery progress for this session",
+            ))?;
         if entry.active {
             return Err(Error::Busy);
         }
-        let (serial, durable_version) = entry
-            .recovered
-            .ok_or(Error::InvalidState("会话不属于本次恢复集合"))?;
+        let (serial, durable_version) = entry.recovered.ok_or(Error::InvalidState(
+            "The session does not belong to this recovery set",
+        ))?;
         entry.active = true;
         Ok((version, serial, durable_version))
     }
@@ -180,15 +182,15 @@ impl Coordinator {
         let registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         let entry = registry
             .sessions
             .get(&id)
             .filter(|e| e.active)
-            .ok_or(Error::InvalidState("会话未注册"))?;
+            .ok_or(Error::InvalidState("session_not_registered"))?;
         Ok(entry.last_accepted)
     }
-    /// 只在其他拒绝条件已检查后调用；拒绝保持原序号。
+    /// Only called after other rejection conditions have been checked;Refuse to keep the original serial number.
     pub fn accept_serial(
         &self,
         id: SessionId,
@@ -198,9 +200,11 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.closed || registry.system.phase == Phase::Failed {
-            return Err(Error::InvalidState("存储已关闭或协调动作失败"));
+            return Err(Error::InvalidState(
+                "Storage is closed or coordination action failed",
+            ));
         }
         if version != registry.system.version {
             return Err(Error::Busy);
@@ -209,9 +213,11 @@ impl Coordinator {
             .sessions
             .get_mut(&id)
             .filter(|e| e.active)
-            .ok_or(Error::InvalidState("会话未注册"))?;
+            .ok_or(Error::InvalidState("session_not_registered"))?;
         if entry.last_accepted.is_some_and(|last| serial <= last) {
-            return Err(Error::InvalidState("操作序号必须严格递增"));
+            return Err(Error::InvalidState(
+                "operation_serial_must_increase_strictly",
+            ));
         }
         entry.last_accepted = Some(serial);
         Ok(())
@@ -220,7 +226,7 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.sessions.values().any(|e| e.active) {
             return Err(Error::Busy);
         }
@@ -236,9 +242,11 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         if registry.closed || registry.system.phase == Phase::Failed {
-            return Err(Error::InvalidState("存储已关闭或协调动作失败"));
+            return Err(Error::InvalidState(
+                "Storage is closed or coordination action failed",
+            ));
         }
         if registry.action.is_some() {
             return Err(Error::Busy);
@@ -259,7 +267,7 @@ impl Coordinator {
             .is_some_and(|entry| entry.recovered.is_some())
         {
             return Err(Error::InvalidState(
-                "持久会话必须通过 continue_session 恢复",
+                "Persistent sessions must pass continue_session restore",
             ));
         }
         registry
@@ -277,12 +285,12 @@ impl Coordinator {
         let mut registry = self
             .registry
             .lock()
-            .map_err(|_| Error::InvalidState("会话注册表锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Session registry lock poisoning"))?;
         let entry = registry
             .sessions
             .get_mut(&session)
             .filter(|e| e.active)
-            .ok_or(Error::InvalidState("会话未注册"))?;
+            .ok_or(Error::InvalidState("session_not_registered"))?;
         entry.active = false;
         if let Some(action) = &mut registry.action
             && action.participants.contains_key(&session)
@@ -300,7 +308,8 @@ impl Coordinator {
 mod tests {
     use super::*;
     #[test]
-    fn 恢复进度注册遵守容量且拒绝重复身份与版本耗尽() {
+    fn recovery_progress_registration_adheres_to_capacity_and_rejects_duplicate_identities_and_version_exhaustion()
+     {
         let a = SessionId([1; 16]);
         let b = SessionId([2; 16]);
         assert!(Coordinator::from_checkpoint(1, CheckpointVersion(u64::MAX), &[]).is_err());
@@ -334,7 +343,7 @@ mod tests {
         );
     }
     #[test]
-    fn 重复注册容量和关闭拒绝不改变状态() {
+    fn duplicate_registration_capacity_and_shutdown_rejection_do_not_change_status() {
         let c = Coordinator::new(1).unwrap();
         let a = SessionId([1; 16]);
         let b = SessionId([2; 16]);
@@ -351,7 +360,8 @@ mod tests {
         assert!(c.enroll(a).is_err());
     }
     #[test]
-    fn 序号可跳号但不能回退且重新注册保留进度() {
+    fn the_serial_number_can_be_jumped_but_cannot_be_rolled_back_and_re_registration_will_preserve_the_progress()
+     {
         let c = Coordinator::new(2).unwrap();
         let a = SessionId([1; 16]);
         let b = SessionId([2; 16]);
@@ -376,7 +386,7 @@ mod tests {
             .unwrap();
     }
     #[test]
-    fn 注册与关闭竞争只有一致的终态() {
+    fn registration_and_closing_competitions_have_the_same_final_state() {
         for _ in 0..32 {
             let c = Coordinator::new(1).unwrap();
             let barrier = std::sync::Barrier::new(2);

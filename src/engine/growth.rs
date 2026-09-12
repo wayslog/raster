@@ -1,4 +1,4 @@
-//! 在线扩容参与全局动作；迁移不跨业务回调，完成报告等待旧表安全释放。
+//! Online expansion to participate in global actions;Migration does not require cross-business callbacks,Completion report awaits safe release of old table.
 use super::Engine;
 use crate::{
     api::maintenance::{IndexGrowthReport, MaintenanceCompleter, MaintenanceTicket},
@@ -25,7 +25,9 @@ impl Job {
     fn step<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
         let state = engine.coordinator.snapshot()?;
         if state.id != Some(self.id) || state.phase == Phase::Failed {
-            return Err(Error::InvalidState("扩容动作已失效或失败"));
+            return Err(Error::InvalidState(
+                "The expansion operation has expired or failed.",
+            ));
         }
         match state.phase {
             Phase::GrowPrepare => Ok(false),
@@ -35,7 +37,7 @@ impl Job {
                     self.progress = Some(engine.index.begin_growth()?);
                     advanced = true;
                 }
-                // 请求按同一方向取得其中一个锁；这里全部用 try_lock，绝不等待用户回调。
+                // Request to obtain one of the locks in the same direction;Use all here try_lock,Never wait for user callback.
                 let mut gates = Vec::new();
                 gates
                     .try_reserve_exact(engine.operations.len())
@@ -44,12 +46,16 @@ impl Job {
                     match gate.try_lock() {
                         Ok(guard) => gates.push(guard),
                         Err(TryLockError::WouldBlock) => return Ok(advanced),
-                        Err(_) => return Err(Error::InvalidState("扩容遇到业务仲裁锁中毒")),
+                        Err(_) => {
+                            return Err(Error::InvalidState(
+                                "Capacity expansion encounters business arbitration lock poisoning",
+                            ));
+                        }
                     }
                 }
                 let progress = engine.cache.with_normalized_index(&engine.index, || {
                     engine.index.grow_step(PollBudget(
-                        std::num::NonZeroUsize::new(1).expect("固定预算"),
+                        std::num::NonZeroUsize::new(1).expect("fixed budget"),
                     ))
                 })?;
                 self.progress = Some(progress);
@@ -63,9 +69,9 @@ impl Job {
                 Ok(true)
             }
             Phase::Publish => {
-                let progress = self
-                    .progress
-                    .ok_or(Error::InvalidState("扩容缺少迁移结果"))?;
+                let progress = self.progress.ok_or(Error::InvalidState(
+                    "Expansion is missing migration results",
+                ))?;
                 for action in engine.epoch.collect()? {
                     match action {
                         DeferredAction::ReleaseIndex(generation)
@@ -74,7 +80,11 @@ impl Job {
                             engine.index.release_retired(generation)?;
                             self.reclaimed = true;
                         }
-                        _ => return Err(Error::InvalidState("扩容收到未支持的 epoch 释放动作")),
+                        _ => {
+                            return Err(Error::InvalidState(
+                                "Expansion received unsupported epoch release action",
+                            ));
+                        }
                     }
                 }
                 if !self.reclaimed {
@@ -89,18 +99,20 @@ impl Job {
                 self.finished = true;
                 Ok(true)
             }
-            _ => Err(Error::InvalidState("扩容动作处于错误阶段")),
+            _ => Err(Error::InvalidState(
+                "The expansion operation is at the wrong stage",
+            )),
         }
     }
 }
 impl<S: Schema> Engine<S> {
     pub(crate) fn start_growth(&self) -> Result<MaintenanceTicket<IndexGrowthReport>, Error> {
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("存储已关闭或失败"));
+            return Err(Error::InvalidState("storage_closed_or_failed"));
         }
         let mut runtime = self.growth.try_lock().map_err(|error| match error {
             TryLockError::WouldBlock => Error::Busy,
-            TryLockError::Poisoned(_) => Error::InvalidState("扩容任务锁中毒"),
+            TryLockError::Poisoned(_) => Error::InvalidState("Expansion task lock poisoning"),
         })?;
         if runtime.job.is_some() {
             return Err(Error::Busy);
@@ -121,7 +133,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.growth.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok((false, false)),
-            Err(_) => return Err(Error::InvalidState("扩容任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("Expansion task lock poisoning")),
         };
         let Some(job) = &mut runtime.job else {
             return Ok((false, false));
@@ -130,12 +142,14 @@ impl<S: Schema> Engine<S> {
             return Ok((false, false));
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.step(self)))
-            .unwrap_or(Err(Error::InvalidState("扩容推进恐慌")));
+            .unwrap_or(Err(Error::InvalidState("Expansion promotes panic")));
         match result {
             Err(error) => {
                 job.complete.finish(Err(error))?;
                 job.failed = true;
-                Err(Error::InvalidState("扩容失败，详见维护报告"))
+                Err(Error::InvalidState(
+                    "Expansion failed,see_maintenance_report",
+                ))
             }
             Ok(advanced) => {
                 let finished = job.finished;
@@ -150,14 +164,15 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.growth.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(_) => return Err(Error::InvalidState("扩容任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("Expansion task lock poisoning")),
         };
         if let Some(job) = &mut runtime.job
             && !job.failed
             && !job.finished
         {
-            job.complete
-                .finish(Err(Error::InvalidState("引擎或协调动作失败，扩容终止")))?;
+            job.complete.finish(Err(Error::InvalidState(
+                "Engine or coordination action failed,Expansion terminated",
+            )))?;
             job.failed = true;
         }
         Ok(())

@@ -1,4 +1,4 @@
-//! 检查点实际任务只持有材料和完成端；不持有 Engine 的 Arc，避免所有权环。
+//! Checkpoint actual tasks only hold materials and completion end;Not held Engine of Arc,Avoid ownership rings.
 use super::{Engine, io_hub::CompletionHub};
 use crate::{
     api::maintenance::{
@@ -132,7 +132,7 @@ struct Job {
 }
 impl Job {
     fn progress_lock<S: Schema>(&mut self, engine: &Engine<S>) -> Result<bool, Error> {
-        let lock = self.catalog_lock.as_mut().expect("已创建目录锁");
+        let lock = self.catalog_lock.as_mut().expect("Directory lock created");
         if let Some(completion) = engine.io.take(self.mailbox)? {
             lock.accept(&engine.storage, completion)?;
             return Ok(true);
@@ -150,7 +150,7 @@ impl Job {
     ) -> Result<bool, Error> {
         let state = engine.coordinator.snapshot()?;
         if state.id != Some(self.id) || state.phase == Phase::Failed {
-            return Err(Error::InvalidState("检查点动作已失效"));
+            return Err(Error::InvalidState("Checkpoint action has expired"));
         }
         if let Some(work) = &mut self.work {
             if let Some(completion) = engine.io.take(self.mailbox)? {
@@ -192,7 +192,7 @@ impl Job {
                 };
                 let after = engine.log.frontiers()?;
                 self.manifest.begin = before.begin;
-                // 开发期重放覆盖整个保留日志，包含快照前已预留但稍后发布的旧请求。
+                // Development replay covers the entire retention log,Contains old requests that were reserved before the snapshot but were released later.
                 self.manifest.replay_from = before.begin;
                 self.manifest.end = after.tail;
                 self.manifest.materials.push(Material {
@@ -210,11 +210,15 @@ impl Job {
             }
             Phase::WaitFlush => {
                 if self.manifest.kind != Kind::Index {
-                    // 与普通后台边界推进互斥，防止只读目标被并发推进后产生过期请求。
+                    // Mutually exclusive with normal background boundary pushing,Prevent expired requests from being generated after read-only targets are pushed concurrently.
                     let _storage = match engine.storage_progress.try_lock() {
                         Ok(guard) => guard,
                         Err(TryLockError::WouldBlock) => return Ok(false),
-                        Err(_) => return Err(Error::InvalidState("后台日志推进锁中毒")),
+                        Err(_) => {
+                            return Err(Error::InvalidState(
+                                "background_log_progress_lock_poisoned",
+                            ));
+                        }
                     };
                     if self.frozen.is_none() {
                         let cuts = match engine.coordinator.cuts(self.id) {
@@ -234,7 +238,7 @@ impl Job {
                             Err(Error::Busy) => return Ok(false),
                             Err(error) => return Err(error),
                         });
-                        self.manifest.end = self.frozen.expect("已固定尾部");
+                        self.manifest.end = self.frozen.expect("Tail fixed");
                         if self.manifest.begin < engine.log.frontiers()?.begin {
                             return Err(Error::RangeTruncated);
                         }
@@ -258,7 +262,7 @@ impl Job {
                             .try_reserve(count + 1)
                             .map_err(|_| Error::OutOfMemory)?;
                     }
-                    let end = self.frozen.expect("已固定尾部");
+                    let end = self.frozen.expect("Tail fixed");
                     let frontiers = engine.log.frontiers()?;
                     if frontiers.safe_read_only < end {
                         match engine.log.advance_read_only(end.max(frontiers.read_only)) {
@@ -271,7 +275,7 @@ impl Job {
                         return Ok(false);
                     }
                 }
-                // 命名空间创建同样受共享锁保护，释放端的独占枚举才不会漏掉已有目录。
+                // Namespace creation is also protected by shared locks,Exclusive enumeration on the release side will not miss existing directories.
                 if self.catalog_lock.is_none() {
                     self.catalog_lock = Some(CatalogLock::new(
                         &engine.storage,
@@ -279,7 +283,12 @@ impl Job {
                         crate::device::FileLockMode::Shared,
                     )?);
                 }
-                if !self.catalog_lock.as_ref().expect("目录锁已创建").held() {
+                if !self
+                    .catalog_lock
+                    .as_ref()
+                    .expect("Directory lock created")
+                    .held()
+                {
                     return self.progress_lock(engine);
                 }
                 if self.directory.is_none() {
@@ -330,7 +339,7 @@ impl Job {
                     }
                     let work = CommitPublish::new(
                         &engine.storage,
-                        self.directory.take().expect("已预留目录"),
+                        self.directory.take().expect("Catalog reserved"),
                         self.manifest.clone(),
                         std::mem::take(&mut self.files),
                         chunk,
@@ -342,7 +351,10 @@ impl Job {
                 Ok(true)
             }
             Phase::Publish if self.published => {
-                let lock = self.catalog_lock.as_mut().expect("发布持有目录锁");
+                let lock = self
+                    .catalog_lock
+                    .as_mut()
+                    .expect("Publish holds directory lock");
                 if !lock.closed() {
                     lock.release()?;
                     return self.progress_lock(engine);
@@ -397,7 +409,7 @@ impl<S: Schema> Engine<S> {
             return Err(Error::Busy);
         }
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("引擎已失败或关闭"));
+            return Err(Error::InvalidState("Engine has failed or shut down"));
         }
         self.checkpoint_capabilities()?;
         let token = CheckpointToken::generate()?;
@@ -424,18 +436,19 @@ impl<S: Schema> Engine<S> {
         }))
         .map_err(|_| {
             self.failed.store(true, Ordering::SeqCst);
-            Error::InvalidState("检查点语义描述恐慌")
+            Error::InvalidState("Checkpoint semantics describe panics")
         })?;
         if kind_on_disk == Kind::Log {
-            let base = runtime
-                .latest_index
-                .as_ref()
-                .ok_or(Error::InvalidState("日志检查点需要已成功提交的索引检查点"))?;
+            let base = runtime.latest_index.as_ref().ok_or(Error::InvalidState(
+                "Log checkpoint requires successfully committed index checkpoint",
+            ))?;
             if base.key_format != manifest.key_format
                 || base.value_format != manifest.value_format
                 || base.hash != manifest.hash
             {
-                return Err(Error::InvalidFormat("检查点语义描述发生变化"));
+                return Err(Error::InvalidFormat(
+                    "Checkpoint semantic description changes",
+                ));
             }
             manifest.base_index = base.token;
             manifest.begin = base.begin;
@@ -474,7 +487,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.checkpoints.try_lock() {
             Ok(r) => r,
             Err(TryLockError::WouldBlock) => return Ok((false, false)),
-            Err(_) => return Err(Error::InvalidState("检查点任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("checkpoint_task_lock_poisoned")),
         };
         let CheckpointRuntime { job, retained, .. } = &mut *runtime;
         let Some(job) = job else {
@@ -485,12 +498,14 @@ impl<S: Schema> Engine<S> {
         }
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.step(self, retained)))
-                .unwrap_or(Err(Error::InvalidState("检查点推进恐慌")));
+                .unwrap_or(Err(Error::InvalidState("Checkpoint Advance Panic")));
         match result {
             Err(error) => {
                 job.completer.finish(Err(error))?;
                 job.failed = true;
-                Err(Error::InvalidState("检查点任务失败，详见维护报告"))
+                Err(Error::InvalidState(
+                    "Checkpoint task failed,see_maintenance_report",
+                ))
             }
             Ok(progress) => {
                 let finished = job.finished;
@@ -509,28 +524,30 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.checkpoints.try_lock() {
             Ok(r) => r,
             Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(_) => return Err(Error::InvalidState("检查点任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("checkpoint_task_lock_poisoned")),
         };
         if let Some(job) = &mut runtime.job
             && !job.failed
             && !job.finished
         {
-            job.completer
-                .finish(Err(Error::InvalidState("引擎或协调动作失败，检查点终止")))?;
+            job.completer.finish(Err(Error::InvalidState(
+                "Engine or coordination action failed,Checkpoint terminated",
+            )))?;
             job.failed = true;
         }
         Ok(())
     }
-    /// 仅在设备 shutdown 确认所有 I/O 已归还后解除失败任务与邮箱。
+    /// only on device shutdown Confirm all I/O Release failed tasks and mailboxes after returning them.
     pub(crate) fn release_stopped_checkpoint(&self) -> Result<(), Error> {
         let mut runtime = self
             .checkpoints
             .lock()
-            .map_err(|_| Error::InvalidState("检查点任务锁中毒"))?;
+            .map_err(|_| Error::InvalidState("checkpoint_task_lock_poisoned"))?;
         if let Some(job) = runtime.job.take() {
             if !job.finished && !job.failed {
-                job.completer
-                    .finish(Err(Error::InvalidState("设备关闭，检查点终止")))?;
+                job.completer.finish(Err(Error::InvalidState(
+                    "Device shuts down,Checkpoint terminated",
+                )))?;
             }
             self.io.release(job.mailbox)?;
         }
@@ -540,6 +557,6 @@ impl<S: Schema> Engine<S> {
 fn lock_error<T>(error: TryLockError<T>) -> Error {
     match error {
         TryLockError::WouldBlock => Error::Busy,
-        TryLockError::Poisoned(_) => Error::InvalidState("检查点任务锁中毒"),
+        TryLockError::Poisoned(_) => Error::InvalidState("checkpoint_task_lock_poisoned"),
     }
 }

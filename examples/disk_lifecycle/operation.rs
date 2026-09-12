@@ -1,4 +1,4 @@
-//! 示例拥有请求与输出；变长更新采用先计算后追加，错误不会重复执行已生效修改。
+//! Example has request and output;Variable length updates are calculated first and then appended.,Errors will not be repeated if changes have taken effect..
 use raster::{
     api::operation::*,
     schema::{

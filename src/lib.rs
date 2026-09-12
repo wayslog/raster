@@ -1,11 +1,11 @@
-//! RasterKV 嵌入式键值存储：会话、混合日志、检查点和恢复。
+//! RasterKV Embedded key-value store:session,mixed log,Checkpoint and recovery.
 //!
-//! 安全操作通过本线程 Session 提交，存储实例可以跨线程共享。Ready/Pending
-//! 表示结果交付方式，成功的请求完成不等于检查点持久化完成。Linux/macOS
-//! 提供基础文件后端；Windows、io_uring、F2 和跨存储压缩属于后续范围。
+//! Safe operation through this thread Session commit,Storage instances can be shared across threads.Ready/Pending
+//! Indicates how results are delivered,Successful request completion does not equal checkpoint persistence completion.Linux/macOS
+//! Provides a basic file backend;Windows,io_uring,F2 and cross-storage compression fall within the subsequent scope.
 //!
-//! 下例完成原子计数器的创建、RMW、结果收取和关闭。Null 设备适用于此受限内存示例，
-//! 不提供磁盘溢出或重启恢复；持久化流程使用 ThreadPoolDeviceFactory。
+//! The following example completes the creation of an atomic counter,RMW,Result collection and closure.Null The device is suitable for this restricted memory example,
+//! No disk spill or reboot recovery provided;Persistence process usage ThreadPoolDeviceFactory.
 //!
 //! ```
 //! use raster::{RasterKV, Submission, config::Config, api::{Outcome, operation::*},
@@ -46,10 +46,10 @@
 //! # }
 //! ```
 //!
-//! 超时不取消已接受的请求，继续等待同一票据；操作失败保留
-//! [`types::OperationError::effect`]，不能自动重放可能已经生效的修改。
-//! 完整的磁盘与异构票据流程见仓库的 `disk_lifecycle` 和 `interface` 示例；
-//! 示例会实际运行并验证结果，当前第一期总验收进度以项目计划地图为准。
+//! Accepted requests not canceled after timeout,Continue waiting for the same ticket;Keep if operation fails
+//! [`types::OperationError::effect`],Modifications that may have already taken effect cannot be automatically replayed.
+//! The complete disk and heterogeneous bill process can be found in the warehouse `disk_lifecycle` and `interface` Example;
+//! The example will actually run and verify the results,The current overall acceptance progress of the first phase is subject to the project plan map.
 
 pub mod api;
 pub mod config;
@@ -58,7 +58,7 @@ pub mod diagnostics;
 pub mod schema;
 pub mod types;
 
-// 内部协议不作为公开 API；测试专用入口在定义处限定编译范围。
+// Internal agreements not to be made public API;The test-specific entrance limits the compilation scope at the definition.
 mod cache;
 mod checkpoint;
 mod coordination;

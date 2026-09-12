@@ -1,4 +1,4 @@
-//! 公开生命周期已运行；四操作仍在 P3.2 接入。
+//! public lifecycle has run;Four operations are still P3.2 Access.
 use raster::{
     RasterKV,
     api::session::SessionOptions,
@@ -17,7 +17,7 @@ fn store() -> RasterKV<SchemaPair<U64Key, AtomicU64Value>> {
         .unwrap()
 }
 #[test]
-fn 创建共享会话与关闭完整生命周期() {
+fn create_a_shared_session_and_close_the_complete_life_cycle() {
     let store = store();
     let clone = store.clone();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -40,7 +40,7 @@ fn 创建共享会话与关闭完整生命周期() {
     assert!(clone.start_session(SessionOptions::default()).is_err());
 }
 #[test]
-fn 丢弃空会话注销且同身份可重新登记() {
+fn discard_the_empty_session_and_log_out_and_you_can_re_register_with_the_same_identity() {
     let store = store();
     let id = SessionId([1; 16]);
     let session = store
@@ -55,7 +55,7 @@ fn 丢弃空会话注销且同身份可重新登记() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 活跃会话上限和无效身份拒绝后仍可工作() {
+fn active_session_caps_and_invalid_identity_still_work_after_rejection() {
     let mut config = raster::config::Config::default();
     config.session.max_sessions = 1;
     let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
@@ -81,7 +81,7 @@ fn 活跃会话上限和无效身份拒绝后仍可工作() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 共享实例可在另一线程注册并关闭会话() {
+fn shared_instances_can_be_registered_in_another_thread_and_the_session_closed() {
     let store = store();
     let clone = store.clone();
     std::thread::spawn(move || {
@@ -93,7 +93,8 @@ fn 共享实例可在另一线程注册并关闭会话() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 线程会话名额按实例隔离且关闭不必销毁对象即可重新注册() {
+fn thread_session_quotas_are_isolated_by_instance_and_can_be_re_registered_without_destroying_the_object()
+ {
     let first_store = store();
     let other_store = store();
     let clone = first_store.clone();
@@ -120,7 +121,7 @@ fn 线程会话名额按实例隔离且关闭不必销毁对象即可重新注�
     other_store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 会话准备拒绝归还线程名额且不影响原有会话() {
+fn session_preparation_refuses_to_return_the_thread_quota_without_affecting_the_original_session() {
     let store = store();
     assert!(
         store
@@ -150,7 +151,7 @@ fn 会话准备拒绝归还线程名额且不影响原有会话() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 设备关闭失败不能报告成功且重试不会重新开放注册() {
+fn device_shutdown_failure_cannot_report_success_and_retrying_will_not_reopen_registration() {
     use raster::device::*;
     use std::sync::{
         Arc,

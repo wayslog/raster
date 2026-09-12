@@ -1,4 +1,4 @@
-//! 异构挂起任务只属于 Session；跨等待仅保存逻辑标识和拥有型输入。
+//! Heterogeneous pending tasks only belong to Session;Save only logical IDs and owned inputs across awaits.
 use crate::{device::IoCompletion, types::*};
 use std::collections::BTreeMap;
 
@@ -27,7 +27,7 @@ pub(crate) struct SessionRuntime {
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
     pub poll_cursor: Option<u64>,
-    // 池只保留预算控制块；外部持有者全部退出后才能复用，不保留用户结果。
+    // The pool only retains budget control blocks;It can only be reused after all external holders exit.,User results are not retained.
     results: Vec<std::rc::Rc<()>>,
 }
 
@@ -46,13 +46,15 @@ impl SessionRuntime {
             results: Vec::new(),
         }
     }
-    /// 保留旧任务的身份、版本与固定序号；新上下文只承接后续接受的请求。
+    /// Preserve the identity of old tasks,Version and fixed serial number;The new context will only accept subsequent accepted requests..
     pub fn switch_version(&mut self, version: CheckpointVersion) -> Result<bool, Error> {
         if version == self.current.version {
             return Ok(false);
         }
         if self.current.version.0.checked_add(1) != Some(version.0) {
-            return Err(Error::InvalidState("会话版本必须连续递增"));
+            return Err(Error::InvalidState(
+                "The session version must be continuously incremented",
+            ));
         }
         if self
             .previous
@@ -66,7 +68,9 @@ impl SessionRuntime {
                 || task.id().session != self.id
                 || Some(task.serial()) > self.current.last_accepted
         }) {
-            return Err(Error::InvalidState("挂起任务与会话上下文不一致"));
+            return Err(Error::InvalidState(
+                "The pending task is inconsistent with the session context",
+            ));
         }
         let next = ExecutionContext {
             version,
@@ -86,7 +90,9 @@ impl SessionRuntime {
             self.previous
                 .as_ref()
                 .filter(|old| old.version == version)
-                .ok_or(Error::InvalidState("会话没有该版本上下文"))?
+                .ok_or(Error::InvalidState(
+                    "The session does not have this version context",
+                ))?
         };
         Ok(crate::coordination::SessionCut {
             session: self.id,
@@ -100,7 +106,7 @@ impl SessionRuntime {
             .iter()
             .find(|credit| std::rc::Rc::strong_count(credit) == 1)
         {
-            // 历史容量大于当前限额时，空闲槽不代表仍能接受一个请求。
+            // When the historical capacity is greater than the current limit,A free slot does not mean that a request can still be accepted.
             if self.results.len() > limit
                 && self
                     .results
@@ -147,13 +153,13 @@ mod result_budget_tests {
     }
 
     #[test]
-    fn 结果名额等待票据和完成端都归还() {
+    fn result_places_are_waiting_for_tickets_and_completion_ends_are_returned() {
         for complete_first in [false, true] {
             let mut runtime = runtime();
             let credit = runtime.reserve_result(1).unwrap();
             let (mut ticket, complete) = Ticket::pair_bounded(request_id(), credit);
             complete
-                .finish(Ok(Outcome::Success(String::from("拥有型结果"))))
+                .finish(Ok(Outcome::Success(String::from("Possessive results"))))
                 .unwrap();
             assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
             let output = if complete_first {
@@ -167,20 +173,20 @@ mod result_budget_tests {
                 output
             };
             let next = runtime.reserve_result(1).unwrap();
-            // 已收取的旧票据不能归还后续请求正在使用的名额。
+            // Old tickets that have been collected cannot be returned to the quota that is being used by subsequent requests..
             assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
             drop(ticket);
             assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
             drop(next);
             assert!(runtime.reserve_result(1).is_ok());
             assert!(
-                matches!(output, TicketState::Ready(Ok(Outcome::Success(value))) if value == "拥有型结果")
+                matches!(output, TicketState::Ready(Ok(Outcome::Success(value))) if value == "Possessive results")
             );
         }
     }
 
     #[test]
-    fn 放弃票据后完成端仍占用名额() {
+    fn after_giving_up_the_ticket_the_completion_end_still_occupies_the_quota() {
         let mut runtime = runtime();
         let (ticket, complete) =
             Ticket::<u64>::pair_bounded(request_id(), runtime.reserve_result(1).unwrap());
@@ -193,7 +199,7 @@ mod result_budget_tests {
     }
 
     #[test]
-    fn 历史容量不能绕过降低后的结果限额() {
+    fn historical_capacity_cannot_bypass_reduced_result_limits() {
         let mut runtime = runtime();
         let mut credits = (0..4)
             .map(|_| runtime.reserve_result(4).unwrap())

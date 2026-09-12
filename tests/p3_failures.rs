@@ -1,4 +1,4 @@
-//! 接受前拒绝、回调/析构恐慌和错误影响的公开边界。
+//! reject before accepting,callback/Exposed bounds on destructor panics and error effects.
 use raster::{
     RasterKV, Submission,
     api::{operation::*, session::SessionOptions},
@@ -19,13 +19,13 @@ struct Request {
 impl Keyed<Schema> for Request {
     fn key(&self) -> &u64 {
         self.keys.set(self.keys.get() + 1);
-        assert!(!self.panic_key, "键恐慌");
+        assert!(!self.panic_key, "key panic");
         &self.key
     }
 }
 impl Drop for Request {
     fn drop(&mut self) {
-        assert!(!self.panic_drop, "析构恐慌");
+        assert!(!self.panic_drop, "Destruction panic");
     }
 }
 impl ReadOperation<Schema> for Request {
@@ -61,7 +61,7 @@ fn store() -> RasterKV<Schema> {
         .unwrap()
 }
 #[test]
-fn 序号拒绝不调用键方法且归还原请求() {
+fn serial_number_rejection_does_not_call_the_key_method_and_returns_the_original_request() {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     s.read(Serial(7), request(), ReadOptions::default())
@@ -71,14 +71,14 @@ fn 序号拒绝不调用键方法且归还原请求() {
     let counter = r.keys.clone();
     let rejected = match s.read(Serial(7), r, ReadOptions::default()) {
         Err(r) => r,
-        Ok(_) => panic!("重复序号应拒绝"),
+        Ok(_) => panic!("Duplicate serial numbers should be rejected"),
     };
     assert_eq!(counter.get(), 0);
     assert!(Rc::ptr_eq(&counter, &rejected.request.keys));
     assert_eq!(s.last_accepted(), Some(Serial(7)));
 }
 #[test]
-fn 键恐慌拒绝不消费序号并关闭引擎() {
+fn key_panic_rejection_does_not_consume_the_serial_number_and_shuts_down_the_engine() {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     let mut r = request();
@@ -88,7 +88,8 @@ fn 键恐慌拒绝不消费序号并关闭引擎() {
     assert!(store.start_session(SessionOptions::default()).is_err());
 }
 #[test]
-fn 生效后请求析构恐慌返回已生效且不展开到调用者() {
+fn after_taking_effect_the_requested_destructor_panic_returns_that_it_has_taken_effect_and_will_not_be_expanded_to_the_caller()
+ {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     let mut r = request();
@@ -122,8 +123,8 @@ impl Fault {
     fn hit(&self, stage: Stage) -> Result<(), Error> {
         if self.stage == stage {
             self.hits.set(self.hits.get() + 1);
-            assert!(!self.panic, "阶段恐慌：{stage:?}");
-            return Err(Error::Codec("阶段错误"));
+            assert!(!self.panic, "stage panic:{stage:?}");
+            return Err(Error::Codec("phase error"));
         }
         Ok(())
     }
@@ -183,7 +184,7 @@ impl DeleteOperation<Schema> for Fault {
     }
 }
 #[test]
-fn 各阶段错误和恐慌的影响及回调次数矩阵() {
+fn matrix_of_the_impact_of_errors_and_panics_at_each_stage_and_the_number_of_callbacks() {
     for stage in [
         Stage::Read,
         Stage::Replacement,
@@ -225,7 +226,7 @@ fn 各阶段错误和恐慌的影响及回调次数矩阵() {
             .map_err(|r| r.reason)
             .unwrap();
             let Submission::Ready(Err(error)) = submission else {
-                panic!("阶段应终结为错误：{stage:?}")
+                panic!("Stage should end with error:{stage:?}")
             };
             let expected = match stage {
                 Stage::Update => Effect::Unknown,
@@ -291,13 +292,13 @@ impl ReadOperation<Schema> for LocalOutput {
     }
 }
 #[test]
-fn 非发送上下文及输出通过真实读取留在调用线程() {
+fn non_sending_context_and_output_remain_in_the_calling_thread_via_real_reads() {
     let store = store();
     let mut s = store.start_session(SessionOptions::default()).unwrap();
     s.upsert(Serial(0), request())
         .map_err(|r| r.reason)
         .unwrap();
-    let output = Rc::new("本线程结果".to_string());
+    let output = Rc::new("Results of this thread".to_string());
     let Submission::Ready(Ok(raster::api::completion::Outcome::Success(result))) = s
         .read(
             Serial(1),
@@ -307,7 +308,7 @@ fn 非发送上下文及输出通过真实读取留在调用线程() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("预期读取成功")
+        panic!("Expected read success")
     };
     assert!(Rc::ptr_eq(&output, &result));
 }

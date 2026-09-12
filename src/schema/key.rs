@@ -1,13 +1,13 @@
-//! 稳定哈希与显式键编码；不能用默认 Hash 的平台相关输入冻结格式。
+//! Stable hashing versus explicit key encoding;Cannot use default Hash platform-dependent input freeze format.
 use crate::types::{Error, FormatId, HashDescriptor, KeyHash};
 use std::borrow::Borrow;
 
-/// 编码是规范字节表示；相等的键必须具有相同编码和哈希。
-/// 编码失败不得部分修改输出，输出长度必须恰好匹配 encoded_len。
-/// 编码版本、算法或种子变化必须在读取记录前拒绝；不能静默重建索引掩盖变化。
+/// The encoding is the canonical byte representation;Equal keys must have the same encoding and hash.
+/// Encoding failure must not partially modify the output,The output length must match exactly encoded_len.
+/// encoded version,Algorithm or seed changes must be rejected before records can be read;Cannot silently rebuild indexes to mask changes.
 pub trait KeyCodec: Send + Sync + 'static {
     type Key: ?Sized;
-    /// 拥有型键必须能借用为相同逻辑键，供恢复和扫描重新计算稳定哈希。
+    /// Owning keys must be borrowable as the same logical key,For recovery and scanning to recalculate stable hashes.
     type OwnedKey: Borrow<Self::Key> + 'static;
     fn format_id(&self) -> FormatId;
     fn hash_descriptor(&self) -> HashDescriptor;
@@ -17,19 +17,19 @@ pub trait KeyCodec: Send + Sync + 'static {
     fn equals_encoded(&self, key: &Self::Key, encoded: &[u8]) -> Result<bool, Error>;
     fn decode_owned(&self, encoded: &[u8]) -> Result<Self::OwnedKey, Error>;
 
-    /// 检查持久材料声明的键语义；恢复入口在解释记录前验证格式、算法与种子。
+    /// Check the key semantics of persistent material declarations;Recovery portal verifies format before interpreting records,Algorithms and seeds.
     fn validate_identity(&self, format: FormatId, hash: &HashDescriptor) -> Result<(), Error> {
         if self.format_id() != format {
-            return Err(Error::InvalidFormat("键编码版本不匹配"));
+            return Err(Error::InvalidFormat("Key encoding version mismatch"));
         }
         if &self.hash_descriptor() != hash {
-            return Err(Error::InvalidFormat("键哈希算法或种子不匹配"));
+            return Err(Error::InvalidFormat("Key hash algorithm or seed mismatch"));
         }
         Ok(())
     }
 }
 
-/// 从持久字节取得规范键与完整哈希；结果只能用于已经验证过 Schema 身份的材料。
+/// Get canonical key and full hash from persistent bytes;Results can only be used for verified Schema identity material.
 pub(crate) fn decode_canonical<K: KeyCodec>(
     codec: &K,
     encoded: &[u8],
@@ -38,7 +38,9 @@ pub(crate) fn decode_canonical<K: KeyCodec>(
         let owned = codec.decode_owned(encoded)?;
         let key = owned.borrow();
         if codec.encoded_len(key)? as usize != encoded.len() {
-            return Err(Error::InvalidFormat("解码键长度不符合规范编码"));
+            return Err(Error::InvalidFormat(
+                "Decoding key length does not conform to specification encoding",
+            ));
         }
         let mut canonical = Vec::new();
         canonical
@@ -47,12 +49,14 @@ pub(crate) fn decode_canonical<K: KeyCodec>(
         canonical.resize(encoded.len(), 0);
         codec.encode(key, &mut canonical)?;
         if canonical != encoded || !codec.equals_encoded(key, encoded)? {
-            return Err(Error::InvalidFormat("恢复键不是规范编码"));
+            return Err(Error::InvalidFormat(
+                "Recovery key is not canonical encoding",
+            ));
         }
         let hash = codec.hash(key);
         Ok((owned, hash))
     }))
-    .map_err(|_| Error::InvalidState("恢复键解码或哈希恐慌"))?
+    .map_err(|_| Error::InvalidState("Recovery key decoding or hash panic"))?
 }
 
 #[cfg(test)]
@@ -60,7 +64,7 @@ mod tests {
     use super::*;
     use crate::schema::builtin::{ByteKey, U64Key};
     #[test]
-    fn 恢复键规范往返得到完整稳定哈希() {
+    fn recovery_key_canonical_round_trip_to_get_full_stable_hash() {
         for bytes in [vec![], vec![0, 255, 128], vec![42; 65537]] {
             let (owned, hash) = decode_canonical(&ByteKey, &bytes).unwrap();
             assert_eq!(owned, bytes);
@@ -97,7 +101,7 @@ mod tests {
             U64Key.hash_descriptor()
         }
         fn hash(&self, key: &u64) -> KeyHash {
-            assert!(!self.panic_hash, "注入恢复哈希恐慌");
+            assert!(!self.panic_hash, "Inject recovery hash panic");
             U64Key.hash(key)
         }
         fn encoded_len(&self, key: &u64) -> Result<u32, Error> {
@@ -115,7 +119,7 @@ mod tests {
         }
     }
     #[test]
-    fn 自定义拥有键可借用且非规范别名和哈希恐慌拒绝() {
+    fn custom_owned_keys_are_borrowable_and_non_canonical_aliases_and_hash_panic_rejects() {
         let bytes = 3u64.to_le_bytes();
         let codec = Codec {
             alias: false,

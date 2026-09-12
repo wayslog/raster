@@ -1,4 +1,4 @@
-//! 单个不可覆盖材料文件的写入与文件同步；目录同步和提交发布由上层负责。
+//! Writing of a single non-overwriteable material file is synchronized with the file;Directory synchronization and submission publishing are the responsibility of the upper layer.
 use crate::{device::*, storage::SegmentedStorage, types::*};
 use std::{path::PathBuf, sync::Arc};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub(crate) struct WrittenMaterial {
     pub bytes: u64,
     pub checksum: u32,
 }
-/// 只有成功写入、同步并关闭后才能从材料任务取得的文件凭据。
+/// Only successful writes,File credentials obtained from material tasks only after synchronization and closing.
 pub(crate) struct SyncedFile {
     pub(super) owner: Arc<()>,
     pub(super) token: CheckpointToken,
@@ -38,7 +38,7 @@ pub(crate) struct MaterialWrite {
     result: Option<Result<WrittenMaterial, Error>>,
 }
 impl MaterialWrite {
-    /// 父目录须先由检查点任务创建；这里只建立新文件，不能覆盖既有材料。
+    /// The parent directory must first be created by the checkpoint task;Only new files will be created here,Cannot cover existing materials.
     pub fn new(
         storage: &SegmentedStorage,
         token: CheckpointToken,
@@ -54,7 +54,7 @@ impl MaterialWrite {
         if chunk == 0 || !caps.memory_alignment.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "checkpoint.chunk",
-                reason: "块大小须非零且设备内存对齐有效",
+                reason: "Block size must be non-zero and device memory alignment must be valid",
             });
         }
         let path = storage.checkpoint_path(token, name)?;
@@ -83,7 +83,9 @@ impl MaterialWrite {
         if Arc::ptr_eq(&self.owner, &storage.identity) {
             Ok(())
         } else {
-            Err(Error::InvalidState("材料写入属于其他存储"))
+            Err(Error::InvalidState(
+                "Material writing belongs to other storage",
+            ))
         }
     }
     fn fail(&mut self, error: Error) {
@@ -92,10 +94,10 @@ impl MaterialWrite {
             self.stage = Stage::Close;
         } else {
             self.stage = Stage::Done;
-            self.result = Some(Err(self.failure.take().expect("保存首个错误")));
+            self.result = Some(Err(self.failure.take().expect("Save first error")));
         }
     }
-    /// Busy 可以稍后重试；其他拒绝转入关闭清理，由调用者继续驱动至结果终结。
+    /// Busy You can try again later;Other rejections transfer to close cleanup,Continue to be driven by the caller until the result is completed.
     pub fn submit_next(&mut self, storage: &SegmentedStorage) -> Result<Option<IoId>, Error> {
         self.check_owner(storage)?;
         if self.pending.is_some() || self.stage == Stage::Done {
@@ -123,16 +125,16 @@ impl MaterialWrite {
                     .as_mut_slice()
                     .copy_from_slice(&self.bytes[self.cursor..self.cursor + length]);
                 IoOperation::Write {
-                    file: self.file.expect("材料已打开"),
+                    file: self.file.expect("Material has been opened"),
                     offset: self.cursor as u64,
                     buffer,
                 }
             }
             Stage::Sync => IoOperation::SyncFile {
-                file: self.file.expect("材料已打开"),
+                file: self.file.expect("Material has been opened"),
                 metadata: true,
             },
-            Stage::Close => IoOperation::Close(self.file.expect("关闭时保留句柄")),
+            Stage::Close => IoOperation::Close(self.file.expect("Keep handle when closing")),
             Stage::Done => return Ok(None),
         };
         match storage.device.submit(IoRequest {
@@ -152,7 +154,10 @@ impl MaterialWrite {
             },
         }
     }
-    #[allow(clippy::result_large_err, reason = "错误身份必须归还原完成与缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Misidentification must be returned to original completion with buffering"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -164,15 +169,17 @@ impl MaterialWrite {
         {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("材料完成身份不匹配"),
+                reason: Error::InvalidState("Material completion identity mismatch"),
             });
         }
-        let (_, length) = self.pending.take().expect("在途身份已匹配");
+        let (_, length) = self.pending.take().expect("In-transit identity matched");
         match (self.stage, completion.result) {
             (Stage::Open, Ok(IoOutcome::Opened(file))) => {
                 self.file = Some(file);
                 if completion.buffer.is_some() {
-                    self.fail(Error::InvalidState("打开材料返回了意外缓冲"));
+                    self.fail(Error::InvalidState(
+                        "Opening material returned an unexpected buffer",
+                    ));
                 } else {
                     self.stage = if self.bytes.is_empty() {
                         Stage::Sync
@@ -187,7 +194,9 @@ impl MaterialWrite {
                 } else if written > length
                     || completion.buffer.as_ref().is_none_or(|b| b.len() != length)
                 {
-                    self.fail(Error::InvalidState("材料短写长度或缓冲不匹配"));
+                    self.fail(Error::InvalidState(
+                        "Material short length or buffer mismatch",
+                    ));
                 } else {
                     self.cursor += written;
                     if self.cursor == self.bytes.len() {
@@ -207,7 +216,7 @@ impl MaterialWrite {
                 });
             }
             (_, Err(error)) => self.fail(error),
-            _ => self.fail(Error::InvalidState("材料完成类型错误")),
+            _ => self.fail(Error::InvalidState("Wrong material completion type")),
         }
         Ok(())
     }
@@ -224,7 +233,7 @@ impl MaterialWrite {
     pub fn take_result(&mut self) -> Option<Result<WrittenMaterial, Error>> {
         self.result.take()
     }
-    /// Drop 不发起阻塞 I/O；拥有者须保留任务至完成，或由设备 shutdown 接管资源。
+    /// Drop Do not initiate blocking I/O;The owner must keep the task until it is completed,or by device shutdown Take over resources.
     pub fn has_resources(&self) -> bool {
         self.pending.is_some() || self.file.is_some()
     }
@@ -245,7 +254,7 @@ mod tests {
         fail: Option<&'static str>,
         reject: bool,
     }
-    // 仅模拟完成顺序和错误，不提供持久化证据；另有真实文件后端验收。
+    // Only simulation of completion order and errors,No evidence of persistence is provided;There is also real file back-end acceptance.
     #[derive(Default)]
     struct ScriptDevice(Mutex<State>);
     impl Device for ScriptDevice {
@@ -286,7 +295,7 @@ mod tests {
                 IoOperation::Write { .. } => "write",
                 IoOperation::SyncFile { .. } => "sync",
                 IoOperation::Close(_) => "close",
-                _ => panic!("材料写入不应提交其他操作"),
+                _ => panic!("Material writing should not be submitted for other operations"),
             };
             state.events.push(kind);
             let fail = state.fail == Some(kind);
@@ -382,13 +391,14 @@ mod tests {
                     .map_err(|r| r.reason)
                     .unwrap(),
                 Ok(None) | Err(Error::Busy) => {}
-                Err(error) => panic!("任务推进失败：{error}"),
+                Err(error) => panic!("Task advancement failed:{error}"),
             }
         }
-        panic!("材料任务没有终结")
+        panic!("The material task is not over")
     }
     #[test]
-    fn 短写从实际位置继续且只在同步关闭后返回固定校验值() {
+    fn the_short_write_continues_from_the_actual_position_and_returns_a_fixed_checksum_only_after_synchronization_is_turned_off()
+     {
         let (device, storage, mut task) = fixture();
         device.0.lock().unwrap().short = Some(2);
         let receipt = run(&storage, &mut task).unwrap();
@@ -413,7 +423,8 @@ mod tests {
         assert!(task.submit_next(&storage).unwrap().is_none());
     }
     #[test]
-    fn 各阶段失败不会自动重试或伪造成功且写同步失败会关闭() {
+    fn failures_in_each_stage_will_not_be_automatically_retried_or_faked_successfully_and_write_synchronization_failure_will_be_closed()
+     {
         for stage in ["open", "write", "sync", "close"] {
             let (device, storage, mut task) = fixture();
             device.0.lock().unwrap().fail = Some(stage);
@@ -432,7 +443,7 @@ mod tests {
         }
     }
     #[test]
-    fn 零写终结为错误且繁忙拒绝保持尚未接受的状态() {
+    fn zero_writes_terminate_as_errors_and_busy_rejections_remain_unaccepted() {
         let (device, storage, mut task) = fixture();
         device.0.lock().unwrap().reject = true;
         assert!(matches!(task.submit_next(&storage), Err(Error::Busy)));
@@ -449,7 +460,8 @@ mod tests {
         assert!(!task.has_resources());
     }
     #[test]
-    fn 错路由与错存储完成归还原缓冲且重复完成不推进() {
+    fn wrong_routing_and_wrong_storage_completion_are_restored_to_the_original_buffer_and_repeated_completion_is_not_advanced()
+     {
         let (device, storage, mut task) = fixture();
         task.submit_next(&storage).unwrap();
         task.accept(&storage, one(&*device))
@@ -483,7 +495,8 @@ mod tests {
         assert_eq!(device.0.lock().unwrap().bytes, b"123456789");
     }
     #[test]
-    fn 空文件仍同步且不支持同步的设备在接受前拒绝() {
+    fn empty_files_are_still_synced_and_devices_that_dont_support_sync_are_rejected_before_accepting()
+     {
         let (device, storage, _) = fixture();
         let mut task = MaterialWrite::new(
             &storage,
@@ -524,7 +537,8 @@ mod tests {
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn 原生材料分块同步关闭后可重读且重复新建不覆盖() {
+    fn original_materials_can_be_re_read_after_block_synchronization_is_turned_off_and_repeated_creation_will_not_overwrite_them()
+     {
         struct Directory(PathBuf);
         impl Drop for Directory {
             fn drop(&mut self) {
@@ -534,7 +548,10 @@ mod tests {
         fn ready(device: &dyn Device) -> IoCompletion {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             loop {
-                assert!(std::time::Instant::now() < deadline, "原生材料 I/O 超时");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "virgin materials I/O timeout"
+                );
                 let mut out = vec![];
                 device.poll(PollBudget::default(), &mut out).unwrap();
                 if !out.is_empty() {
@@ -598,7 +615,7 @@ mod tests {
                         .map_err(|r| r.reason)
                         .unwrap(),
                     Ok(None) | Err(Error::Busy) => std::thread::yield_now(),
-                    Err(error) => panic!("材料推进错误：{error}"),
+                    Err(error) => panic!("Material advance error:{error}"),
                 }
             };
             if duplicate {

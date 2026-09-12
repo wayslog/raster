@@ -1,4 +1,4 @@
-//! 键语义与值布局为共享策略；用户每次操作的上下文属于会话。
+//! Key semantics and value layout are shared strategies;The context of each user operation belongs to the session.
 pub mod builtin;
 pub mod key;
 pub mod value;
@@ -16,9 +16,9 @@ pub type KeyOf<S> = <<S as Schema>::Key as KeyCodec>::Key;
 pub type OwnedKeyOf<S> = <<S as Schema>::Key as KeyCodec>::OwnedKey;
 pub type OwnedValueOf<S> = <<S as Schema>::Value as ValueLayout>::Owned;
 
-/// 引擎内共享 schema 的值布局适配，避免要求用户布局实现 Clone。
+/// Shared within the engine schema value layout adaptation,Avoid requiring user layout implementation Clone.
 pub(crate) struct SharedValue<S: Schema>(pub std::sync::Arc<S>);
-// SAFETY: 所有许可原样交给同一个 schema 的专家布局，不改变视图寿命或并发承诺。
+// SAFETY: All licenses are given intact to the same schema expert layout,Does not change view lifetime or concurrency commitments.
 unsafe impl<S: Schema> ValueLayout for SharedValue<S> {
     type Owned = OwnedValueOf<S>;
     type Read<'a> = <S::Value as ValueLayout>::Read<'a>;

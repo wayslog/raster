@@ -1,4 +1,5 @@
-//! 每桶独立控制锁实现条件发布；同 tag 共用链头，键相等由日志链校验。
+//! Each bucket independently controls its lock for conditional release. A same-tag
+//! shared chain head is checked for key equality through the log chain.
 use crate::{
     config::IndexConfig,
     sync::{AtomicU64, Mutex, PUBLISH_ORDER},
@@ -18,13 +19,13 @@ pub(crate) struct EntrySnapshot {
     pub bucket: usize,
     pub tag: u16,
     pub head: IndexHead,
-    /// 已占用标签但尚无日志地址的槽仍可被盲删找到。
+    /// Slots that have occupied labels but do not yet have log addresses can still be found by blind deletion.
     pub present: bool,
     pub table_generation: Generation,
     revision: u64,
     hash: Option<KeyHash>,
 }
-// 完整哈希只用于迁移后重定位，不改变同一物理条目的相等语义。
+// The full hash is only used for post-migration relocations,Does not change the equality semantics of the same physical entry.
 impl PartialEq for EntrySnapshot {
     fn eq(&self, other: &Self) -> bool {
         self.owner == other.owner
@@ -51,10 +52,14 @@ impl IndexImage {
             .map_err(|_| Error::OutOfMemory)?;
         for entry in &self.entries {
             if Some(entry.owner) != owner || entry.table_generation != self.generation {
-                return Err(Error::InvalidState("索引映像包含不同身份或代次"));
+                return Err(Error::InvalidState(
+                    "Index image contains different identities or generations",
+                ));
             }
             let IndexHead::Log(address) = entry.head else {
-                return Err(Error::InvalidState("持久化索引只允许日志地址"));
+                return Err(Error::InvalidState(
+                    "Persistent indexes only allow log addresses",
+                ));
             };
             entries.push(crate::format::IndexEntry {
                 bucket: entry.bucket as u64,
@@ -78,7 +83,7 @@ pub(crate) enum PublishResult {
         not(test),
         expect(
             dead_code,
-            reason = "引擎冲突后重新准备索引入口；协议测试检查本次冲突返回的完整快照"
+            reason = "Re-prepare index entry after engine conflict;The protocol test checks the complete snapshot returned by this conflict"
         )
     )]
     Conflict(EntrySnapshot),
@@ -91,7 +96,7 @@ struct Entry {
 }
 struct Bucket {
     blocks: Vec<[Option<Entry>; SLOTS]>,
-    // 即使 GC 释放了全部条目，也保留该桶单调修订，防止空槽再次出现时的 ABA。
+    // Even if GC All items released,Also keep the bucket monotonic revisions,Prevent empty slots from appearing again ABA.
     revision: u64,
     empty_revision: u64,
 }
@@ -105,7 +110,7 @@ impl Table {
         if !config.buckets.is_power_of_two() {
             return Err(Error::InvalidConfig {
                 field: "index.buckets",
-                reason: "桶数量必须是非零二次幂",
+                reason: "The number of buckets must be a non-zero power of two",
             });
         }
         let owner = NEXT_INDEX
@@ -147,15 +152,15 @@ impl Table {
             hash: Some(hash),
         }
     }
-    /// 空链头同样返回带身份快照，供首次条件发布使用。
+    /// An empty link header also returns a snapshot with identity.,For use by first conditional release.
     pub fn prepare(&self, hash: KeyHash) -> Result<EntrySnapshot, Error> {
         let bucket = hash.0 as usize & (self.buckets.len() - 1);
         let entries = self.buckets[bucket]
             .lock()
-            .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+            .map_err(|_| Error::InvalidState("index_bucket_lock_poisoned"))?;
         Ok(self.entry(bucket, hash, &entries))
     }
-    /// 调用者先完成值初始化和日志发布；替换时还需持有源记录仲裁。
+    /// The caller first completes value initialization and log publishing;When replacing, you also need to hold the source record arbitration.
     pub fn compare_publish(
         &self,
         expected: EntrySnapshot,
@@ -173,7 +178,9 @@ impl Table {
             || expected.table_generation != self.generation
             || expected.bucket >= self.buckets.len()
         {
-            return Err(Error::InvalidState("索引快照身份或代次失效"));
+            return Err(Error::InvalidState(
+                "Index snapshot identity or generation invalid",
+            ));
         }
         match head {
             IndexHead::Log(a) => a.validate()?,
@@ -182,12 +189,12 @@ impl Table {
         }
         let mut bucket = self.buckets[expected.bucket]
             .lock()
-            .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+            .map_err(|_| Error::InvalidState("index_bucket_lock_poisoned"))?;
         let current = self.entry(
             expected.bucket,
-            expected
-                .hash
-                .ok_or(Error::InvalidState("映像条目不作为发布许可"))?,
+            expected.hash.ok_or(Error::InvalidState(
+                "Image entries are not licensed as releases",
+            ))?,
             &bucket,
         );
         if current != expected {
@@ -204,7 +211,7 @@ impl Table {
                     break;
                 }
             }
-            // 移除条目后仍保留空槽历史，旧空快照不能越过一次插入再删除。
+            // Empty slot history retained after removing entries,Old empty snapshots cannot be inserted and deleted again.
             bucket.revision = revision;
             bucket.empty_revision = revision;
             return Ok(PublishResult::Published);
@@ -236,16 +243,18 @@ impl Table {
         bucket.revision = revision;
         Ok(PublishResult::Published)
     }
-    /// 逐桶模糊映像；不声称跨桶事务快照，缓存头须由上层规范化后再调用。
+    /// Bucket-by-bucket blur image;Do not claim cross-bucket transaction snapshots,The cache header must be normalized by the upper layer before calling.
     pub fn snapshot(&self) -> Result<IndexImage, Error> {
         let mut entries = Vec::new();
         for (number, mutex) in self.buckets.iter().enumerate() {
             let bucket = mutex
                 .lock()
-                .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+                .map_err(|_| Error::InvalidState("index_bucket_lock_poisoned"))?;
             for entry in bucket.blocks.iter().flatten().flatten() {
                 if matches!(entry.head, IndexHead::Cache(_)) {
-                    return Err(Error::InvalidState("持久化索引必须先规范化缓存地址"));
+                    return Err(Error::InvalidState(
+                        "Persistent indexes must first normalize cache addresses",
+                    ));
                 }
                 if entry.head != IndexHead::Empty {
                     entries.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
@@ -268,12 +277,14 @@ impl Table {
             entries,
         })
     }
-    /// 按持久条目构建新运行期身份；全部成功后替换，失败不改变旧索引。
-    /// 桶数量必须与恢复配置一致，不能按未可信磁盘字段任意扩大分配。
+    /// Build new runtime identity from persistent entries;Replace after all success,Failure does not change the old index.
+    /// The number of buckets must be consistent with the recovery configuration,Unable to arbitrarily expand allocation by untrusted disk fields.
     pub fn restore(&mut self, image: crate::format::IndexSnapshot) -> Result<(), Error> {
         image.validate()?;
         if usize::try_from(image.buckets).ok() != Some(self.buckets.len()) {
-            return Err(Error::InvalidFormat("恢复索引桶数量与配置不匹配"));
+            return Err(Error::InvalidFormat(
+                "The number of recovery index buckets does not match the configuration",
+            ));
         }
         let mut restored = Self::new(IndexConfig {
             buckets: self.buckets.len(),
@@ -282,7 +293,7 @@ impl Table {
         for entry in image.entries {
             let bucket = restored.buckets[entry.bucket as usize]
                 .get_mut()
-                .map_err(|_| Error::InvalidState("恢复索引桶锁中毒"))?;
+                .map_err(|_| Error::InvalidState("Recovery index bucket lock poisoning"))?;
             if bucket
                 .blocks
                 .last()
@@ -297,10 +308,10 @@ impl Table {
             let slot = bucket
                 .blocks
                 .last_mut()
-                .expect("已分配溢出块")
+                .expect("Overflow block allocated")
                 .iter_mut()
                 .find(|entry| entry.is_none())
-                .expect("末块尚有空槽");
+                .expect("There are still empty slots in the last block");
             *slot = Some(Entry {
                 tag: entry.tag,
                 head: IndexHead::Log(entry.address),
@@ -323,7 +334,8 @@ mod tests {
         MemIndex::new(IndexConfig { buckets: 2 }).unwrap()
     }
     #[test]
-    fn 持久映像不含进程身份修订号且溢出桶顺序规范化() {
+    fn persistent_images_do_not_contain_process_identity_revision_numbers_and_overflow_bucket_order_is_normalized()
+     {
         let first = index();
         let second = index();
         for tag in 0..30 {
@@ -354,7 +366,8 @@ mod tests {
         }
     }
     #[test]
-    fn 恢复索引重建溢出桶与新身份且旧快照不能发布() {
+    fn recovery_index_rebuilds_the_overflow_bucket_with_a_new_identity_and_the_old_snapshot_cannot_be_published()
+     {
         let mut index = index();
         let old = index.prepare(KeyHash(0)).unwrap();
         let image = crate::format::IndexSnapshot {
@@ -401,7 +414,8 @@ mod tests {
         ));
     }
     #[test]
-    fn 无效恢复映像不改变已有索引且空映像可恢复() {
+    fn an_invalid_recovery_image_does_not_change_existing_indexes_and_an_empty_image_can_be_recovered()
+     {
         let mut index = index();
         let old = index.prepare(KeyHash(0)).unwrap();
         index
@@ -434,7 +448,7 @@ mod tests {
         );
     }
     #[test]
-    fn 持久映像拒绝混合身份代次缓存头和重复条目() {
+    fn persistent_image_rejects_mixed_identity_generation_cache_headers_and_duplicate_entries() {
         let first = index();
         for tag in 0..2 {
             let entry = first.prepare(KeyHash(tag << 48)).unwrap();
@@ -456,7 +470,7 @@ mod tests {
         assert!(image.encode().is_err());
     }
     #[test]
-    fn 真实键编码碰撞沿日志链查找不会串键() {
+    fn real_key_encoding_collisions_along_the_log_chain_lookup_will_not_string_keys() {
         use crate::{
             config::LogConfig,
             log::HybridLog,
@@ -496,7 +510,7 @@ mod tests {
             .unwrap();
         for (key, expected) in [(a, 17), (b, 29)] {
             let IndexHead::Log(head) = index.locate(codec.hash(&key)).unwrap().unwrap().head else {
-                panic!("应为主日志链头")
+                panic!("Should be the main log chain head")
             };
             assert_eq!(
                 log.find(&codec, &key, Some(head))
@@ -514,7 +528,7 @@ mod tests {
         );
     }
     #[test]
-    fn 空键变长键和损坏编码有明确结果() {
+    fn there_are_clear_results_for_changing_empty_keys_to_long_keys_and_corrupted_encodings() {
         use crate::{
             config::LogConfig,
             log::HybridLog,
@@ -556,7 +570,7 @@ mod tests {
         assert!(log.reserve_record(&[0; 600], None, 3).is_err());
     }
     #[test]
-    fn 已初始化日志记录发布与失败发布清理() {
+    fn initialized_logging_release_and_failed_release_cleanup() {
         use crate::{config::LogConfig, log::HybridLog, schema::builtin::AtomicU64Value};
         let log = HybridLog::new(
             LogConfig {
@@ -581,7 +595,7 @@ mod tests {
             .compare_publish(expected, IndexHead::Log(losing))
             .unwrap()
         else {
-            panic!("旧快照不得发布成功")
+            panic!("Old snapshots must not be published successfully")
         };
         log.retire(losing).unwrap();
         assert!(log.lease(losing).is_err());
@@ -589,7 +603,8 @@ mod tests {
         assert_eq!(log.lease(first).unwrap().read(|v| v).unwrap(), 7);
     }
     #[test]
-    fn 同桶同标签的不同哈希共用待查键链() {
+    fn different_hashes_in_the_same_bucket_and_the_same_label_share_the_key_chain_to_be_looked_up()
+    {
         let index = index();
         let a = KeyHash(3 << 48);
         let b = KeyHash((3 << 48) | 2);
@@ -598,10 +613,10 @@ mod tests {
             .compare_publish(entry, IndexHead::Log(LogAddress(8)))
             .unwrap();
         assert_eq!(index.prepare(b).unwrap(), index.prepare(a).unwrap());
-        // 索引不据 tag 宣称键相等；P3 日志链逐记录用 KeyCodec 比较完整编码。
+        // Index is not based on tag Declare key equality;P3 Log chain is used to record one by one KeyCodec Compare complete encoding.
     }
     #[test]
-    fn 桶溢出与标签独立寻址() {
+    fn bucket_overflow_and_label_independent_addressing() {
         let index = index();
         for tag in 0..30 {
             let hash = KeyHash(tag << 48);
@@ -628,7 +643,8 @@ mod tests {
         assert_eq!(index.snapshot().unwrap().entries.len(), 30);
     }
     #[test]
-    fn 冲突返回新快照且地址回到原值不能绕过修订号() {
+    fn if_the_conflict_returns_a_new_snapshot_and_the_address_returns_to_the_original_value_the_revision_number_cannot_be_bypassed()
+     {
         let index = index();
         let empty = index.prepare(KeyHash(1)).unwrap();
         index
@@ -668,7 +684,8 @@ mod tests {
         ));
     }
     #[test]
-    fn 身份代次和非法地址拒绝且缓存不能进入映像() {
+    fn identity_generations_and_illegal_addresses_are_rejected_and_the_cache_cannot_enter_the_image()
+     {
         let index = index();
         let other = MemIndex::new(IndexConfig { buckets: 2 }).unwrap();
         let entry = index.prepare(KeyHash(0)).unwrap();
@@ -687,7 +704,7 @@ mod tests {
         assert!(index.snapshot().is_err());
     }
     #[test]
-    fn 同一快照并发发布只能有一个成功者() {
+    fn there_can_only_be_one_winner_for_concurrent_publishing_of_the_same_snapshot() {
         let index = index();
         let entry = index.prepare(KeyHash(1)).unwrap();
         let barrier = std::sync::Barrier::new(2);

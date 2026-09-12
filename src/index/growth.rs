@@ -1,4 +1,4 @@
-//! 逐桶迁移期间路由到唯一可写表；旧表由调用者在 epoch 安全后释放。
+//! Routing to only writable table during bucket-by-bucket migration;The old table was created by the caller in epoch Release after safety.
 use super::*;
 use std::sync::{Arc, RwLock};
 
@@ -52,7 +52,7 @@ impl MemIndex {
         Ok(self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?
             .active
             .owner)
     }
@@ -62,7 +62,7 @@ impl MemIndex {
         let state = self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         state.route(hash).prepare(hash)
     }
     #[cfg(test)]
@@ -77,10 +77,12 @@ impl MemIndex {
     ) -> Result<PublishResult, Error> {
         self.compare_publish_mode(expected, head, false)
     }
-    /// RMW 与上游 FindOrCreateEntry 对齐；空地址槽不含值，仍参与后续盲删。
+    /// RMW with upstream FindOrCreateEntry Alignment;Empty address slot contains no value,Still participating in subsequent blind deletions.
     pub fn reserve_empty(&self, expected: EntrySnapshot) -> Result<PublishResult, Error> {
         if expected.present {
-            return Err(Error::InvalidState("不能把已占用索引槽改成空预留"));
+            return Err(Error::InvalidState(
+                "Cannot change occupied index slot to empty reservation",
+            ));
         }
         self.compare_publish_mode(expected, IndexHead::Empty, true)
     }
@@ -93,16 +95,18 @@ impl MemIndex {
         let state = self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
-        let hash = expected
-            .hash
-            .ok_or(Error::InvalidState("映像条目不作为发布许可"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
+        let hash = expected.hash.ok_or(Error::InvalidState(
+            "Image entries are not licensed as releases",
+        ))?;
         let table = state.route(hash);
         if expected.owner != table.owner
             || expected.tag != hash.tag()
             || expected.table_generation > table.generation
         {
-            return Err(Error::InvalidState("索引快照身份或代次失效"));
+            return Err(Error::InvalidState(
+                "Index snapshot identity or generation invalid",
+            ));
         }
         match head {
             IndexHead::Log(address) => address.validate()?,
@@ -145,7 +149,7 @@ impl MemIndex {
             for bucket in &table.buckets {
                 let bucket = bucket
                     .lock()
-                    .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+                    .map_err(|_| Error::InvalidState("index_bucket_lock_poisoned"))?;
                 counts.push(bucket.blocks.iter().flatten().flatten().count() as u64);
             }
             Ok(crate::diagnostics::IndexTableDiagnostics {
@@ -156,7 +160,7 @@ impl MemIndex {
         let state = self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         Ok((
             table(&state.active)?,
             state
@@ -172,18 +176,18 @@ impl MemIndex {
         let state = self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         if state.growing.is_some() {
             return Err(Error::Busy);
         }
         Ok(state.active.buckets.len())
     }
-    /// 逻辑 begin 发布后逐桶清除旧链头；调用者先排除扩容并规范化缓存头。
+    /// logic begin Clear old chain heads bucket by bucket after release;The caller first excludes expansion and normalizes cache headers.
     pub fn clean_bucket(&self, bucket: usize, begin: LogAddress) -> Result<usize, Error> {
         let state = self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         if state.growing.is_some() {
             return Err(Error::Busy);
         }
@@ -193,7 +197,7 @@ impl MemIndex {
         let state = self
             .state
             .read()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         if state.growing.is_some() {
             return Err(Error::Busy);
         }
@@ -203,7 +207,7 @@ impl MemIndex {
         let state = self
             .state
             .get_mut()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         if state.growing.is_some() || state.retired.is_some() {
             return Err(Error::Busy);
         }
@@ -218,7 +222,7 @@ impl MemIndex {
         let mut state = self
             .state
             .write()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         if state.growing.is_some() || state.retired.is_some() {
             return Err(Error::Busy);
         }
@@ -249,18 +253,18 @@ impl MemIndex {
             complete: false,
         })
     }
-    /// 每个旧桶只迁移一次；复制两份链头，共享历史后缀，后续写入按新桶分流。
+    /// Each old bucket is migrated only once;Copy two copies of the link header,Shared history suffix,Subsequent writes are diverted to new buckets.
     pub fn grow_step(&self, budget: PollBudget) -> Result<GrowthProgress, Error> {
         let mut state = self
             .state
             .write()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         let State {
             active, growing, ..
         } = &mut *state;
         let growth = growing
             .as_mut()
-            .ok_or(Error::InvalidState("没有正在扩容的索引"))?;
+            .ok_or(Error::InvalidState("There are no indexes being expanded"))?;
         let old_buckets = active.buckets.len();
         for _ in 0..budget.0.get() {
             if growth.next == old_buckets {
@@ -268,7 +272,7 @@ impl MemIndex {
             }
             let source = active.buckets[growth.next]
                 .lock()
-                .map_err(|_| Error::InvalidState("索引桶锁中毒"))?;
+                .map_err(|_| Error::InvalidState("index_bucket_lock_poisoned"))?;
             if source
                 .blocks
                 .iter()
@@ -276,7 +280,9 @@ impl MemIndex {
                 .flatten()
                 .any(|entry| matches!(entry.head, IndexHead::Cache(_)))
             {
-                return Err(Error::InvalidState("扩容前须规范化缓存头"));
+                return Err(Error::InvalidState(
+                    "Cache headers must be normalized before expansion",
+                ));
             }
             let mut low = Vec::new();
             let mut high = Vec::new();
@@ -288,10 +294,10 @@ impl MemIndex {
             high.extend_from_slice(&source.blocks);
             let mut lower = growth.table.buckets[growth.next]
                 .lock()
-                .map_err(|_| Error::InvalidState("新索引桶锁中毒"))?;
+                .map_err(|_| Error::InvalidState("New index bucket lock poisoning"))?;
             let mut upper = growth.table.buckets[growth.next + old_buckets]
                 .lock()
-                .map_err(|_| Error::InvalidState("新索引桶锁中毒"))?;
+                .map_err(|_| Error::InvalidState("New index bucket lock poisoning"))?;
             lower.blocks = low;
             upper.blocks = high;
             lower.revision = source.revision;
@@ -308,23 +314,25 @@ impl MemIndex {
             complete: growth.next == old_buckets,
         };
         if result.complete {
-            let next = state.growing.take().expect("扩容存在").table;
+            let next = state.growing.take().expect("Expansion exists").table;
             state.retired = Some(std::mem::replace(&mut state.active, next));
         }
         Ok(result)
     }
-    /// 仅在对应 ReleaseIndex epoch 动作已安全交付后调用。
+    /// Only in correspondence ReleaseIndex epoch Called after the action has been safely delivered.
     pub fn release_retired(&self, generation: Generation) -> Result<(), Error> {
         let mut state = self
             .state
             .write()
-            .map_err(|_| Error::InvalidState("索引路由锁中毒"))?;
+            .map_err(|_| Error::InvalidState("Index route lock poisoning"))?;
         if state
             .retired
             .as_ref()
             .is_none_or(|old| old.generation != generation)
         {
-            return Err(Error::InvalidState("待回收索引代次不匹配"));
+            return Err(Error::InvalidState(
+                "The index generation to be recycled does not match",
+            ));
         }
         state.retired = None;
         Ok(())
@@ -338,7 +346,8 @@ mod tests {
         PollBudget(std::num::NonZeroUsize::new(1).unwrap())
     }
     #[test]
-    fn 逐桶迁移分流链头且旧快照重新定位后才能发布() {
+    fn migrate_the_offload_chain_head_bucket_by_bucket_and_relocate_the_old_snapshot_before_it_can_be_released()
+     {
         let index = MemIndex::new(IndexConfig { buckets: 2 }).unwrap();
         let low = KeyHash(7 << 48);
         let high = KeyHash((7 << 48) | 2);
@@ -362,7 +371,7 @@ mod tests {
             .compare_publish(stale, IndexHead::Log(LogAddress(20)))
             .unwrap()
         else {
-            panic!("旧表快照不能直接发布")
+            panic!("Old table snapshots cannot be published directly")
         };
         assert_eq!(current.bucket, 2);
         assert_eq!(current.table_generation, Generation(1));
@@ -393,7 +402,8 @@ mod tests {
         assert!(index.begin_growth().is_ok());
     }
     #[test]
-    fn 旧表在访问_epoch_释放动作交付后才能回收() {
+    fn the_old_table_is_being_accessed_epoch_the_release_action_cannot_be_recycled_until_it_is_delivered()
+     {
         use crate::epoch::{DeferredAction, EpochManager};
         let index = MemIndex::new(IndexConfig { buckets: 1 }).unwrap();
         let old = Arc::downgrade(&index.state.read().unwrap().active);
@@ -417,7 +427,8 @@ mod tests {
         epoch.unregister(participant).unwrap();
     }
     #[test]
-    fn 并发条件发布穿越逐桶迁移不会丢失最后链头() {
+    fn concurrent_conditional_release_traverses_bucket_by_bucket_migration_without_losing_the_last_link_head()
+     {
         let index = MemIndex::new(IndexConfig { buckets: 8 }).unwrap();
         let barrier = std::sync::Barrier::new(5);
         index.begin_growth().unwrap();
@@ -465,7 +476,7 @@ mod tests {
 mod gc_tests {
     use super::*;
     #[test]
-    fn 扩容复制桶修订历史并拒绝迁移期间清理() {
+    fn expand_replication_bucket_revision_history_and_reject_cleanup_during_migration() {
         let index = MemIndex::new(IndexConfig { buckets: 1 }).unwrap();
         let hash = KeyHash(7 << 48);
         let empty = index.prepare(hash).unwrap();
@@ -503,7 +514,8 @@ mod gc_tests {
         assert!(index.clean_bucket(2, LogAddress(8)).is_err());
     }
     #[test]
-    fn 不同标签普通发布不撤销另一空槽许可但回收会撤销() {
+    fn ordinary_publishing_of_different_tags_will_not_revoke_the_permission_of_another_empty_slot_but_recycling_will()
+     {
         let index = MemIndex::new(IndexConfig { buckets: 1 }).unwrap();
         let one = KeyHash(1 << 48);
         let two = KeyHash(2 << 48);

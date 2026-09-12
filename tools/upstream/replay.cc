@@ -1,4 +1,4 @@
-// 上游行为执行端：真实 FasterKv 数据路径、三种检查点、关闭、恢复及会话续接。
+// Upstream behavior execution end:true FasterKv data path,Three types of checkpoints,close,Recovery and session resumption.
 #include <algorithm>
 #include <iostream>
 #include <numeric>
@@ -19,29 +19,29 @@ class Replay {
   explicit Replay(std::function<std::unique_ptr<Store>()> factory):factory_(std::move(factory)),store_(factory_()) {}
   void run(const Trace& trace,const std::string& path,const Options& options) {
     std::ofstream output(path);
-    if(!output) throw std::runtime_error("无法创建结果文件");
+    if(!output) throw std::runtime_error("Unable to create results file");
     output<<"raster-results 1 "<<trace.seed<<'\n';
     for(size_t index=0;index<trace.steps.size();++index) {
       const auto& step=trace.steps[index];
       auto& session=sessions_[step.session];
       if(!session) session=std::make_unique<SessionWorker<Store>>(*store_,step.session);
       try {output<<step.session<<' '<<step.serial<<' '<<session->execute(step)<<'\n';}
-      catch(const std::exception& e){throw std::runtime_error("步骤 "+std::to_string(index)+"："+e.what());}
+      catch(const std::exception& e){throw std::runtime_error("step "+std::to_string(index)+":"+e.what());}
       if(options.split==index+1) {
         if constexpr(std::is_same_v<Store,DiskStore>) recover_boundary(options.checkpoint);
-        else throw std::runtime_error("Null 后端不支持检查点恢复");
+        else throw std::runtime_error("Null Backend does not support checkpoint recovery");
       }
     }
     output.close();
-    if(!output) throw std::runtime_error("结果文件写入失败");
+    if(!output) throw std::runtime_error("Result file writing failed");
     accumulate();
     const auto begin=store_->hlog.begin_address.load().control();
     const auto tail=store_->hlog.GetTailAddress().control();
     sessions_.clear();
-    std::cout<<"上游轨迹执行完成：种子 "<<trace.seed<<"，"<<trace.steps.size()<<" 次操作，Pending "
+    std::cout<<"Upstream trace execution completed:seeds "<<trace.seed<<","<<trace.steps.size()<<" operations,Pending "
       <<std::accumulate(pending_.begin(),pending_.end(),uint64_t{0})<<'\n';
-    std::cout<<"上游四操作 Pending：["<<pending_[0]<<','<<pending_[1]<<','<<pending_[2]<<','<<pending_[3]<<"]\n";
-    std::cout<<"上游日志边界：["<<begin<<','<<tail<<")，跨度 "<<tail-begin<<" 字节\n";
+    std::cout<<"Four upstream operations Pending:["<<pending_[0]<<','<<pending_[1]<<','<<pending_[2]<<','<<pending_[3]<<"]\n";
+    std::cout<<"upstream log boundary:["<<begin<<','<<tail<<"),span "<<tail-begin<<" bytes\n";
   }
  private:
   void accumulate() {
@@ -66,14 +66,14 @@ class Replay {
     std::vector<Guid> recovered;
     const auto status=store_->Recover(index,log,version,recovered);
     if(status!=Status::Ok || !version || recovered.size()!=identities.size())
-      throw std::runtime_error("上游恢复状态、版本或会话数量不符");
+      throw std::runtime_error("Upstream recovery status,Version or number of sessions does not match");
     for(const auto& entry:identities) {
       if(std::find(recovered.begin(),recovered.end(),entry.second.guid)==recovered.end())
-        throw std::runtime_error("上游恢复缺少原会话身份");
+        throw std::runtime_error("Upstream recovery missing original session identity");
       sessions_.emplace(entry.first,std::make_unique<SessionWorker<Store>>(*store_,entry.first,entry.second));
     }
-    std::cout<<"上游轨迹边界恢复通过：模式 "<<(kind=="pair"?"Index+Log":"Full")
-      <<"，"<<identities.size()<<" 个会话续接，版本 "<<version<<'\n';
+    std::cout<<"Upstream trajectory boundary recovery passes:mode "<<(kind=="pair"?"Index+Log":"Full")
+      <<","<<identities.size()<<" sessions_resumed,version "<<version<<'\n';
   }
   std::function<std::unique_ptr<Store>()> factory_;
   std::unique_ptr<Store> store_;
@@ -83,25 +83,25 @@ class Replay {
 }
 int main(int argc,char** argv) {
   using namespace comparison;
-  if(argc<3){std::cerr<<"用法：上游执行器 轨迹 结果 [--disk 全新目录] [--split 步数] [--checkpoint full|pair]\n";return 2;}
+  if(argc<3){std::cerr<<"Usage:upstream executor trajectory result [--disk Brand new catalog] [--split number of steps] [--checkpoint full|pair]\n";return 2;}
   try {
     Options options;
     for(int i=3;i<argc;i+=2) {
-      if(i+1>=argc) throw std::runtime_error("选项缺少值");
+      if(i+1>=argc) throw std::runtime_error("Option missing value");
       const std::string key=argv[i];
       if(key=="--disk") options.root=argv[i+1];
       else if(key=="--split") {options.split=number(argv[i+1]);options.split_set=true;}
       else if(key=="--checkpoint") {options.checkpoint=argv[i+1];options.kind_set=true;}
-      else throw std::runtime_error("未知执行器选项");
+      else throw std::runtime_error("Unknown executor option");
     }
     auto trace=decode(argv[1]);
-    if(options.checkpoint!="full" && options.checkpoint!="pair") throw std::runtime_error("未知检查点模式");
+    if(options.checkpoint!="full" && options.checkpoint!="pair") throw std::runtime_error("Unknown checkpoint mode");
     if((options.split_set && (!options.split || options.root.empty() || options.split>=trace.steps.size())) || (options.kind_set && !options.split_set))
-      throw std::runtime_error("恢复边界必须位于磁盘轨迹内部");
+      throw std::runtime_error("The recovery boundary must be inside the disk trace");
     if(!options.root.empty()) {
-      if(!std::filesystem::create_directory(options.root)) throw std::runtime_error("磁盘对照目录已经存在");
-      // 检查点把索引拆成 256 块，每块必须按 Linux 的 512 字节扇区对齐。
-      // 2048 个 64 字节桶满足该公开实现前提；纯轨迹保留原观察配置。
+      if(!std::filesystem::create_directory(options.root)) throw std::runtime_error("The disk comparison directory already exists");
+      // Checkpoints split the index into 256 block,Each block must be pressed Linux of 512 Byte sector alignment.
+      // 2048 a 64 Byte bucket meets this public implementation prerequisite;Pure trajectory retains original observation configuration.
       const uint64_t buckets=options.split ? 2048 : 128;
       Replay<DiskStore> runner([&options,buckets]{return std::make_unique<DiskStore>(buckets,256_MiB,options.root,0.4);});
       runner.run(trace,argv[2],options);
@@ -109,5 +109,5 @@ int main(int argc,char** argv) {
       Replay<NullStore> runner([]{return std::make_unique<NullStore>(128,1_GiB,"",0.9);});
       runner.run(trace,argv[2],options);
     }
-  } catch(const std::exception& e){std::cerr<<"上游对照失败："<<e.what()<<'\n';return 1;}
+  } catch(const std::exception& e){std::cerr<<"Upstream control failed:"<<e.what()<<'\n';return 1;}
 }

@@ -1,4 +1,4 @@
-//! 原子更新可共享，替换和普通字节访问必须独占；所有操作只尝试一次状态转换。
+//! Atomic updates are shareable,Replacement and normal byte access must be exclusive;All operations attempt only one state transition.
 use crate::{
     sync::{AtomicU64, PUBLISH_ORDER},
     types::Error,
@@ -25,7 +25,7 @@ pub(crate) struct SharedUpdatePermit<'a> {
     local: PhantomData<Rc<()>>,
 }
 impl MutationGate {
-    /// 只允许能安全并发访问的原子布局使用；不授予普通值的可变引用。
+    /// Only allow atomic layouts that can be accessed safely concurrently;Do not grant mutable references to ordinary values.
     pub fn try_update(&self) -> Result<SharedUpdatePermit<'_>, Error> {
         let state = self.state.load(PUBLISH_ORDER);
         if state >= EXCLUSIVE - 1 {
@@ -39,7 +39,7 @@ impl MutationGate {
             local: PhantomData,
         })
     }
-    /// 不支持持共享许可升级；读取普通字节、写入普通值及替换均走此入口。
+    /// Upgrading with a shared license is not supported;Read ordinary bytes,Use this entrance to write ordinary values and replace them..
     pub fn try_replace(&self) -> Result<ReplacementPermit<'_>, Error> {
         self.state
             .compare_exchange(0, EXCLUSIVE, PUBLISH_ORDER, PUBLISH_ORDER)
@@ -65,7 +65,7 @@ impl Drop for ReplacementPermit<'_> {
 mod tests {
     use super::*;
     #[test]
-    fn 共享更新互容但与替换互斥() {
+    fn shared_updates_are_mutually_compatible_but_mutually_exclusive_with_replace() {
         let gate = MutationGate::default();
         let a = gate.try_update().unwrap();
         let b = gate.try_update().unwrap();
@@ -80,20 +80,20 @@ mod tests {
         assert!(gate.try_replace().is_ok());
     }
     #[test]
-    fn 恐慌展开释放许可且遗忘不会开放仲裁() {
+    fn panic_unfolding_release_permission_and_forgetting_will_not_open_arbitration() {
         let gate = MutationGate::default();
         let result = std::panic::catch_unwind(|| {
             let _p = gate.try_replace().unwrap();
-            panic!("模拟用户恐慌");
+            panic!("Simulate user panic");
         });
         assert!(result.is_err());
         assert!(gate.try_update().is_ok());
         std::mem::forget(gate.try_update().unwrap());
         assert!(gate.try_replace().is_err());
-        // 此处仅验证仲裁许可释放；业务错误影响与引擎失败关闭仍由 P3 实现。
+        // Only the arbitration license release is verified here;The impact of business errors and engine failure are still caused by P3 realize.
     }
     #[test]
-    fn 真实线程的共享更新与替换不能重叠() {
+    fn shared_updates_and_replacements_of_real_threads_cannot_overlap() {
         let gate = MutationGate::default();
         let entered = std::sync::Barrier::new(2);
         let exit = std::sync::Barrier::new(2);
@@ -112,7 +112,7 @@ mod tests {
         assert!(gate.try_replace().is_ok());
     }
     #[test]
-    fn 更新计数上限不能变成独占标记() {
+    fn update_count_cap_cannot_be_turned_into_an_exclusive_tag() {
         let gate = MutationGate {
             state: AtomicU64::new(EXCLUSIVE - 1),
         };

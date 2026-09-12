@@ -1,4 +1,4 @@
-//! 用公开 Session/Ticket 驱动已淘汰记录读取，刷盘准备仍由内部测试接口完成。
+//! Use public Session/Ticket Driver has deprecated record reading,Flash preparation is still completed by the internal test interface.
 use crate::{
     RasterKV, Submission,
     api::{
@@ -123,7 +123,7 @@ fn setup() -> RasterKV<Schema> {
         })
         .unwrap();
     let IoOutcome::Opened(file) = complete(&*device).result.unwrap() else {
-        panic!("打开")
+        panic!("open")
     };
     store.inner.storage.bind(0, Generation(0), file).unwrap();
     store.inner.log.advance_read_only(LogAddress(4096)).unwrap();
@@ -155,7 +155,7 @@ fn setup() -> RasterKV<Schema> {
     store
 }
 #[test]
-fn 会话轮询隔离回调且结果预算在收取后释放() {
+fn session_polling_isolates_callbacks_and_results_budget_is_released_after_collection() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let a = Rc::new(Cell::new(0));
@@ -164,7 +164,7 @@ fn 会话轮询隔离回调且结果预算在收取后释放() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起");
+        panic!("should_pending");
     };
     let worker_store = store.clone();
     let second = crate::engine::session_actor::Actor::new(move || {
@@ -175,7 +175,7 @@ fn 会话轮询隔离回调且结果预算在收取后释放() {
             .map_err(|r| r.reason)
             .unwrap()
         else {
-            panic!("应挂起");
+            panic!("should_pending");
         };
         (second, tb, b)
     });
@@ -213,7 +213,8 @@ fn 会话轮询隔离回调且结果预算在收取后释放() {
     });
 }
 #[test]
-fn 丢弃票据仍执行读取而丢弃会话明确终结未执行请求() {
+fn discarding_tickets_still_performs_reads_while_discarding_sessions_explicitly_terminates_unexecuted_requests()
+ {
     let store = setup();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     let calls = Rc::new(Cell::new(0));
@@ -222,7 +223,7 @@ fn 丢弃票据仍执行读取而丢弃会话明确终结未执行请求() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     drop(ticket);
     for _ in 0..4 {
@@ -234,7 +235,7 @@ fn 丢弃票据仍执行读取而丢弃会话明确终结未执行请求() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     drop(session);
     assert!(matches!(
@@ -250,7 +251,8 @@ fn 丢弃票据仍执行读取而丢弃会话明确终结未执行请求() {
 }
 
 #[test]
-fn 公开写入轮询驱动自动刷盘且两页预算可读回多窗口数据() {
+fn public_write_polling_drives_automatic_disk_flushing_and_a_two_page_budget_to_read_back_multi_window_data()
+ {
     let mut config = Config::default();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 2;
@@ -302,7 +304,7 @@ fn 公开写入轮询驱动自动刷盘且两页预算可读回多窗口数据()
                         break;
                     }
                 }
-                assert!(done, "磁盘读取没有在预算内终结");
+                assert!(done, "Disk read did not end within budget");
             }
         }
     }
@@ -330,11 +332,12 @@ impl UpsertOperation<Schema> for CountedPut {
         &mut self,
         _: ValueUpdate<'_, Schema>,
     ) -> Result<UpdateDecision<u64>, Error> {
-        panic!("本测试只插入新键或替换已淘汰的冷键")
+        panic!("This test only inserts new keys or replaces obsolete cold keys")
     }
 }
 #[test]
-fn 容量不足的写入挂起且恢复后不重复调用替换回调() {
+fn insufficient_writes_are_suspended_and_the_replacement_callback_is_not_called_repeatedly_after_recovery()
+ {
     let mut config = Config::default();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 2;
@@ -378,7 +381,7 @@ fn 容量不足的写入挂起且恢复后不重复调用替换回调() {
                         break;
                     }
                 }
-                assert!(done, "等待空间的写入没有终结");
+                assert!(done, "Writes to waiting space are not finalized");
             }
         }
         assert_eq!(calls.get(), serial as usize + 1);
@@ -460,16 +463,17 @@ fn finish_number(session: &mut crate::Session<Schema>, submission: Submission<u6
                     break;
                 }
             }
-            result.expect("挂起更新未终结")
+            result.expect("Pending updates are not finalized")
         }
     };
     match result.unwrap() {
         Outcome::Success(value) => value,
-        _ => panic!("预期成功更新"),
+        _ => panic!("Expected successful update"),
     }
 }
 #[test]
-fn 冷键查询期间发生替换时先重查新值再计算() {
+fn when_substitution_occurs_during_cold_key_query_the_new_value_will_be_rechecked_before_calculation()
+ {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let second = crate::engine::session_actor::session(&store);
@@ -525,7 +529,8 @@ fn 冷键查询期间发生替换时先重查新值再计算() {
     assert_eq!(initials.get(), 0);
 }
 #[test]
-fn 读改写新建跨越容量窗口且两个冷键增量不会丢失() {
+fn read_modify_and_write_new_ones_across_the_capacity_window_and_the_two_cold_key_increments_will_not_be_lost()
+ {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let copies = Rc::new(Cell::new(0));
@@ -604,12 +609,13 @@ impl DeleteOperation<Schema> for Erase {
     type Output = u64;
     fn complete(self, _: DeleteOutcome) -> u64 {
         self.calls.set(self.calls.get() + 1);
-        assert!(!self.panic, "删除完成回调恐慌");
+        assert!(!self.panic, "Delete completion callback panic");
         self.key
     }
 }
 #[test]
-fn 冷键盲删后更新可见且强制墓碑可以等待空间() {
+fn after_cold_key_blind_deletion_the_update_is_visible_and_the_tombstone_is_forced_to_wait_for_space()
+ {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let second = crate::engine::session_actor::session(&store);
@@ -724,7 +730,8 @@ fn 冷键盲删后更新可见且强制墓碑可以等待空间() {
     });
 }
 #[test]
-fn 磁盘删除完成回调恐慌只终结一次且保留已生效墓碑() {
+fn the_disk_deletion_completion_callback_panic_only_ends_once_and_retains_the_effective_tombstone()
+{
     use crate::schema::KeyCodec;
     let store = setup();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
@@ -775,7 +782,7 @@ fn wait_deadline() -> Deadline {
     Deadline(std::time::Instant::now() + std::time::Duration::from_secs(5))
 }
 #[test]
-fn 等待超时保留请求且错会话不能推进票据() {
+fn the_wait_timed_out_to_retain_the_request_and_the_error_session_cannot_advance_the_ticket() {
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
     let other_store = setup();
@@ -788,7 +795,7 @@ fn 等待超时保留请求且错会话不能推进票据() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起");
+        panic!("should_pending");
     };
     assert!(matches!(
         other.wait(&mut ticket, wait_deadline()),
@@ -818,7 +825,7 @@ fn 等待超时保留请求且错会话不能推进票据() {
     other.close(wait_deadline()).unwrap();
 }
 #[test]
-fn 关闭超时后停止接受但仍可排空并在关闭后收取结果() {
+fn stop_accepting_after_closing_timeout_but_can_still_drain_and_collect_results_after_closing() {
     let store = setup();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     let calls = Rc::new(Cell::new(0));
@@ -827,7 +834,7 @@ fn 关闭超时后停止接受但仍可排空并在关闭后收取结果() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     assert!(matches!(
         session.close(Deadline(std::time::Instant::now())),
@@ -840,14 +847,14 @@ fn 关闭超时后停止接受但仍可排空并在关闭后收取结果() {
     );
     assert!(session.close(wait_deadline()).unwrap().drained);
     assert_eq!(calls.get(), 1);
-    // 已完成结果不因为等待截止时间已过而丢失。
+    // Completed results will not be lost because the waiting deadline has passed.
     assert!(
         matches!(session.wait(&mut ticket, Deadline(std::time::Instant::now())).unwrap(), Ok(Outcome::Success(value)) if *value==0)
     );
     assert!(session.close(wait_deadline()).unwrap().drained);
 }
 #[test]
-fn 单次排空报告剩余且截止时间排空不消费票据结果() {
+fn the_single_emptying_report_remains_and_the_expiration_time_does_not_consume_the_bill_results() {
     let store = setup();
     let mut session = store.start_session(SessionOptions::default()).unwrap();
     let calls = Rc::new(Cell::new(0));
@@ -869,7 +876,7 @@ fn 单次排空报告剩余且截止时间排空不消费票据结果() {
             break;
         }
     }
-    let mut ticket = ticket.expect("写满日志应挂起");
+    let mut ticket = ticket.expect("The log should be suspended when it is full.");
     assert!(matches!(
         session.complete_pending(WaitMode::Once).unwrap(),
         DrainReport::Pending(_)
@@ -891,7 +898,7 @@ fn 单次排空报告剩余且截止时间排空不消费票据结果() {
 }
 
 #[test]
-fn 设备延迟期间等待超时后仍可恢复完成() {
+fn recovery_can_still_be_completed_after_waiting_for_timeout_during_device_delay() {
     struct PausedDevice {
         inner: Arc<dyn Device>,
         paused: Arc<std::sync::atomic::AtomicBool>,
@@ -916,7 +923,7 @@ fn 设备延迟期间等待超时后仍可恢复完成() {
     }
     let mut store = setup();
     let paused = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let engine = Arc::get_mut(&mut store.inner).expect("测试会话已退出");
+    let engine = Arc::get_mut(&mut store.inner).expect("Test session exited");
     engine.storage.device = Arc::new(PausedDevice {
         inner: engine.storage.device.clone(),
         paused: paused.clone(),
@@ -928,7 +935,7 @@ fn 设备延迟期间等待超时后仍可恢复完成() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     assert!(matches!(
         session.wait(
@@ -1017,13 +1024,13 @@ fn shutdown_setup() -> (
             Submission::Ready(Ok(_))
         ));
     }
-    // 第一次轮询只冻结和编码第一页；尚未向设备提交目录、打开或写入操作。
+    // The first poll only freezes and encodes the first page;Catalog has not been submitted to the device yet,open or write operation.
     session.poll(PollBudget::default()).unwrap();
     session.close(wait_deadline()).unwrap();
     (store, probe, device)
 }
 #[test]
-fn 存储关闭完成已启动页的目录打开与写入各阶段() {
+fn storage_shutdown_completes_the_directory_opening_and_writing_stages_of_the_started_page() {
     use std::sync::atomic::Ordering::SeqCst;
     for rounds in 0..4 {
         let (store, probe, _) = shutdown_setup();
@@ -1053,7 +1060,7 @@ fn 存储关闭完成已启动页的目录打开与写入各阶段() {
     }
 }
 #[test]
-fn 存储排空超时不会提前关闭设备且恢复后可以继续() {
+fn storage_drain_timeout_will_not_shut_down_the_device_early_and_can_continue_after_recovery() {
     use std::sync::atomic::Ordering::SeqCst;
     let (store, probe, _) = shutdown_setup();
     probe.paused.store(true, SeqCst);
@@ -1076,7 +1083,8 @@ fn 存储排空超时不会提前关闭设备且恢复后可以继续() {
     );
 }
 #[test]
-fn 刷盘失败仍排空设备但不发布成功边界也不自动重试() {
+fn if_the_flash_fails_the_device_will_still_be_emptied_but_the_success_boundary_will_not_be_published_and_it_will_not_automatically_retry()
+ {
     use std::sync::atomic::Ordering::SeqCst;
     let (store, probe, device) = shutdown_setup();
     device
@@ -1096,10 +1104,11 @@ fn 刷盘失败仍排空设备但不发布成功边界也不自动重试() {
 }
 
 #[test]
-fn 引擎已失败时关闭只归还在途缓冲而不推进刷盘边界() {
+fn when_the_engine_has_failed_it_only_returns_the_buffer_in_transit_and_does_not_advance_the_brush_boundary()
+ {
     use std::sync::atomic::Ordering::SeqCst;
     let (store, probe, _) = shutdown_setup();
-    // 目录与打开已完成，页写入尚未返回。
+    // Directory and opening completed,Page write has not yet returned.
     for _ in 0..3 {
         store
             .inner
@@ -1120,7 +1129,7 @@ fn 引擎已失败时关闭只归还在途缓冲而不推进刷盘边界() {
     assert!(store.start_session(SessionOptions::default()).is_err());
 }
 #[test]
-fn 放弃会话后的迟到读取由存储关闭排空且不会调用用户() {
+fn late_reads_after_session_abandonment_are_drained_by_storage_shutdown_and_do_not_call_the_user() {
     use std::sync::atomic::Ordering::SeqCst;
     let mut store = setup();
     let probe = Arc::new(ShutdownProbe::default());
@@ -1136,7 +1145,7 @@ fn 放弃会话后的迟到读取由存储关闭排空且不会调用用户() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     drop(session);
     assert!(store.shutdown(wait_deadline()).unwrap().device_drained);
@@ -1153,7 +1162,7 @@ fn 放弃会话后的迟到读取由存储关闭排空且不会调用用户() {
 }
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn 原生文件存储关闭排空已启动页并保留可校验帧() {
+fn native_file_storage_is_turned_off_flushing_started_pages_and_retaining_verifiable_frames() {
     struct Directory(std::path::PathBuf);
     impl Drop for Directory {
         fn drop(&mut self) {
@@ -1211,7 +1220,8 @@ fn 原生文件存储关闭排空已启动页并保留可校验帧() {
 }
 
 #[test]
-fn 单位预算公平推进多请求且排空后未收结果仍施加背压() {
+fn unit_budget_fairness_advances_multiple_requests_and_uncollected_results_still_exert_back_pressure_after_emptying()
+ {
     let mut store = setup();
     let config = &mut Arc::get_mut(&mut store.inner).unwrap().config;
     config.session.max_pending = 3;
@@ -1229,7 +1239,7 @@ fn 单位预算公平推进多请求且排空后未收结果仍施加背压() {
             .map_err(|r| r.reason)
             .unwrap()
         else {
-            panic!("应挂起")
+            panic!("should_pending")
         };
         tickets.push(ticket);
     }
@@ -1243,7 +1253,10 @@ fn 单位预算公平推进多请求且排空后未收结果仍施加背压() {
     let deadline = wait_deadline();
     let mut completed = 0;
     while completed != 3 {
-        assert!(!deadline.expired(), "单位预算不得饿死其他请求");
+        assert!(
+            !deadline.expired(),
+            "Unit budget must not starve other requests"
+        );
         let progress = session.poll(budget).unwrap();
         assert!(progress.completed <= 1);
         completed += progress.completed;
@@ -1278,7 +1291,7 @@ fn 单位预算公平推进多请求且排空后未收结果仍施加背压() {
 }
 
 #[test]
-fn 并发关闭只允许一个推进者且另一调用立即返回繁忙() {
+fn concurrency_shutdown_allows_only_one_pusher_and_another_call_immediately_returns_busy() {
     use std::sync::atomic::Ordering::SeqCst;
     let (store, probe, _) = shutdown_setup();
     probe.paused.store(true, SeqCst);
@@ -1286,7 +1299,10 @@ fn 并发关闭只允许一个推进者且另一调用立即返回繁忙() {
     let worker = std::thread::spawn(move || worker_store.shutdown(wait_deadline()));
     let deadline = wait_deadline();
     while probe.submitted.load(SeqCst) == 0 {
-        assert!(!deadline.expired(), "关闭线程应开始提交后台 I/O");
+        assert!(
+            !deadline.expired(),
+            "Closing the thread should start submitting to the background I/O"
+        );
         std::thread::yield_now();
     }
     let concurrent = store.shutdown(wait_deadline());
@@ -1298,7 +1314,8 @@ fn 并发关闭只允许一个推进者且另一调用立即返回繁忙() {
 }
 
 #[test]
-fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成() {
+fn real_suspended_reading_retains_the_old_identity_and_serial_number_after_cross_version_splitting_and_completes_it_independently()
+ {
     let mut store = setup();
     let config = &mut Arc::get_mut(&mut store.inner).unwrap().config;
     config.session.max_pending = 2;
@@ -1310,7 +1327,7 @@ fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成()
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     let old_id = old_ticket.id();
     let action = begin_test_cut(&store, &mut [&mut session]);
@@ -1337,7 +1354,7 @@ fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成()
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     assert_eq!(
         session
@@ -1419,7 +1436,8 @@ fn 真实挂起读取跨版本切分后保留旧身份与序号并独立完成()
     store.shutdown(wait_deadline()).unwrap();
 }
 #[test]
-fn 维护版本前进后新注册会话继承原子返回的版本() {
+fn after_the_maintenance_version_is_advanced_the_new_registration_session_inherits_the_atomically_returned_version()
+ {
     use crate::coordination::{Action, Phase};
     let store = setup();
     let coordinator = &store.inner.coordinator;
@@ -1433,14 +1451,15 @@ fn 维护版本前进后新注册会话继承原子返回的版本() {
         coordinator.advance(id, phase).unwrap();
     }
     coordinator.finish_action(id).unwrap();
-    // 此处只驱动协调器组件，没有写出检查点，也没有公开成功检查点 API。
+    // Only the coordinator component is driven here,No checkpoint written,There is no public success checkpoint API.
     let session = store.start_session(SessionOptions::default()).unwrap();
     assert_eq!(session.runtime.current.version, CheckpointVersion(1));
     assert!(session.runtime.previous.is_none());
 }
 
 #[test]
-fn 正常关闭保留动作前和动作中的会话切分且不伪造放弃失败() {
+fn gracefully_close_sessions_that_preserve_pre_action_and_in_action_segmentation_without_faking_abandon_failures()
+ {
     use crate::coordination::{Action, Phase};
     let store = setup();
     let mut first = store.start_session(SessionOptions::default()).unwrap();
@@ -1481,7 +1500,8 @@ fn 正常关闭保留动作前和动作中的会话切分且不伪造放弃失�
 }
 
 #[test]
-fn 切分后接受的新序号不进入旧检查点关闭切分() {
+fn the_new_sequence_number_accepted_after_splitting_does_not_enter_the_old_checkpoint_and_closes_splitting()
+ {
     use crate::coordination::{Action, Phase};
     let mut store = setup();
     let config = &mut Arc::get_mut(&mut store.inner).unwrap().config;
@@ -1494,7 +1514,7 @@ fn 切分后接受的新序号不进入旧检查点关闭切分() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     let coordinator = &store.inner.coordinator;
     let id = coordinator.start_action(Action::CheckpointLog).unwrap();
@@ -1552,7 +1572,8 @@ fn 切分后接受的新序号不进入旧检查点关闭切分() {
 }
 
 #[test]
-fn 新版本替换与读改写不原地修改旧记录但同版本仍可更新() {
+fn new_version_replacement_and_read_modify_do_not_modify_the_old_record_in_place_but_the_same_version_can_still_be_updated()
+ {
     use std::sync::atomic::Ordering::SeqCst;
     struct Write {
         key: u64,
@@ -1721,7 +1742,8 @@ fn begin_actor_cut(
     id
 }
 #[test]
-fn 四操作等待同键旧版本终结且读取在许可后重新取得链头() {
+fn four_operations_wait_for_the_old_version_of_the_same_key_to_be_terminated_and_read_to_re_obtain_the_link_head_after_permission()
+ {
     struct NumberRead {
         key: u64,
         calls: Rc<Cell<usize>>,
@@ -1757,7 +1779,7 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
             .map_err(|r| r.reason)
             .unwrap()
         else {
-            panic!("旧请求应等待读盘");
+            panic!("Old requests should wait for disk reads");
         };
         let _action = begin_actor_cut(&store, &mut old, &new);
         new.call(move |(new, ticket, new_calls)| {
@@ -1809,7 +1831,7 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
             }
             .unwrap();
             let Submission::Pending(mut submitted) = submission else {
-                panic!("新版本必须等待旧版本许可");
+                panic!("The new version must wait for the old version to be licensed");
             };
             for _ in 0..5 {
                 new.poll(PollBudget::default()).unwrap();
@@ -1847,7 +1869,8 @@ fn 四操作等待同键旧版本终结且读取在许可后重新取得链头()
     }
 }
 #[test]
-fn 丢弃旧票据不释放许可而阶段放弃使新请求失败终结() {
+fn discarding_old_tickets_does_not_release_permission_and_phase_abandonment_causes_new_requests_to_fail_and_terminate()
+ {
     let store = setup();
     let mut old = store.start_session(Default::default()).unwrap();
     let new = number_actor(&store);
@@ -1857,7 +1880,7 @@ fn 丢弃旧票据不释放许可而阶段放弃使新请求失败终结() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起");
+        panic!("should_pending");
     };
     drop(ticket);
     let _action = begin_actor_cut(&store, &mut old, &new);
@@ -1875,7 +1898,7 @@ fn 丢弃旧票据不释放许可而阶段放弃使新请求失败终结() {
             .map_err(|r| r.reason)
             .unwrap()
         else {
-            panic!("应等待旧请求");
+            panic!("Should wait for old requests");
         };
         *ticket = Some(submitted);
         new.poll(PollBudget::default()).unwrap();
@@ -1894,7 +1917,7 @@ fn 丢弃旧票据不释放许可而阶段放弃使新请求失败终结() {
     assert_eq!(calls.get(), 0);
 }
 
-// 测试只驱动协调阶段，不写检查点材料或宣称持久化成功。
+// Testing only drives the coordination phase,Not writing checkpoint material or claiming persistence was successful.
 fn begin_test_cut(
     store: &RasterKV<Schema>,
     sessions: &mut [&mut crate::Session<Schema>],
@@ -1945,7 +1968,7 @@ fn finish_test_cut(
 }
 
 #[test]
-fn 提交和轮询自动观察版本且旧请求保持原切分() {
+fn commits_and_polls_automatically_observe_versions_and_old_requests_remain_sharded() {
     let store = setup();
     let mut old = store.start_session(Default::default()).unwrap();
     let new = number_actor(&store);
@@ -1965,7 +1988,7 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("旧请求应挂起");
+        panic!("Old requests should be suspended");
     };
     let id = begin_actor_cut(&store, &mut old, &new);
     new.call(|(new, ticket, replacements)| {
@@ -1982,7 +2005,7 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
             .map_err(|r| r.reason)
             .unwrap()
         else {
-            panic!("新请求应等待旧请求");
+            panic!("New requests should wait for old requests");
         };
         *ticket = Some(submitted);
         assert_eq!(new.runtime.current.version, CheckpointVersion(1));
@@ -2039,7 +2062,8 @@ fn 提交和轮询自动观察版本且旧请求保持原切分() {
     store.shutdown(wait_deadline()).unwrap();
 }
 #[test]
-fn 并发阶段前进与会话确认交错不误报迟到失败() {
+fn concurrent_phase_advancement_and_session_confirmation_are_interleaved_without_false_reporting_of_late_failures()
+ {
     use crate::coordination::{Action, Phase};
     for _ in 0..16 {
         let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
@@ -2057,7 +2081,10 @@ fn 并发阶段前进与会话确认交错不误报迟到失败() {
                     ready.wait();
                     let deadline = wait_deadline();
                     loop {
-                        assert!(!deadline.expired(), "阶段应在截止时间内推进");
+                        assert!(
+                            !deadline.expired(),
+                            "Stages should be advanced within the deadline"
+                        );
                         session.refresh().unwrap();
                         if store.inner.coordinator.snapshot().unwrap().phase == Phase::WaitFlush {
                             break;
@@ -2080,10 +2107,10 @@ fn 并发阶段前进与会话确认交错不误报迟到失败() {
                     match store.inner.coordinator.advance(id, phase) {
                         Ok(_) => break,
                         Err(Error::Busy) => {
-                            assert!(!deadline.expired(), "参与者必须确认阶段");
+                            assert!(!deadline.expired(), "Participants must confirm stage");
                             std::thread::yield_now();
                         }
-                        Err(error) => panic!("阶段推进错误：{error}"),
+                        Err(error) => panic!("Stage advancement error:{error}"),
                     }
                 }
             }
@@ -2110,7 +2137,8 @@ fn 并发阶段前进与会话确认交错不误报迟到失败() {
 }
 
 #[test]
-fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出() {
+fn maintenance_waits_to_advance_its_own_old_request_while_idle_participants_must_acknowledge_or_exit()
+ {
     use crate::{
         api::maintenance::MaintenanceTicket,
         coordination::{Action, Phase},
@@ -2134,7 +2162,7 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     let id = store
         .inner
@@ -2142,7 +2170,7 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
         .start_action(Action::CheckpointLog)
         .unwrap();
     let (ticket, complete) = MaintenanceTicket::<()>::pair(store.inner.id, id);
-    // 维护线程可以投递设备完成，但不能代替会话执行用户回调或确认阶段。
+    // The maintenance thread can deliver the device to complete,But cannot perform user callback or confirmation phase on behalf of session.
     store.maintenance().poll(PollBudget::default()).unwrap();
     assert_eq!(calls.get(), 0);
     let deadline = || Deadline(std::time::Instant::now() + std::time::Duration::from_millis(100));
@@ -2183,18 +2211,23 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
         cuts.iter()
             .any(|cut| cut.session == idle_id && cut.last_accepted.is_none())
     );
-    // 组件测试以失败报告终结；不伪造没有写材料的成功检查点。
+    // Component testing ends with failure report;Don't fake the success checkpoint without writing material.
     store
         .inner
         .coordinator
-        .fail_action(id, Error::Codec("组件测试终结"))
+        .fail_action(id, Error::Codec("Component testing terminated"))
         .unwrap();
-    let report = complete.finish(Err(Error::Codec("组件测试终结"))).unwrap();
+    let report = complete
+        .finish(Err(Error::Codec("Component testing terminated")))
+        .unwrap();
     let received = session
         .wait_maintenance(&ticket, Deadline(std::time::Instant::now()))
         .unwrap();
     assert!(Arc::ptr_eq(&report, &received));
-    assert!(matches!(&*received, Err(Error::Codec("组件测试终结"))));
+    assert!(matches!(
+        &*received,
+        Err(Error::Codec("Component testing terminated"))
+    ));
     assert!(complete.finish(Ok(())).is_err());
     assert!(Arc::ptr_eq(
         &received,
@@ -2204,7 +2237,7 @@ fn 维护等待推进自己的旧请求而空闲参与者必须确认或退出()
     store.shutdown(wait_deadline()).unwrap();
 }
 #[test]
-fn 错存储维护票据即使已有报告也不能驱动本会话() {
+fn wrong_storage_maintenance_ticket_cannot_drive_this_session_even_if_there_is_a_report() {
     use crate::{api::maintenance::MaintenanceTicket, coordination::Action};
     let first = setup();
     let second = setup();
@@ -2214,7 +2247,9 @@ fn 错存储维护票据即使已有报告也不能驱动本会话() {
         .start_action(Action::CheckpointLog)
         .unwrap();
     let (ticket, complete) = MaintenanceTicket::<()>::pair(first.inner.id, first_id);
-    complete.finish(Err(Error::Codec("组件报告"))).unwrap();
+    complete
+        .finish(Err(Error::Codec("component report")))
+        .unwrap();
     let mut session = second.start_session(SessionOptions::default()).unwrap();
     let calls = Rc::new(Cell::new(0));
     let Submission::Pending(_request) = session
@@ -2222,7 +2257,7 @@ fn 错存储维护票据即使已有报告也不能驱动本会话() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("应挂起")
+        panic!("should_pending")
     };
     assert!(matches!(
         session.wait_maintenance(&ticket, wait_deadline()),
@@ -2231,7 +2266,8 @@ fn 错存储维护票据即使已有报告也不能驱动本会话() {
     assert_eq!(calls.get(), 0);
 }
 #[test]
-fn 维护驱动在需要实际材料的阶段停止且完成端放弃给出失败报告() {
+fn the_maintenance_driver_stops_at_a_stage_that_requires_actual_materials_and_the_completion_end_gives_up_with_a_failure_report()
+ {
     use crate::{
         api::maintenance::MaintenanceTicket,
         coordination::{Action, Phase},
@@ -2267,7 +2303,8 @@ fn 维护驱动在需要实际材料的阶段停止且完成端放弃给出失�
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn 原生文件挂起请求在维护等待中完成并保留旧版本切分() {
+fn native_file_pending_requests_are_completed_in_maintenance_wait_and_old_version_shards_are_retained()
+ {
     use crate::{
         api::maintenance::MaintenanceTicket,
         coordination::{Action, Phase},
@@ -2306,7 +2343,10 @@ fn 原生文件挂起请求在维护等待中完成并保留旧版本切分() {
     }
     let deadline = wait_deadline();
     while store.inner.log.frontiers().unwrap().safe_head.0 < 4096 {
-        assert!(!deadline.expired(), "旧页必须被实际写出并淘汰");
+        assert!(
+            !deadline.expired(),
+            "Old pages must be actually written out and retired"
+        );
         session.poll(PollBudget::default()).unwrap();
         std::thread::yield_now();
     }
@@ -2325,7 +2365,7 @@ fn 原生文件挂起请求在维护等待中完成并保留旧版本切分() {
         .map_err(|r| r.reason)
         .unwrap()
     else {
-        panic!("旧记录应从原生文件读入")
+        panic!("Old records should be read in from native files")
     };
     let id = store
         .inner
@@ -2335,7 +2375,10 @@ fn 原生文件挂起请求在维护等待中完成并保留旧版本切分() {
     let (ticket, complete) = MaintenanceTicket::<()>::pair(store.inner.id, id);
     let overall = wait_deadline();
     loop {
-        assert!(!overall.expired(), "维护等待应推进原生文件请求");
+        assert!(
+            !overall.expired(),
+            "Maintenance waits should advance native file requests"
+        );
         let slice = Deadline(
             overall
                 .0
@@ -2391,9 +2434,11 @@ fn 原生文件挂起请求在维护等待中完成并保留旧版本切分() {
     store
         .inner
         .coordinator
-        .fail_action(id, Error::Codec("组件验收终结"))
+        .fail_action(id, Error::Codec("Component acceptance ends"))
         .unwrap();
-    complete.finish(Err(Error::Codec("组件验收终结"))).unwrap();
+    complete
+        .finish(Err(Error::Codec("Component acceptance ends")))
+        .unwrap();
     session.close(wait_deadline()).unwrap();
     store.shutdown(wait_deadline()).unwrap();
 }

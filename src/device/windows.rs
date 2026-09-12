@@ -1,4 +1,4 @@
-//! Windows 原生设备工厂骨架；OVERLAPPED、IOCP 和句柄生命周期尚未接入。
+//! Windows Native device factory skeleton;OVERLAPPED,IOCP and the handle life cycle has not yet been accessed.
 use super::*;
 
 #[derive(Clone, Debug)]

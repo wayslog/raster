@@ -1,4 +1,4 @@
-//! 结构化诊断与统计；计数不代表持久化，日志跨度和索引占用都不等于有效键数。
+//! Structured Diagnostics and Statistics;Counting does not mean persistence,Neither the log span nor the index occupancy is equal to the effective number of keys.
 use crate::{
     api::maintenance::AutoCompactionStatus,
     types::{Generation, LogAddress, SessionId},
@@ -7,7 +7,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct IndexTableDiagnostics {
     pub generation: Generation,
-    /// 物理条目占用，包含同 tag 链头；不是键数量。扩容两张表可能同时保留条目。
+    /// Physical entry occupancy,Contains the same tag Chain head;Not the number of keys.Expanding two tables may retain entries at the same time.
     pub bucket_distribution: Vec<u64>,
 }
 #[derive(Clone, Debug)]
@@ -16,15 +16,15 @@ pub struct Diagnostics {
     pub begin: LogAddress,
     pub tail: LogAddress,
     pub active_sessions: usize,
-    /// 与 active_sessions 来自同一次注册表读取，便于定位阻止关闭的会话。
+    /// and active_sessions From the same registry read,Easily locate sessions blocked from closing.
     pub active_session_ids: Vec<SessionId>,
-    /// 已接受且尚未终结，包含同步执行中的回调。
+    /// Accepted and not yet finalized,Contains callbacks for synchronous execution.
     pub active_requests: usize,
-    /// 已返回 Pending 且尚未终结；不包含已完成但未收取的结果槽。
+    /// returned Pending And it's not over yet;Does not include result slots that were completed but not collected.
     pub pending_requests: usize,
-    /// 活跃及被读者保留的记录计费；含记录头，不含索引树和分配器元数据。
+    /// Billing for active and reader-retained records;With record header,Does not contain index tree and allocator metadata.
     pub cached_bytes: usize,
-    /// 预分配字节区的负载容量；未启用预分配时为零，不是 RSS。
+    /// The load capacity of the preallocated byte area;Zero when preallocation is not enabled,No RSS.
     pub cache_reserved_bytes: usize,
     pub log_allocated_bytes: usize,
     pub log_resident_pages: usize,
@@ -38,8 +38,8 @@ pub struct Diagnostics {
     pub failed: bool,
     pub shutdown_requested: bool,
 }
-/// 分桶表示每请求 I/O 完成数：0 为零次，1 为一次，随后为 `[2,3]`、`[4,7]` 等。
-/// 无法完整读取路由计数的请求不进入直方图，Statistics::measurements_complete 为 false。
+/// Bucketing means per request I/O Number of completions:0 is zero times,1 for once,followed by `[2,3]`,`[4,7]` Wait.
+/// Requests that cannot fully read the route count do not enter the histogram,Statistics::measurements_complete for false.
 #[derive(Clone, Debug)]
 pub struct OperationStatistics {
     pub accepted: u64,
@@ -91,39 +91,39 @@ pub struct IndexStatistics {
 }
 #[derive(Clone, Debug)]
 pub struct Statistics {
-    /// 开关只决定新请求是否采样；已采样请求仍记录至终结。
+    /// The switch only determines whether new requests are sampled or not;Sampled requests are still recorded until the end.
     pub enabled: bool,
     pub reads: OperationStatistics,
     pub upserts: OperationStatistics,
     pub rmw: OperationStatistics,
     pub deletes: OperationStatistics,
-    /// success 表示实际复制，not_found 表示源已过时；不计入业务请求数量。
+    /// success Indicates actual copy,not_found Indicates that the source is out of date;Not included in the number of business requests.
     pub conditional_copies: OperationStatistics,
     pub cache: CacheStatistics,
     pub index: IndexStatistics,
     pub refresh_nanoseconds: u64,
     pub maintenance_nanoseconds: u64,
     pub saturated: bool,
-    /// 失败关闭时无法读取完整完成路由计数则为 false。
+    /// Unable to read full completion route count on failed shutdown is false.
     pub measurements_complete: bool,
 }
 impl std::fmt::Display for Statistics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
-            "统计采集：{}；计数饱和：{}；测量完整：{}",
+            "Statistics collection:{};count saturation:{};Measurement complete:{}",
             self.enabled, self.saturated, self.measurements_complete
         )?;
         for (name, s) in [
-            ("读取", &self.reads),
-            ("写入", &self.upserts),
-            ("修改", &self.rmw),
-            ("删除", &self.deletes),
-            ("条件复制", &self.conditional_copies),
+            ("read", &self.reads),
+            ("write", &self.upserts),
+            ("Modify", &self.rmw),
+            ("delete", &self.deletes),
+            ("conditional copy", &self.conditional_copies),
         ] {
             writeln!(
                 f,
-                "{name}：接受 {}，完成 {}，同步 {}，成功 {}，缺失/过时 {}，中止 {}，失败 {}（已生效 {}，影响未知 {}），I/O 完成 {}，记录失效 {}，挂起纳秒 {}",
+                "{name}:accept {},completed {},sync {},success {},missing/Outdated {},abort {},failure {}(Already effective {},Impact unknown {}),I/O completed {},Record invalid {},pending nanoseconds {}",
                 s.accepted,
                 s.completed,
                 s.synchronous,
@@ -151,12 +151,12 @@ impl std::fmt::Display for Statistics {
                 } else {
                     (1u64 << bin) - 1
                 };
-                writeln!(f, "  每请求 I/O 完成 [{low},{high}]：{count}")?;
+                writeln!(f, "  per request I/O completed [{low},{high}]:{count}")?;
             }
         }
         writeln!(
             f,
-            "缓存：查询 {}，命中 {}，插入 {}，淘汰 {}，刷新 {}",
+            "cache:Query {},hit {},Insert {},Eliminate {},Refresh {}",
             self.cache.lookups,
             self.cache.hits,
             self.cache.insertions,
@@ -165,12 +165,12 @@ impl std::fmt::Display for Statistics {
         )?;
         writeln!(
             f,
-            "索引：查询 {}，发布尝试 {}，发布冲突 {}",
+            "Index:Query {},publish attempt {},publishing conflict {}",
             self.index.lookups, self.index.publication_attempts, self.index.publication_conflicts
         )?;
         write!(
             f,
-            "会话刷新纳秒 {}，维护推进纳秒 {}",
+            "Session refresh nanoseconds {},Maintenance advances nanoseconds {}",
             self.refresh_nanoseconds, self.maintenance_nanoseconds
         )
     }

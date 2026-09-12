@@ -1,4 +1,4 @@
-//! 公开逻辑截断与工作段删除：独立检查点、重试及内存循环使用真实引擎。
+//! Expose logical truncation and work segment deletion:independent checkpoint,Retries and memory loops use real engines.
 use super::*;
 use crate::api::maintenance::{
     CompactionAlgorithm, CompactionOptions, GcReport, PhysicalReclamation,
@@ -28,7 +28,8 @@ fn compact(store: &RasterKV<Schema>, session: &mut Session<Schema>, until: LogAd
         .unwrap();
 }
 #[test]
-fn 压缩后非页对齐截断删除旧段且两代检查点均可恢复() {
+fn after_compression_non_page_aligned_truncation_deletes_old_segments_and_both_generations_of_checkpoints_are_recoverable()
+ {
     let root = Directory(
         std::env::temp_dir().join(format!("raster-gc-{:x?}", StoreId::generate().unwrap().0)),
     );
@@ -66,7 +67,7 @@ fn 压缩后非页对齐截断删除旧段且两代检查点均可恢复() {
         .checkpoint(CheckpointKind::Full)
         .unwrap();
     let old = wait(&mut session, &old_ticket);
-    // 页内截止地址取一个真实记录末尾；后续新增键独立于需要搬迁的旧范围。
+    // The end address of the page is taken from the end of a real record;Subsequently added keys are independent of the old range that needs to be relocated.
     put(&mut session, 401, 400);
     let begin = store.inner.log.frontiers().unwrap().tail;
     assert_ne!(begin.0 % 4096, 0);
@@ -125,7 +126,8 @@ fn 压缩后非页对齐截断删除旧段且两代检查点均可恢复() {
     }
 }
 #[test]
-fn 内存截断清除旧键释放整页并可继续循环写入() {
+fn memory_truncation_clears_old_keys_to_release_the_entire_page_and_can_continue_to_write_in_a_loop()
+ {
     let mut config = Config::default();
     config.log.page_bytes = 4096;
     config.log.memory_pages = 2;
@@ -154,7 +156,8 @@ fn 内存截断清除旧键释放整页并可继续循环写入() {
     store.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 截断边界错误无副作用且扩容后清理覆盖全部新桶() {
+fn truncation_boundary_errors_have_no_side_effects_and_cleanup_covers_all_new_buckets_after_expansion()
+ {
     let (_root, store) = setup(None);
     let mut session = store.start_session(Default::default()).unwrap();
     put(&mut session, 0, 7);
@@ -249,7 +252,7 @@ impl Device for DelayedCompletions {
     }
     fn poll(&self, budget: PollBudget, output: &mut Vec<IoCompletion>) -> Result<(), Error> {
         use std::sync::atomic::Ordering;
-        // 原生设备仍实际执行 I/O；暂不取完成，模拟异步结果尚未可见。
+        // Native devices still actually perform I/O;Not available yet,Simulating async results are not yet visible.
         if self.held.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -261,7 +264,8 @@ impl Device for DelayedCompletions {
 }
 
 #[test]
-fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
+fn public_truncation_invalidates_old_scans_and_pending_reads_of_protected_segments_can_be_deferred_before_recycling()
+ {
     use crate::api::scan::{Buffering, ScanOptions};
     use crate::api::{completion::TicketState, maintenance::PhysicalReclamation};
     use std::sync::{
@@ -287,9 +291,9 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
         .read(Serial(400), Read(0), Default::default())
         .unwrap()
     else {
-        panic!("读取需要挂起")
+        panic!("Reading needs to be suspended")
     };
-    // 固定存在真实后台写入，GC 必须排空该任务；不能只延迟与 GC 无关的完成。
+    // Fixed presence of real background writes,GC The task must be cleared;Can't just delay with GC irrelevant completion.
     let tail = store.inner.log.pad_tail().unwrap();
     store.inner.log.advance_read_only(tail).unwrap();
     hold_completions.store(true, Ordering::SeqCst);
@@ -298,7 +302,7 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
     let begin = LogAddress(3 * 4096);
     let ticket = store.maintenance().shift_begin(begin).unwrap();
     let budget = PollBudget(std::num::NonZeroUsize::new(1).unwrap());
-    // 先观察真实的 I/O 等待，再显式释放门控；不以大量空轮询制造调度负载。
+    // Observe the real thing first I/O wait,Explicitly release the gate again;Don't create scheduling load with lots of empty polls.
     store.maintenance().poll(budget).unwrap();
     assert!(ticket.try_report().unwrap().is_none());
     assert!(store.inner.storage_progress.lock().unwrap().has_flush());
@@ -308,7 +312,10 @@ fn 公开截断使旧扫描失效且挂起读取保护段可延后再回收() {
         if let Some(report) = ticket.try_report().unwrap() {
             break report;
         }
-        assert!(!end.expired(), "GC 在既有截止时间内应终结");
+        assert!(
+            !end.expired(),
+            "GC Should be terminated within the existing deadline"
+        );
         store.maintenance().poll(budget).unwrap();
         std::thread::yield_now();
     };
@@ -382,7 +389,7 @@ mod failure {
             {
                 return Err(RejectedIo {
                     request,
-                    reason: Error::InvalidState("回收不能重新写出已丢弃的页"),
+                    reason: Error::InvalidState("Recycling cannot rewrite discarded pages"),
                 });
             }
             let stage = match &request.operation {
@@ -411,10 +418,11 @@ mod failure {
                 if self.control.injected.lock().unwrap().remove(&completion.id) {
                     assert!(
                         matches!(completion.result, Ok(IoOutcome::Done)),
-                        "注入点必须已经真实执行成功"
+                        "The injection point must have actually been executed successfully"
                     );
-                    completion.result =
-                        Err(Error::Io(std::io::Error::other("注入执行后完成报告失败")));
+                    completion.result = Err(Error::Io(std::io::Error::other(
+                        "Completion report failed after injection execution",
+                    )));
                 }
             }
             Ok(())
@@ -424,7 +432,8 @@ mod failure {
         }
     }
     #[test]
-    fn 原生关闭删除及目录同步已执行后失败仍可从原步骤安全重试() {
+    fn if_native_shutdown_deletion_and_directory_synchronization_fail_after_execution_you_can_safely_retry_from_the_original_steps()
+     {
         for mode in 0..3 {
             let root = Directory(std::env::temp_dir().join(format!(
                 "raster-gc-fault-{:x?}",
@@ -473,7 +482,11 @@ mod failure {
             for _ in 0..20 {
                 store.maintenance().poll(PollBudget::default()).unwrap();
             }
-            assert_eq!(*control.counts.lock().unwrap(), counts, "失败不会自动重试");
+            assert_eq!(
+                *control.counts.lock().unwrap(),
+                counts,
+                "Failure will not automatically retry"
+            );
             assert!(!store.inner.failed.load(Ordering::SeqCst));
             if mode != 0 {
                 assert!(
@@ -483,7 +496,7 @@ mod failure {
                         .exists()
                 );
             }
-            // 删除意图持有独立路由，结束失败动作后仍能完成新检查点。
+            // Delete intent holds independent route,A new checkpoint can still be completed after ending the failed action.
             let checkpoint = store
                 .maintenance()
                 .checkpoint(CheckpointKind::Full)
@@ -522,7 +535,8 @@ mod failure {
         }
     }
     #[test]
-    fn 回收未刷盘前缀不产生旧页写入且新检查点跳过页内旧记录() {
+    fn recycling_unflushed_disk_prefixes_does_not_produce_old_page_writes_and_the_new_checkpoint_skips_old_records_in_the_page()
+     {
         let root = Directory(std::env::temp_dir().join(format!(
             "raster-gc-discard-{:x?}",
             StoreId::generate().unwrap().0
@@ -593,7 +607,8 @@ mod failure {
 }
 
 #[test]
-fn 冷边界切入记录时报告零效果并释放动作且合法回收排斥其他维护() {
+fn when_the_cold_boundary_cuts_into_the_record_zero_effect_is_reported_and_the_action_is_released_and_legal_recycling_excludes_other_maintenance()
+ {
     let (_root, store) = native_gc();
     let mut session = store.start_session(Default::default()).unwrap();
     for key in 0..400 {
@@ -641,7 +656,8 @@ fn 冷边界切入记录时报告零效果并释放动作且合法回收排斥�
 }
 
 #[test]
-fn 同标签链头保留时迟到冷读取不能缓存已截断的链内旧键() {
+fn late_cold_reads_cannot_cache_truncated_old_keys_in_the_chain_when_the_same_label_chain_head_is_retained()
+ {
     use crate::{engine::io_hub::CompletionHub, log::lookup::LookupStep};
     let root = Directory(std::env::temp_dir().join(format!(
         "raster-gc-cache-{:x?}",
@@ -693,7 +709,7 @@ fn 同标签链头保留时迟到冷读取不能缓存已截断的链内旧键()
         .unwrap();
     let limit = deadline();
     loop {
-        assert!(!limit.expired(), "冷读取未终结");
+        assert!(!limit.expired(), "Cold read not finalized");
         store.maintenance().poll(PollBudget::default()).unwrap();
         if let Some(completion) = store.inner.io.take(route).unwrap() {
             lookup.accept(&store.inner.storage, completion).unwrap();
@@ -708,14 +724,14 @@ fn 同标签链头保留时迟到冷读取不能缓存已截断的链内旧键()
         {
             LookupStep::Continue | LookupStep::AwaitingIo => std::thread::yield_now(),
             LookupStep::Decoded(_) => break,
-            _ => panic!("应得到旧键的磁盘值"),
+            _ => panic!("Should get the disk value of the old key"),
         }
     }
     store.inner.io.release(route).unwrap();
     let begin = LogAddress(4096);
     assert!(lookup.cache_record(8192).unwrap().unwrap().0 < begin);
     let ticket = store.maintenance().shift_begin(begin).unwrap();
-    // 维护已经接受时不能再安装；完成后还需校验源，而非仅依赖头快照。
+    // Cannot be installed again when maintenance has been accepted;After completion, the source needs to be verified,rather than just relying on header snapshots.
     store.inner.populate_cache(hash, expected, &lookup).unwrap();
     assert_eq!(store.inner.cache.allocated_bytes(), 0);
     session
@@ -734,7 +750,8 @@ fn 同标签链头保留时迟到冷读取不能缓存已截断的链内旧键()
 }
 
 #[test]
-fn 截断前挂起的修改请求重查缺失键且只初始化一次() {
+fn modify_requests_pending_before_truncation_are_rechecked_for_missing_keys_and_initialized_only_once()
+ {
     use crate::{api::operation::RmwOperation, schema::ValueRead};
     use std::sync::{
         Arc,
@@ -754,13 +771,13 @@ fn 截断前挂起的修改请求重查缺失键且只初始化一次() {
             Ok((999, 999))
         }
         fn copy_update(&mut self, _: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
-            panic!("截断后的重查不能使用旧值")
+            panic!("Truncated recheck cannot use old values")
         }
         fn update_in_place(
             &mut self,
             _: ValueUpdate<'_, Schema>,
         ) -> Result<UpdateDecision<u64>, Error> {
-            panic!("已截断的值不能原地更新")
+            panic!("Truncated values cannot be updated in place")
         }
     }
     let (_root, store) = native_gc();
@@ -773,13 +790,16 @@ fn 截断前挂起的修改请求重查缺失键且只初始化一次() {
         .rmw(Serial(400), Create(calls.clone()), Default::default())
         .unwrap()
     else {
-        panic!("旧页修改应先挂起")
+        panic!("Modification of old pages should be suspended first")
     };
     let begin = LogAddress(12288);
     let ticket = store.maintenance().shift_begin(begin).unwrap();
     let limit = deadline();
     while ticket.try_report().unwrap().is_none() {
-        assert!(!limit.expired(), "回收未按租约延后终结");
+        assert!(
+            !limit.expired(),
+            "The recovery was not terminated as per the lease extension"
+        );
         store.maintenance().poll(PollBudget::default()).unwrap();
         std::thread::yield_now();
     }
@@ -806,7 +826,8 @@ fn 截断前挂起的修改请求重查缺失键且只初始化一次() {
 }
 
 #[test]
-fn 页内截断后同标签旧键写入必须追加而不原地更新失效记录() {
+fn after_in_page_truncation_the_old_key_of_the_same_label_must_be_appended_instead_of_updating_the_invalid_record_in_place()
+ {
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -861,7 +882,7 @@ fn 页内截断后同标签旧键写入必须追加而不原地更新失效记�
         )
         .unwrap()
     else {
-        panic!("内存尾部有空间")
+        panic!("There is space at the end of the memory")
     };
     result.unwrap();
     assert_eq!(read_value(&mut session, 4, 8969), Some(999));

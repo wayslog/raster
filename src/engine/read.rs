@@ -1,4 +1,4 @@
-//! 读取上下文由会话持有；磁盘等待与结果槽分离，回调只在推进线程执行。
+//! The read context is held by the session;Disk waits separated from result slots,The callback is only executed on the advancing thread.
 use super::{
     Engine, SessionRuntime,
     io_hub::CompletionHub,
@@ -58,7 +58,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
     fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
         self.lookup
             .as_mut()
-            .ok_or(Error::InvalidState("读取没有等待磁盘查询"))?
+            .ok_or(Error::InvalidState("Read without waiting for disk query"))?
             .accept(&self.engine.storage, completion)
             .map_err(|rejected| rejected.reason)
     }
@@ -68,7 +68,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
         }
         if self.engine.failed.load(Ordering::SeqCst) {
             self.abandon(OperationError {
-                cause: Error::InvalidState("引擎已失败关闭"),
+                cause: Error::InvalidState("engine_failed_closed"),
                 effect: Effect::NotApplied,
             });
             return TaskStep::Complete;
@@ -95,12 +95,12 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     }
                     if let Some(record) = resolved.cached {
                         if record.source < self.engine.log.frontiers()?.begin {
-                            // GC 已替换缓存头；重新解析索引，不能把搬迁后的活键报告为截断。
+                            // GC Cache header replaced;Reparse index,Live keys after migration cannot be reported as truncated.
                             return Ok(None);
                         }
                         let encoded = crate::format::Record::decode(record.encoded())?;
                         if encoded.header.version != record.version {
-                            return Err(Error::InvalidState("缓存记录版本不匹配"));
+                            return Err(Error::InvalidState("Cache record version mismatch"));
                         }
                         self.engine.metrics.cache(super::metrics::CacheEvent::Hit);
                         if let crate::index::IndexHead::Cache(address) = resolved.entry.head {
@@ -111,7 +111,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                             .read(|view| {
                                 self.request
                                     .as_mut()
-                                    .expect("请求尚未终结")
+                                    .expect("The request has not yet been finalized")
                                     .read(ValueRead { view })
                             })?
                             .map(|value| Some(Outcome::Success(value)));
@@ -124,16 +124,21 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                         CompletionHub::route(self.id),
                     )?);
                 }
-                let request = self.request.as_mut().expect("请求尚未终结");
-                match self.lookup.as_mut().expect("查询已创建").step(
+                let request = self
+                    .request
+                    .as_mut()
+                    .expect("The request has not yet been finalized");
+                match self.lookup.as_mut().expect("query_created").step(
                     &self.engine.log,
                     &self.engine.storage,
                     budget,
                 )? {
                     LookupStep::Continue | LookupStep::AwaitingIo => Ok(None),
-                    LookupStep::Present => Err(Error::InvalidState("值查询只返回了元数据")),
+                    LookupStep::Present => {
+                        Err(Error::InvalidState("Value query only returned metadata"))
+                    }
                     LookupStep::Missing => {
-                        // 冷读取等待期间压缩可能已搬迁链头并推进 begin；旧链缺失不等于键缺失。
+                        // Compaction may have moved the chain head and pushed forward while the cold read was waiting begin;Missing old link does not mean missing key.
                         if self.observed != Some(self.engine.index.prepare(self.hash)?) {
                             self.lookup = None;
                             self.observed = None;
@@ -169,8 +174,8 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                     LookupStep::Decoded(value) => {
                         self.engine.populate_cache(
                             self.hash,
-                            self.observed.expect("已保存索引快照"),
-                            self.lookup.as_ref().expect("查询已创建"),
+                            self.observed.expect("Index snapshot saved"),
+                            self.lookup.as_ref().expect("query_created"),
                         )?;
                         value
                             .read(|view| request.read(ValueRead { view }))?
@@ -184,7 +189,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
             Ok(result) => {
                 self.finish(
                     result
-                        .map(|value| value.expect("已排除未完成结果"))
+                        .map(|value| value.expect("Incomplete results excluded"))
                         .map_err(|cause| OperationError {
                             cause,
                             effect: Effect::NotApplied,
@@ -195,7 +200,7 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
                 self.abandon(OperationError {
-                    cause: Error::InvalidState("读取回调恐慌"),
+                    cause: Error::InvalidState("Read callback panic"),
                     effect: Effect::NotApplied,
                 });
                 TaskStep::Complete
@@ -283,9 +288,10 @@ impl<S: Schema> Engine<S> {
             permit,
         };
         if matches!(task.step(PollBudget::default()), TaskStep::Complete) {
-            let TicketState::Ready(result) = ticket.try_take().expect("内部票据可收取")
+            let TicketState::Ready(result) =
+                ticket.try_take().expect("Internal bills can be collected")
             else {
-                unreachable!("任务已经完成")
+                unreachable!("The task has been completed")
             };
             Ok(Submission::Ready(result))
         } else {

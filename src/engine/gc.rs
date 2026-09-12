@@ -1,4 +1,4 @@
-//! 逻辑截断、逐桶清理和可重试工作段删除；保留检查点材料不参与工作段回收。
+//! logical truncation,Bucket-by-bucket cleaning and retryable work segment deletion;Checkpoint materials are retained and do not participate in work segment recycling.
 use super::Engine;
 use crate::{
     api::maintenance::{GcReport, MaintenanceCompleter, MaintenanceTicket, PhysicalReclamation},
@@ -13,7 +13,7 @@ use std::sync::{TryLockError, atomic::Ordering};
 #[derive(Default)]
 pub(crate) struct GcRuntime {
     job: Option<Job>,
-    // 已摘除映射的删除意图跨动作保留；显式重试继续原步骤，而不重新寻找旧代次文件。
+    // Deletion intents that have been mapped are retained across actions;Explicitly retry to continue the original step,without re-searching for old generation files.
     deletion: Option<SegmentDelete>,
 }
 enum Stage {
@@ -52,9 +52,11 @@ impl Job {
             {
                 return Ok(false);
             }
-            // 正常删除错误在接受完成后产生，不存在未归还缓冲；身份错误由失败关闭处理。
+            // Normal deletion error occurs after acceptance completes,No unreturned buffer exists;Identity errors are handled by failed shutdown.
             if deletion.as_ref().is_some_and(SegmentDelete::has_inflight) {
-                return Err(Error::InvalidState("删除失败仍存在不明在途请求"));
+                return Err(Error::InvalidState(
+                    "Deletion failed and there are still unknown requests in progress.",
+                ));
             }
             return self.finish(engine);
         }
@@ -92,7 +94,11 @@ impl Job {
                 let _storage = match engine.storage_progress.try_lock() {
                     Ok(guard) => guard,
                     Err(TryLockError::WouldBlock) => return Ok(false),
-                    Err(_) => return Err(Error::InvalidState("GC 遇到后台日志锁中毒")),
+                    Err(_) => {
+                        return Err(Error::InvalidState(
+                            "GC encountered a poisoned background log lock",
+                        ));
+                    }
                 };
                 if _storage.has_flush() {
                     return Ok(false);
@@ -136,7 +142,11 @@ impl Job {
                     }
                     return Ok(advanced);
                 }
-                if let Some(candidate) = self.candidates.as_mut().expect("已枚举工作段").pop()
+                if let Some(candidate) = self
+                    .candidates
+                    .as_mut()
+                    .expect("Enumerated work segments")
+                    .pop()
                 {
                     match SegmentDelete::detach(
                         &engine.storage,
@@ -190,7 +200,7 @@ impl Job {
                 },
             }),
         };
-        // 失败也释放本次动作；报告保留真实阶段，不能把跳过的清理算作成功。
+        // Failure also releases this action;Reporting preserves the true stage,Skipped cleanups cannot be counted as successes.
         for _ in 0..2 {
             match engine.coordinator.snapshot()?.phase {
                 Phase::GcIo => {
@@ -227,12 +237,12 @@ impl<S: Schema> Engine<S> {
         for gate in &self.operations {
             guards.push(gate.try_lock().map_err(|error| match error {
                 TryLockError::WouldBlock => Error::Busy,
-                _ => Error::InvalidState("GC 遇到业务仲裁锁中毒"),
+                _ => Error::InvalidState("GC encountered a poisoned operation arbitration lock"),
             })?);
         }
         let mut checkpoints = self.checkpoints.try_lock().map_err(|error| match error {
             TryLockError::WouldBlock => Error::Busy,
-            _ => Error::InvalidState("GC 遇到检查点锁中毒"),
+            _ => Error::InvalidState("GC Encountering checkpoint lock poisoning"),
         })?;
         self.cache.with_normalized_index(&self.index, || {
             self.log.publish_begin(begin)?;
@@ -245,7 +255,7 @@ impl<S: Schema> Engine<S> {
         target: LogAddress,
     ) -> Result<MaintenanceTicket<GcReport>, Error> {
         if self.failed.load(Ordering::SeqCst) || self.shutdown_requested.load(Ordering::SeqCst) {
-            return Err(Error::InvalidState("存储已关闭或失败"));
+            return Err(Error::InvalidState("storage_closed_or_failed"));
         }
         let caps = self.storage.device.capabilities();
         if caps.supports_files && !caps.supports_directory_sync {
@@ -253,7 +263,7 @@ impl<S: Schema> Engine<S> {
         }
         let mut runtime = self.gc.try_lock().map_err(|error| match error {
             TryLockError::WouldBlock => Error::Busy,
-            _ => Error::InvalidState("GC 任务锁中毒"),
+            _ => Error::InvalidState("GC task_lock_poisoned"),
         })?;
         if runtime.job.is_some() {
             return Err(Error::Busy);
@@ -299,7 +309,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.gc.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok((false, false)),
-            Err(_) => return Err(Error::InvalidState("GC 任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("GC task_lock_poisoned")),
         };
         let GcRuntime { job, deletion } = &mut *runtime;
         let Some(job) = job else {
@@ -315,7 +325,7 @@ impl<S: Schema> Engine<S> {
             Ok(result) => result,
             Err(_) => {
                 self.failed.store(true, Ordering::SeqCst);
-                Err(Error::InvalidState("GC 推进恐慌"))
+                Err(Error::InvalidState("GC Promote panic"))
             }
         };
         let advanced = match result {
@@ -331,8 +341,13 @@ impl<S: Schema> Engine<S> {
             }
         };
         if self.failed.load(Ordering::SeqCst) {
-            job.fail(self, Error::InvalidState("GC 期间引擎失败关闭"))?;
-            return Err(Error::InvalidState("GC 失败关闭，详见维护报告"));
+            job.fail(
+                self,
+                Error::InvalidState("GC Engine failed to shut down during"),
+            )?;
+            return Err(Error::InvalidState(
+                "GC failed to close,see_maintenance_report",
+            ));
         }
         let finished = job.reported;
         if finished {
@@ -344,10 +359,13 @@ impl<S: Schema> Engine<S> {
         let mut runtime = match self.gc.try_lock() {
             Ok(runtime) => runtime,
             Err(TryLockError::WouldBlock) => return Ok(()),
-            Err(_) => return Err(Error::InvalidState("GC 任务锁中毒")),
+            Err(_) => return Err(Error::InvalidState("GC task_lock_poisoned")),
         };
         if let Some(job) = &mut runtime.job {
-            job.fail(self, Error::InvalidState("引擎或协调动作失败，GC 终止"))?;
+            job.fail(
+                self,
+                Error::InvalidState("Engine or coordination action failed,GC terminate"),
+            )?;
         }
         Ok(())
     }
@@ -356,7 +374,7 @@ impl<S: Schema> Engine<S> {
         let mut runtime = self
             .gc
             .lock()
-            .map_err(|_| Error::InvalidState("GC 任务锁中毒"))?;
+            .map_err(|_| Error::InvalidState("GC task_lock_poisoned"))?;
         runtime.job = None;
         runtime.deletion = None;
         Ok(())

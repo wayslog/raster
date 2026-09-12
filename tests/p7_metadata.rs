@@ -1,4 +1,4 @@
-//! 保留集合释放所需的原生元数据原语；不以目录列表或锁成功冒充检查点释放。
+//! Retain native metadata primitives required for collection release;Not successfully impersonating checkpoint release with directory listing or lock.
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 use raster::{device::*, types::*};
 use std::{
@@ -38,7 +38,7 @@ fn native(path: &Path) -> Box<dyn Device> {
 fn take(device: &dyn Device, id: IoId) -> IoCompletion {
     let until = deadline();
     loop {
-        assert!(!until.expired(), "设备完成超时");
+        assert!(!until.expired(), "Device completion timeout");
         let mut out = Vec::new();
         device.poll(PollBudget::default(), &mut out).unwrap();
         if let Some(done) = out.pop() {
@@ -76,7 +76,7 @@ fn create(device: &dyn Device, path: PathBuf) {
         },
     )
     .unwrap() else {
-        panic!("未打开文件")
+        panic!("File not open")
     };
     close(device, file);
 }
@@ -96,7 +96,7 @@ fn list(
     )?;
     match outcome {
         IoOutcome::Directory(entries) => Ok(entries),
-        _ => panic!("目录结果类型错误"),
+        _ => panic!("Catalog result type error"),
     }
 }
 fn lock(device: &dyn Device, mode: FileLockMode) -> Result<FileId, Error> {
@@ -108,11 +108,11 @@ fn lock(device: &dyn Device, mode: FileLockMode) -> Result<FileId, Error> {
         },
     )? {
         IoOutcome::Locked(file) => Ok(file),
-        _ => panic!("文件锁结果类型错误"),
+        _ => panic!("File lock result type error"),
     }
 }
 #[test]
-fn 原生及内存目录枚举保留名称且超预算整体失败() {
+fn native_and_in_memory_directory_enumeration_fails_overall_with_reserved_names_and_over_budget() {
     use std::os::unix::ffi::OsStringExt;
     let root = Directory::new();
     for device in [
@@ -121,7 +121,11 @@ fn 原生及内存目录枚举保留名称且超预算整体失败() {
     ] {
         assert!(device.capabilities().supports_directory_listing);
         assert!(list(&*device, "", 0, 0).unwrap().is_empty());
-        execute(&*device, IoOperation::CreateDirectory("子目录".into())).unwrap();
+        execute(
+            &*device,
+            IoOperation::CreateDirectory("subdirectory".into()),
+        )
+        .unwrap();
         create(&*device, "abc".into());
         let raw_name = OsString::from_vec(vec![0xff, b'x']);
         let name = match execute(
@@ -135,16 +139,16 @@ fn 原生及内存目录枚举保留名称且超预算整体失败() {
                 close(&*device, file);
                 raw_name
             }
-            // APFS 拒绝非法 UTF-8 文件名，设备须原样传播，而不是替换字节后创建别名。
+            // APFS reject illegal UTF-8 file name,Equipment must be transmitted as is,Instead of creating alias after replacing bytes.
             Err(Error::Io(error))
                 if cfg!(target_os = "macos") && error.raw_os_error() == Some(92) =>
             {
-                create(&*device, "合法名称".into());
-                OsString::from("合法名称")
+                create(&*device, "legal name".into());
+                OsString::from("legal name")
             }
-            result => panic!("文件名创建结果错误：{result:?}"),
+            result => panic!("File name creation result error:{result:?}"),
         };
-        create(&*device, "子目录/子文件".into());
+        create(&*device, "subdirectory/subfile".into());
         let mut expected = vec![
             DirectoryEntry {
                 name: "abc".into(),
@@ -155,7 +159,7 @@ fn 原生及内存目录枚举保留名称且超预算整体失败() {
                 kind: DirectoryEntryKind::File,
             },
             DirectoryEntry {
-                name: "子目录".into(),
+                name: "subdirectory".into(),
                 kind: DirectoryEntryKind::Directory,
             },
         ];
@@ -172,14 +176,14 @@ fn 原生及内存目录枚举保留名称且超预算整体失败() {
             ));
         }
         assert_eq!(
-            list(&*device, "子目录", 1, 64).unwrap(),
+            list(&*device, "subdirectory", 1, 64).unwrap(),
             vec![DirectoryEntry {
-                name: "子文件".into(),
+                name: "subfile".into(),
                 kind: DirectoryEntryKind::File
             }]
         );
-        assert!(list(&*device, "缺失", 10, 100).is_err());
-        for path in ["../逃逸", "/绝对"] {
+        assert!(list(&*device, "missing", 10, 100).is_err());
+        for path in ["../escape", "/Absolutely"] {
             assert!(list(&*device, path, 10, 100).is_err());
         }
         device.shutdown(deadline()).unwrap();
@@ -193,42 +197,43 @@ fn 原生及内存目录枚举保留名称且超预算整体失败() {
     assert!(list(&memory, "", 0, 0).unwrap().is_empty());
 }
 #[test]
-fn 枚举只描述符号链接且不能经链接逃出根目录() {
+fn the_enumeration_only_describes_symbolic_links_and_cannot_escape_from_the_root_directory_through_the_link()
+ {
     let root = Directory::new();
     let outside = Directory::new();
     let device = native(&root.0);
     std::fs::create_dir_all(&outside.0).unwrap();
-    std::fs::write(outside.0.join("外部文件"), b"outside").unwrap();
-    std::os::unix::fs::symlink(&outside.0, root.0.join("链接")).unwrap();
+    std::fs::write(outside.0.join("external file"), b"outside").unwrap();
+    std::os::unix::fs::symlink(&outside.0, root.0.join("link")).unwrap();
     assert_eq!(
         list(&*device, "", 1, 64).unwrap(),
         vec![DirectoryEntry {
-            name: "链接".into(),
+            name: "link".into(),
             kind: DirectoryEntryKind::Symlink
         }]
     );
-    assert!(list(&*device, "链接", 10, 100).is_err());
+    assert!(list(&*device, "link", 10, 100).is_err());
     assert!(
         execute(
             &*device,
             IoOperation::TryLock {
-                path: "链接/外部文件".into(),
+                path: "link/external file".into(),
                 mode: FileLockMode::Exclusive
             }
         )
         .is_err()
     );
     assert_eq!(
-        std::fs::read(outside.0.join("外部文件")).unwrap(),
+        std::fs::read(outside.0.join("external file")).unwrap(),
         b"outside"
     );
-    create(&*device, "内部文件".into());
-    std::os::unix::fs::symlink("内部文件", root.0.join("内部链接")).unwrap();
+    create(&*device, "internal documents".into());
+    std::os::unix::fs::symlink("internal documents", root.0.join("internal link")).unwrap();
     assert!(matches!(
         execute(
             &*device,
             IoOperation::TryLock {
-                path: "内部链接".into(),
+                path: "internal link".into(),
                 mode: FileLockMode::Shared,
             }
         ),
@@ -237,12 +242,17 @@ fn 枚举只描述符号链接且不能经链接逃出根目录() {
     device.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 独立句柄共享独占互斥且竞争不耗尽句柄表() {
+fn independent_handles_share_exclusive_mutual_exclusion_and_competition_does_not_exhaust_the_handle_table()
+ {
     let root = Directory::new();
     let first = native(&root.0);
     let second = native(&root.0);
     assert!(first.capabilities().supports_file_locks);
-    std::fs::write(root.0.join("catalog.lock"), "不应截断".as_bytes()).unwrap();
+    std::fs::write(
+        root.0.join("catalog.lock"),
+        "should not be truncated".as_bytes(),
+    )
+    .unwrap();
     let shared1 = lock(&*first, FileLockMode::Shared).unwrap();
     let shared2 = lock(&*first, FileLockMode::Shared).unwrap();
     let shared3 = lock(&*second, FileLockMode::Shared).unwrap();
@@ -287,13 +297,13 @@ fn 独立句柄共享独占互斥且竞争不耗尽句柄表() {
     close(&*second, exclusive);
     assert_eq!(
         std::fs::read(root.0.join("catalog.lock")).unwrap(),
-        "不应截断".as_bytes()
+        "should not be truncated".as_bytes()
     );
     first.shutdown(deadline()).unwrap();
     second.shutdown(deadline()).unwrap();
 }
 #[test]
-fn 已接受锁持有至关闭且设备关闭释放未收取的锁完成() {
+fn accepted_locks_are_held_until_closed_and_the_device_is_shut_down_to_release_unacquired_locks() {
     let root = Directory::new();
     let first = native(&root.0);
     let second = native(&root.0);
@@ -312,12 +322,12 @@ fn 已接受锁持有至关闭且设备关闭释放未收取的锁完成() {
             },
         })
         .unwrap();
-    // shutdown 排空已经接受的加锁，再关闭文件表；first 对象仍然存活。
+    // shutdown Drain accepted locks,Close the file table again;first The object is still alive.
     first.shutdown(deadline()).unwrap();
     let result = take(&*first, id).result;
     assert!(
         matches!(result, Ok(IoOutcome::Locked(_))),
-        "关闭排空结果：{result:?}"
+        "Turn off drain results:{result:?}"
     );
     let file = lock(&*second, FileLockMode::Exclusive).unwrap();
     close(&*second, file);
@@ -332,8 +342,8 @@ impl Drop for ChildGuard {
     }
 }
 #[test]
-fn 跨进程锁竞争且异常退出释放句柄() {
-    const NAME: &str = "跨进程锁竞争且异常退出释放句柄";
+fn cross_process_lock_competition_and_abnormal_exit_release_handle() {
+    const NAME: &str = "cross_process_lock_competition_and_abnormal_exit_release_handle";
     if let Some(root) = std::env::var_os("RASTER_METADATA_CHILD_ROOT") {
         let device = native(Path::new(&root));
         if std::env::var_os("RASTER_METADATA_CHILD_HOLD").is_some() {
@@ -373,8 +383,14 @@ fn 跨进程锁竞争且异常退出释放句柄() {
     );
     let until = deadline();
     while !root.0.join("ready").exists() {
-        assert!(!until.expired(), "子进程没有取得文件锁");
-        assert!(child.0.try_wait().unwrap().is_none(), "子进程提前退出");
+        assert!(
+            !until.expired(),
+            "The child process did not acquire the file lock"
+        );
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "Child process exits early"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(matches!(

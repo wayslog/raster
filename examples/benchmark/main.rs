@@ -1,16 +1,16 @@
-//! 四操作与恢复的固定矩阵；正确性、时间和实际传输字节分别记录。
+//! Fixed matrix for four operations and recovery;correctness,Time and actual transferred bytes are logged separately.
 mod meter;
 #[path = "../../tests/support/model.rs"]
 #[allow(
     dead_code,
-    reason = "基准输入由确定值模型预计算；非确定盲删观察另有专门轨迹验收"
+    reason = "Baseline inputs are precomputed by a deterministic value model;There is also a special track acceptance for non-deterministic blind deletion observation."
 )]
 mod model;
 mod operation;
 mod scenario;
 #[allow(
     dead_code,
-    reason = "与轨迹验收复用完整文本格式；本程序只生成并核对固定输入"
+    reason = "Multiplexing full text format with trajectory acceptance;This program only generates and checks fixed input"
 )]
 #[path = "../../tests/support/trace.rs"]
 mod trace;
@@ -51,7 +51,7 @@ impl std::fmt::Display for RequestFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "基准会话 {} 序号 {} 的{}失败：{}",
+            "Baseline session {} serial number {} of{}failure:{}",
             self.session, self.serial, self.operation, self.cause
         )
     }
@@ -69,7 +69,7 @@ fn request<K: Kind>(step: &Step) -> Result<Request<K>> {
         step.key
             .as_slice()
             .try_into()
-            .map_err(|_| "基准键必须为八字节")?,
+            .map_err(|_| "Base key must be eight bytes")?,
     );
     let input = match &step.operation {
         Operation::Upsert(v) | Operation::Rmw { operand: v, .. } => v.clone(),
@@ -124,10 +124,10 @@ fn execute<K: Kind>(
             session: step.session,
             serial: step.serial,
             operation: match step.operation {
-                Operation::Read { .. } => "读取",
-                Operation::Upsert(_) => "写入",
-                Operation::Rmw { .. } => "读改写",
-                Operation::Delete { .. } => "删除",
+                Operation::Read { .. } => "read",
+                Operation::Upsert(_) => "write",
+                Operation::Rmw { .. } => "read-rewrite",
+                Operation::Delete { .. } => "delete",
             },
             cause,
         })?;
@@ -135,7 +135,9 @@ fn execute<K: Kind>(
             Outcome::Success(value) => value,
             Outcome::NotFound => ResultValue::NotFound,
             Outcome::Aborted(AbortReason::Tombstone) => ResultValue::Tombstone,
-            Outcome::Aborted(_) => return Err("基准收到非预期条件中止".into()),
+            Outcome::Aborted(_) => {
+                return Err("Benchmark receives unexpected condition abort".into());
+            }
         };
         return Ok((value, pending, retries));
     }
@@ -143,7 +145,7 @@ fn execute<K: Kind>(
 fn check(actual: &ResultValue, expected: &ResultValue, step: &Step) -> Result<()> {
     if !scenario::matches_result(step, actual, expected) {
         return Err(format!(
-            "基准会话 {} 序号 {}：实际 {actual:?}，预期 {expected:?}",
+            "Baseline session {} serial number {}:actual {actual:?},expected {expected:?}",
             step.session, step.serial
         )
         .into());
@@ -168,7 +170,7 @@ fn checkpoint<K: Kind>(store: &RasterKV<Schema<K>>) -> Result<CheckpointReport> 
                 .as_ref()
                 .as_ref()
                 .cloned()
-                .map_err(|error| format!("基准检查点失败：{error}").into());
+                .map_err(|error| format!("Baseline checkpoint failed:{error}").into());
         }
         std::thread::yield_now();
     }
@@ -178,7 +180,7 @@ fn shutdown<K: Kind>(store: &RasterKV<Schema<K>>) -> Result<()> {
     loop {
         match store.shutdown(end) {
             Ok(report) if report.device_drained => return Ok(()),
-            Ok(_) => return Err("基准关闭没有排空设备".into()),
+            Ok(_) => return Err("Baseline shutdown without draining equipment".into()),
             Err(Error::Busy) if !end.expired() => {
                 store.maintenance().poll(PollBudget::default())?;
                 std::thread::yield_now();
@@ -192,7 +194,7 @@ fn rss() -> Result<u64> {
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()?;
     if !output.status.success() {
-        return Err("无法采样本进程 RSS".into());
+        return Err("Unable to sample this process RSS".into());
     }
     Ok(String::from_utf8(output.stdout)?
         .trim()
@@ -253,7 +255,7 @@ fn worker<K: Kind>(
         };
         Ok((session, work, result))
     })();
-    // 即使预装失败也到达两个屏障，让其他线程退出并由主线程保留失败材料。
+    // Reaching two barriers even if pre-installation fails,Let other threads exit and the failure material is retained by the main thread.
     ready.wait();
     go.wait();
     let (mut session, work, mut result) = initialized?;
@@ -295,12 +297,12 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
     let trace = scenario::trace(&prepared);
     let text = trace.encode();
     if trace::Trace::decode(&text)? != trace {
-        return Err("基准轨迹往返不一致".into());
+        return Err("The reference trajectory is inconsistent round-trip".into());
     }
     let path = output.join(format!("{}.trace", case.input_id()));
     if path.exists() {
         if fs::read_to_string(&path)? != text {
-            return Err("相同场景的轨迹发生变化".into());
+            return Err("The trajectory of the same scene changes".into());
         }
     } else {
         fs::OpenOptions::new()
@@ -339,7 +341,7 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
             .map(|worker| {
                 worker
                     .join()
-                    .map_err(|_| "基准工作线程恐慌".into())
+                    .map_err(|_| "Baseline worker thread panics".into())
                     .and_then(|result| result)
             })
             .collect::<Result<Vec<_>>>();
@@ -348,13 +350,13 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
     let (initial, initial_io, initial_rss) = baseline?;
     let results = results?;
     if case.disk && initial.log_span_bytes <= budget {
-        return Err("预装数据没有超过配置的驻留窗口".into());
+        return Err("Preloaded data does not exceed the configured residence window".into());
     }
     let elapsed = results
         .iter()
         .map(|r| r.finished.duration_since(start))
         .max()
-        .ok_or("基准缺少工作线程")?;
+        .ok_or("Benchmark missing worker threads")?;
     let after = store.diagnostics()?;
     let after_io = meter.snapshot();
     let after_rss = rss()?;
@@ -365,19 +367,21 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
             || after_io.written != 0
             || after.log_span_bytes >= budget)
     {
-        return Err("纯内存组出现实际 I/O、挂起或超过窗口".into());
+        return Err("memory-only group performed I/O, hung, or exceeded the window".into());
     }
     if case.disk
         && (pending.iter().sum::<usize>() == 0 || after_io.read == 0 || after_io.written == 0)
     {
-        return Err("超内存组没有实际挂起及读写传输".into());
+        return Err(
+            "The super memory bank has no actual suspension and read and write transfers".into(),
+        );
     }
     let checkpoint_start = Instant::now();
     let checkpoint = checkpoint::<K>(&store)?;
     let checkpoint_ns = checkpoint_start.elapsed().as_nanos();
     let checkpoint_rss = rss()?;
     if checkpoint.sessions.len() != results.len() {
-        return Err("检查点没有保留全部工作会话".into());
+        return Err("Checkpoint did not retain all working sessions".into());
     }
     for worker in &results {
         if !checkpoint
@@ -385,7 +389,7 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
             .iter()
             .any(|p| p.session == worker.id && p.serial == worker.serial)
         {
-            return Err("检查点会话切分不匹配".into());
+            return Err("Checkpoint session split mismatch".into());
         }
     }
     let set = RecoverySet {
@@ -403,12 +407,12 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
     let recovery_io = recovery_meter.snapshot();
     let recovery_rss = rss()?;
     if recovery.sessions.len() != results.len() {
-        return Err("恢复报告缺少会话".into());
+        return Err("Recovery reports missing sessions".into());
     }
     for worker in &results {
         let resumed = store.continue_session(worker.id)?;
         if resumed.progress.serial != worker.serial {
-            return Err("续接会话进度不匹配".into());
+            return Err("Continue session progress mismatch".into());
         }
         let mut session = resumed.session;
         for (step, expected) in &worker.verify {
@@ -425,24 +429,29 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
         .flat_map(|r| r.latency.iter().copied())
         .collect();
     if latencies.len() != OPERATIONS {
-        return Err("基准执行操作数不完整".into());
+        return Err("Incomplete number of benchmark execution operations".into());
     }
     let applications: u64 = results.iter().map(|r| r.application_bytes).sum();
     let mut row = vec![
         if case.variable {
-            "变长字节"
+            "variable_bytes"
         } else {
-            "原子u64"
+            "atomicu64"
         }
         .into(),
         if case.hot {
-            "每线程热点"
+            "per_thread_hotspot"
         } else {
-            "均匀"
+            "uniform"
         }
         .into(),
         case.threads.to_string(),
-        if case.disk { "超内存" } else { "纯内存" }.into(),
+        if case.disk {
+            "over_memory"
+        } else {
+            "memory_only"
+        }
+        .into(),
         case.round.to_string(),
         scenario::SEED.to_string(),
         KEYS.to_string(),
@@ -458,7 +467,7 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
             .flat_map(|r| r.by_kind[kind].iter().copied())
             .collect();
         if values.len() != OPERATIONS / 4 {
-            return Err("四操作比例发生变化".into());
+            return Err("Four operation ratio changes".into());
         }
         row.push(values.len().to_string());
         row.push(percentile(&mut values, 99).to_string());
@@ -496,7 +505,7 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
         case.input_id(),
     ]);
     eprintln!(
-        "基准 {} 通过：{OPERATIONS} 步四操作、{} 个会话恢复、{KEYS} 个键与墓碑校验",
+        "benchmark {} passed:{OPERATIONS} steps_four_operations,{} session resume,{KEYS} keys_and_tombstone_validation",
         case.id(),
         case.threads
     );
@@ -504,7 +513,7 @@ fn run<K: Kind>(case: Case, output: &Path) -> Result<Vec<String>> {
 }
 fn main() -> Result<()> {
     if std::env::args_os().len() != 1 {
-        return Err("基准不接受位置参数".into());
+        return Err("Benchmark does not accept positional parameters".into());
     }
     let output = std::env::var_os("RASTER_BENCH_OUTPUT")
         .map(PathBuf::from)
@@ -516,53 +525,53 @@ fn main() -> Result<()> {
         .open(output.join("matrix.csv"))?;
     let mut csv = BufWriter::new(file);
     let mut columns: Vec<String> = [
-        "布局",
-        "分布",
-        "线程",
-        "存储",
-        "轮次",
-        "种子",
-        "键数",
-        "操作数",
-        "每秒操作",
-        "P50纳秒",
-        "P95纳秒",
-        "P99纳秒",
+        "layout",
+        "distribution",
+        "threads",
+        "storage",
+        "round",
+        "seeds",
+        "Number of keys",
+        "operation_count",
+        "operations_per_second",
+        "P50nanoseconds",
+        "P95nanoseconds",
+        "P99nanoseconds",
     ]
     .map(String::from)
     .to_vec();
-    for kind in ["读取", "写入", "RMW", "删除"] {
-        for metric in ["操作数", "P99纳秒", "挂起数"] {
+    for kind in ["read", "write", "RMW", "delete"] {
+        for metric in ["operation_count", "P99nanoseconds", "pending_count"] {
             columns.push(format!("{kind}{metric}"));
         }
     }
     columns.extend(
         [
-            "拒绝重试",
-            "成功",
-            "缺失",
-            "墓碑",
-            "窗口字节",
-            "预装日志跨度",
-            "业务后日志跨度",
-            "业务后驻留页字节",
-            "应用写入字节",
-            "预装累计读字节",
-            "预装累计写字节",
-            "业务后累计读字节",
-            "业务后累计写字节",
-            "持久化累计读字节",
-            "持久化累计写字节",
-            "恢复读字节",
-            "恢复写字节",
-            "写放大含预装检查点",
-            "预装RSS字节",
-            "业务后RSS字节",
-            "检查点后RSS字节",
-            "恢复后RSS字节",
-            "检查点纳秒",
-            "恢复纳秒",
-            "输入标识",
+            "Deny retry",
+            "success",
+            "missing",
+            "tombstone",
+            "window_bytes",
+            "Preloaded log span",
+            "Post-business log span",
+            "Post-transaction resident page bytes",
+            "application_write_bytes",
+            "Preloaded cumulative read bytes",
+            "Preloaded cumulative write bytes",
+            "post_workload_read_bytes",
+            "post_workload_write_bytes",
+            "Persistent accumulated read bytes",
+            "Persistent accumulated written bytes",
+            "Resume reading bytes",
+            "Resume writing bytes",
+            "write_amplification_including_preload_checkpoint",
+            "pre_installedRSSbytes",
+            "after_businessRSSbytes",
+            "after_checkpointRSSbytes",
+            "after_recoveryRSSbytes",
+            "checkpoint nanoseconds",
+            "Recovery nanoseconds",
+            "input_id",
         ]
         .map(String::from),
     );
@@ -591,7 +600,7 @@ fn main() -> Result<()> {
                             run::<Fixed>(case, &output)?
                         };
                         if row.len() != columns.len() {
-                            return Err("基准 CSV 列数不匹配".into());
+                            return Err("benchmark CSV Number of columns does not match".into());
                         }
                         writeln!(csv, "{}", row.join(","))?;
                         csv.flush()?;
@@ -602,8 +611,10 @@ fn main() -> Result<()> {
         }
     }
     if count != if selected.is_some() { 1 } else { 48 } {
-        return Err("基准场景选择为空或矩阵不完整".into());
+        return Err("Baseline scene selection is empty or the matrix is incomplete".into());
     }
-    println!("性能矩阵业务校验通过：{count} 组；数值不代表原性能回退已解决。");
+    println!(
+        "Performance matrix business verification passed:{count} group;The numerical value does not represent that the original performance regression has been resolved.."
+    );
     Ok(())
 }

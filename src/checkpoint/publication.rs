@@ -1,4 +1,4 @@
-//! 材料凭据匹配后写清单、提交标识并发布；最终目录同步之前不得成功。
+//! Write a list after matching the material credentials,Submit logo and publish;Must not succeed before final directory synchronization.
 use super::{
     directory::PreparedDirectory,
     material::{MaterialWrite, SyncedFile, WrittenMaterial},
@@ -44,28 +44,36 @@ impl CommitPublish {
             || directory.store != manifest.store
             || directory.token != manifest.token
         {
-            return Err(Error::InvalidState("清单与目录预留身份不匹配"));
+            return Err(Error::InvalidState(
+                "Manifest does not match directory reservation identity",
+            ));
         }
         let mut by_name = BTreeMap::new();
         for material in materials {
             if !Arc::ptr_eq(&material.owner, &storage.identity) || material.token != directory.token
             {
-                return Err(Error::InvalidState("材料属于其他存储或检查点"));
+                return Err(Error::InvalidState(
+                    "Material belongs to another storage or checkpoint",
+                ));
             }
             if by_name.insert(material.name.clone(), material).is_some() {
-                return Err(Error::InvalidState("材料凭据重复"));
+                return Err(Error::InvalidState("Duplicate material credentials"));
             }
         }
         if by_name.len() != manifest.materials.len() {
-            return Err(Error::InvalidFormat("材料凭据数量不匹配"));
+            return Err(Error::InvalidFormat(
+                "Material voucher quantity does not match",
+            ));
         }
         for material in &manifest.materials {
             let name = SegmentedStorage::checkpoint_material_name(material.id, material.generation);
-            let file = by_name
-                .remove(&name)
-                .ok_or(Error::InvalidFormat("缺少清单材料凭据"))?;
+            let file = by_name.remove(&name).ok_or(Error::InvalidFormat(
+                "Missing inventory material credentials",
+            ))?;
             if file.digest.bytes != material.bytes || file.digest.checksum != material.checksum {
-                return Err(Error::InvalidFormat("材料长度或校验值与清单不匹配"));
+                return Err(Error::InvalidFormat(
+                    "Material length or check value does not match listing",
+                ));
             }
         }
         let encoded = manifest.encode()?;
@@ -113,7 +121,9 @@ impl CommitPublish {
         if Arc::ptr_eq(&self.directory.owner, &storage.identity) {
             Ok(())
         } else {
-            Err(Error::InvalidState("提交发布属于其他存储"))
+            Err(Error::InvalidState(
+                "Submit publication belongs to other storage",
+            ))
         }
     }
     fn fail(&mut self, error: Error) {
@@ -145,10 +155,9 @@ impl CommitPublish {
         if let Some(file) = self.files.front_mut() {
             return file.submit_next(storage);
         }
-        let operation = self
-            .operations
-            .pop_front()
-            .ok_or(Error::InvalidState("提交发布没有待执行操作"))?;
+        let operation = self.operations.pop_front().ok_or(Error::InvalidState(
+            "There are no pending actions for submitting a release",
+        ))?;
         let rename = matches!(operation, IoOperation::Rename { .. });
         match storage.device.submit(IoRequest {
             route: self.route,
@@ -171,7 +180,10 @@ impl CommitPublish {
             },
         }
     }
-    #[allow(clippy::result_large_err, reason = "错误身份归还原完成与缓冲")]
+    #[allow(
+        clippy::result_large_err,
+        reason = "Mistaken identity reversion completes with buffering"
+    )]
     pub fn accept(
         &mut self,
         storage: &SegmentedStorage,
@@ -180,7 +192,7 @@ impl CommitPublish {
         if self.check_owner(storage).is_err() {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("提交发布属于其他存储"),
+                reason: Error::InvalidState("Submit publication belongs to other storage"),
             });
         }
         if let Some(file) = self.files.front_mut() {
@@ -191,7 +203,7 @@ impl CommitPublish {
         if self.pending != Some(completion.id) || completion.route != self.route {
             return Err(Rejected {
                 request: completion,
-                reason: Error::InvalidState("提交发布完成身份不匹配"),
+                reason: Error::InvalidState("Submit Release Completion Identity Mismatch"),
             });
         }
         self.pending = None;
@@ -203,14 +215,14 @@ impl CommitPublish {
                 }
             }
             Err(error) => self.fail(error),
-            _ => self.fail(Error::InvalidState("提交发布完成类型错误")),
+            _ => self.fail(Error::InvalidState("Submit publish completion type error")),
         }
         Ok(())
     }
     pub fn take_result(&mut self) -> Option<Result<PublishedCommit, Error>> {
         self.result.take()
     }
-    /// 重命名一旦被设备接受，就保守视为可能可见；失败时不能擅自删除目录。
+    /// Once the rename is accepted by the device,conservatively viewed as likely to be visible;You cannot delete the directory without authorization when it fails..
     #[cfg(test)]
     pub fn may_be_visible(&self) -> bool {
         self.visible

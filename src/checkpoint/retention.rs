@@ -1,4 +1,4 @@
-//! 已提交检查点的运行期保留目录；持久依据仍是不可变的 commit 与 manifest。
+//! Runtime retention directory for submitted checkpoints;Persistent evidence remains immutable commit and manifest.
 use crate::{
     format::{Kind, Manifest},
     types::*,
@@ -26,14 +26,18 @@ impl RetentionCatalog {
     pub fn retire(&mut self, token: CheckpointToken) {
         self.records.remove(&token);
     }
-    /// 调用者必须已同步发布或从已验证恢复集合中读取清单；本函数不证明磁盘提交。
+    /// The caller must have published synchronously or read the manifest from a verified recovery collection;This function does not prove disk commit.
     pub fn record_committed(&mut self, manifest: &Manifest) -> Result<(), Error> {
         manifest.validate()?;
         if self.store.is_some_and(|store| store != manifest.store) {
-            return Err(Error::InvalidState("保留目录不接受其他存储"));
+            return Err(Error::InvalidState(
+                "Reserved directory does not accept other storage",
+            ));
         }
         if self.records.contains_key(&manifest.token) {
-            return Err(Error::InvalidState("检查点保留记录重复"));
+            return Err(Error::InvalidState(
+                "Checkpoint retention record duplicates",
+            ));
         }
         let material_bytes = manifest.materials.iter().try_fold(0u64, |sum, material| {
             sum.checked_add(material.bytes)
@@ -58,7 +62,7 @@ impl RetentionCatalog {
     pub fn records(&self) -> impl Iterator<Item = &RetentionRecord> {
         self.records.values()
     }
-    /// 仅列出本进程已知引用；未列出的磁盘 token 默认仍保留，不能据此授权删除。
+    /// List only known references for this process;Disk not listed token The default remains,Deletion cannot be authorized based on this.
     #[cfg(test)]
     pub fn references_token(&self, token: CheckpointToken) -> bool {
         self.records

@@ -1,4 +1,4 @@
-//! 在同一独占目录锁内有界枚举提交及引用；未读取完整目录前不授权任何删除。
+//! Bounded enumeration of commits and references within the same exclusive directory lock;No deletion is authorized before the entire directory has been read.
 use super::{catalog_lock::CatalogLock, manifest_read::ManifestRead};
 use crate::{
     api::maintenance::RecoverySet,
@@ -93,7 +93,9 @@ impl CatalogRead {
         if !Arc::ptr_eq(&self.owner, &storage.identity)
             || lock.exclusive_handle(storage)? != self.guard
         {
-            return Err(Error::InvalidState("目录读取期间更换或释放了独占锁"));
+            return Err(Error::InvalidState(
+                "Exclusive lock changed or released during directory read",
+            ));
         }
         Ok(())
     }
@@ -121,7 +123,9 @@ impl CatalogRead {
                     .map_err(|_| Error::OutOfMemory)?;
                 for entry in entries {
                     if entry.kind != DirectoryEntryKind::Directory {
-                        return Err(Error::InvalidFormat("检查点命名空间包含非目录或链接"));
+                        return Err(Error::InvalidFormat(
+                            "Checkpoint namespace contains non-directory or link",
+                        ));
                     }
                     self.tokens.push(parse_token(&entry.name)?);
                 }
@@ -140,7 +144,9 @@ impl CatalogRead {
                 let mut manifest = false;
                 for entry in entries {
                     if entry.kind != DirectoryEntryKind::File {
-                        return Err(Error::InvalidFormat("检查点目录包含非文件或链接"));
+                        return Err(Error::InvalidFormat(
+                            "Checkpoint directory contains non-files or links",
+                        ));
                     }
                     match entry.name.to_str() {
                         Some("commit") => committed = true,
@@ -151,23 +157,29 @@ impl CatalogRead {
                         Some(name) if material_name(name) => {}
                         _ => {
                             return Err(Error::InvalidFormat(
-                                "检查点目录包含未知对象，不能授权释放",
+                                "Checkpoint directory contains unknown objects,Unable to authorize release",
                             ));
                         }
                     }
                 }
                 if committed && retired {
-                    return Err(Error::InvalidFormat("检查点同时存在有效和失效提交"));
+                    return Err(Error::InvalidFormat(
+                        "The checkpoint contains both valid and invalid commits",
+                    ));
                 }
                 if !committed && !retired {
                     if self.position == 0 {
-                        return Err(Error::InvalidFormat("目标检查点尚未提交"));
+                        return Err(Error::InvalidFormat(
+                            "The target checkpoint has not been committed yet",
+                        ));
                     }
                     self.position += 1;
                     return Ok(());
                 }
                 if !owner || !manifest {
-                    return Err(Error::InvalidFormat("已提交检查点缺少清单或预留标识"));
+                    return Err(Error::InvalidFormat(
+                        "Submitted checkpoint is missing manifest or reservation ID",
+                    ));
                 }
                 self.current_retired = retired;
                 self.charge(56)?;
@@ -182,7 +194,7 @@ impl CatalogRead {
                 )?);
                 self.stage = Stage::Manifest;
             }
-            _ => return Err(Error::InvalidState("目录完成阶段不匹配")),
+            _ => return Err(Error::InvalidState("Directory completion phase mismatch")),
         }
         Ok(())
     }
@@ -199,7 +211,7 @@ impl CatalogRead {
             && manifest.base_index == self.target
         {
             crate::format::match_recovery(
-                self.target_manifest.as_ref().expect("先读目标"),
+                self.target_manifest.as_ref().expect("read first target"),
                 &manifest,
             )?;
             self.blockers
@@ -235,7 +247,7 @@ impl CatalogRead {
             }
             if let Some(result) = reader.take_result() {
                 let manifest = result?;
-                let bytes = usize::try_from(reader.manifest_bytes().expect("清单已验证"))
+                let bytes = usize::try_from(reader.manifest_bytes().expect("Listing verified"))
                     .map_err(|_| Error::CapacityExceeded)?;
                 self.charge(bytes)?;
                 self.reader = None;
@@ -253,11 +265,15 @@ impl CatalogRead {
                 || completion.route != self.route
                 || completion.buffer.is_some()
             {
-                return Err(Error::InvalidState("目录枚举完成身份或缓冲错误"));
+                return Err(Error::InvalidState(
+                    "Directory enumeration completion identity or buffering error",
+                ));
             }
             self.pending = None;
             let IoOutcome::Directory(entries) = completion.result? else {
-                return Err(Error::InvalidState("目录枚举完成类型错误"));
+                return Err(Error::InvalidState(
+                    "Directory enumeration completion type error",
+                ));
             };
             self.directory(storage, entries)?;
             return Ok(true);
@@ -273,11 +289,13 @@ impl CatalogRead {
                         .get(&base)
                         .is_some_and(|(kind, _)| *kind != Kind::Log)
                 {
-                    return Err(Error::InvalidFormat("有效日志检查点的基准索引缺失或失效"));
+                    return Err(Error::InvalidFormat(
+                        "The base index for a valid log checkpoint is missing or invalid.",
+                    ));
                 }
             }
             self.result = Some(Catalog {
-                target: self.target_manifest.take().expect("目标清单存在"),
+                target: self.target_manifest.take().expect("Target list exists"),
                 retired: self.target_retired,
                 blockers: std::mem::take(&mut self.blockers),
             });
@@ -290,12 +308,12 @@ impl CatalogRead {
                 storage
                     .checkpoint_path(self.tokens[self.position], "commit")?
                     .parent()
-                    .expect("固定目录")
+                    .expect("fixed directory")
                     .to_path_buf(),
                 crate::format::MAX_MANIFEST_ITEMS + 5,
             ),
             Stage::Finish => return Ok(false),
-            Stage::Manifest => return Err(Error::InvalidState("目录清单读取者缺失")),
+            Stage::Manifest => return Err(Error::InvalidState("Missing directory listing reader")),
         };
         match storage.device.submit(IoRequest {
             route: self.route,
@@ -323,20 +341,22 @@ impl CatalogRead {
     }
 }
 fn parse_token(name: &std::ffi::OsStr) -> Result<CheckpointToken, Error> {
-    let name = name
-        .to_str()
-        .ok_or(Error::InvalidFormat("检查点目录名不是规范 token"))?;
+    let name = name.to_str().ok_or(Error::InvalidFormat(
+        "Checkpoint directory name is not canonical token",
+    ))?;
     if name.len() != 32
         || !name
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
-        return Err(Error::InvalidFormat("检查点目录名不是规范 token"));
+        return Err(Error::InvalidFormat(
+            "Checkpoint directory name is not canonical token",
+        ));
     }
     let mut token = [0; 16];
     for (i, value) in token.iter_mut().enumerate() {
         *value = u8::from_str_radix(&name[i * 2..i * 2 + 2], 16)
-            .map_err(|_| Error::InvalidFormat("检查点 token 无效"))?;
+            .map_err(|_| Error::InvalidFormat("checkpoint token Invalid"))?;
     }
     let token = CheckpointToken(token);
     token.validate()?;

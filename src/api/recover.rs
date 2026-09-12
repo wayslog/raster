@@ -1,4 +1,4 @@
-//! 同步恢复驱动只操作新设备与独立工作日志；全部成功后才发布实例。
+//! Synchronous recovery driver only operates new devices and independent work logs;Publish the instance only after all are successful.
 use super::{
     maintenance::{DurableProgress, RecoveryReport, RecoverySet},
     store::RasterKV,
@@ -65,9 +65,11 @@ fn completion(
         storage.device.poll(PollBudget::default(), &mut out)?;
         if !out.is_empty() {
             if out.len() != 1 || out[0].id != id || out[0].route != ROUTE {
-                return Err(Error::InvalidState("恢复设备返回未匹配完成"));
+                return Err(Error::InvalidState(
+                    "Recovery device returns unmatched completion",
+                ));
             }
-            return Ok(out.pop().expect("只有一个完成"));
+            return Ok(out.pop().expect("only one completed"));
         }
         std::thread::yield_now();
     }
@@ -115,11 +117,15 @@ fn execute(
     };
     let done = completion(storage, id, deadline)?;
     if done.buffer.is_some() {
-        return Err(Error::InvalidState("恢复元数据操作返回意外缓冲"));
+        return Err(Error::InvalidState(
+            "Restore metadata operation returns unexpected buffer",
+        ));
     }
     match done.result? {
         IoOutcome::Done => Ok(()),
-        _ => Err(Error::InvalidState("恢复元数据完成类型错误")),
+        _ => Err(Error::InvalidState(
+            "Recovery metadata completion type error",
+        )),
     }
 }
 fn drive_catalog_lock(
@@ -234,9 +240,9 @@ pub(crate) fn recover<S: Schema>(
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         build(config, schema, device.clone(), set, deadline)
     }))
-    .unwrap_or(Err(Error::InvalidState("恢复过程恐慌")));
+    .unwrap_or(Err(Error::InvalidState("Recovery process panic")));
     if result.is_err() {
-        // 失败不发布引擎；设备拥有在途缓冲，先请求排空，最后一个 Arc 的析构负责兜底。
+        // Failure does not release the engine;The device has an in-transit buffer,Request emptying first,the last one Arc The destructor is responsible for the bottom line.
         let _ = device.shutdown(Deadline(
             Instant::now() + std::time::Duration::from_secs(30),
         ));
@@ -311,9 +317,13 @@ fn build<S: Schema>(
         }
     }
     if plan.remaining() != 0 {
-        return Err(Error::InvalidState("恢复材料尚未全部验证"));
+        return Err(Error::InvalidState(
+            "Recovery materials have not all been verified",
+        ));
     }
-    let source_index = source_index.ok_or(Error::InvalidFormat("恢复集合缺少索引材料"))?;
+    let source_index = source_index.ok_or(Error::InvalidFormat(
+        "Recovery collection missing index material",
+    ))?;
     let mut replay = Replay::new(ReplayOptions {
         begin: plan.log().begin,
         end: plan.log().end,

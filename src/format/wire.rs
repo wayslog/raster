@@ -1,11 +1,11 @@
-//! 有界字节读取与逐位校验；不将输入转换为 Rust 对象镜像。
+//! Bounded byte reading and bit-by-bit verification;does not convert the input to Rust Object mirroring.
 use crate::types::Error;
 
 pub(super) fn invalid() -> Error {
-    Error::InvalidFormat("磁盘字节、长度或版本无效")
+    Error::InvalidFormat("disk bytes,Invalid length or version")
 }
 
-/// 反射多项式 0x82f63b78，初值与最终异或均为全一。
+/// reflection polynomial 0x82f63b78,The initial value and the final XOR are both all ones..
 pub(crate) fn checksum(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in bytes {

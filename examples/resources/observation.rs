@@ -1,4 +1,4 @@
-//! 原生进程观察；只读取本进程，不把 RSS 当作仍存活的 Rust 分配量。
+//! Native process observation;Read only this process,No RSS treated as still alive Rust Allocation amount.
 use super::{COUNTERS, Result, allocation::Snapshot};
 use std::{fs, process::Command};
 
@@ -12,7 +12,7 @@ pub(crate) struct Observation {
 fn process_output(arguments: &[&str]) -> Result<String> {
     let output = Command::new("ps").args(arguments).output()?;
     if !output.status.success() {
-        return Err("读取本进程资源失败".into());
+        return Err("Failed to read resources of this process".into());
     }
     Ok(String::from_utf8(output.stdout)?)
 }
@@ -22,14 +22,14 @@ pub(crate) fn observe() -> Result<Observation> {
         .trim()
         .parse::<u64>()?
         .checked_mul(1024)
-        .ok_or("RSS 字节数溢出")?;
+        .ok_or("RSS Bytes overflow")?;
     #[cfg(target_os = "linux")]
     let (directory, threads) = {
         let status = fs::read_to_string("/proc/self/status")?;
         let threads = status
             .lines()
             .find_map(|line| line.strip_prefix("Threads:"))
-            .ok_or("进程状态缺少线程数")?
+            .ok_or("process status does not contain a thread count")?
             .trim()
             .parse::<usize>()?;
         ("/proc/self/fd", threads)
@@ -40,31 +40,32 @@ pub(crate) fn observe() -> Result<Observation> {
         let mut lines = output.lines();
         let end = lines
             .next()
-            .ok_or("线程观察缺少标题")?
+            .ok_or("thread observation does not contain a header")?
             .find("PID")
-            .ok_or("线程观察缺少进程列")?
+            .ok_or("Thread watch missing process column")?
             + 3;
         let mut count = 0;
         for line in lines.filter(|line| !line.trim().is_empty()) {
-            // macOS 只在第一条线程行显示 USER/PID，后续线程将这两列留空。
+            // macOS Only displayed on the first thread line USER/PID,Subsequent threads leave these two columns blank.
             match line
                 .get(..end)
-                .ok_or("线程观察行被截断")?
+                .ok_or("Thread observes line being truncated")?
                 .split_whitespace()
                 .last()
             {
                 Some(value) if value == pid => {}
                 None if count > 0 => {}
-                _ => return Err("线程观察出现其他进程或缺少首行身份".into()),
+                _ => return Err("Thread observation shows the presence of other processes or missing first line identity".into()),
             }
             count += 1;
         }
         ("/dev/fd", count)
     };
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let (directory, threads): (&str, usize) = return Err("资源验收仅支持 Linux/macOS".into());
+    let (directory, threads): (&str, usize) =
+        return Err("Resource acceptance only supports Linux/macOS".into());
     if threads == 0 {
-        return Err("线程观察为空".into());
+        return Err("Thread observation is empty".into());
     }
     let files = fs::read_dir(directory)?.try_fold(0, |count, entry| entry.map(|_| count + 1))?;
     Ok(Observation {

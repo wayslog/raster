@@ -1,4 +1,4 @@
-//! 有界检查点描述与提交证据；验证字节不等于已经执行持久化同步。
+//! Bounded checkpoint description and submission evidence;Verify that the bytes are not equal to the persistence synchronization that has been performed.
 use super::wire::{Reader, checksum, invalid};
 use crate::types::*;
 use std::collections::BTreeSet;
@@ -33,7 +33,7 @@ impl Kind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Material {
-    /// 数字身份映射至根目录内的固定文件名，不接受磁盘提供的路径。
+    /// Digital identities map to fixed file names within the root directory,Path provided by disk is not accepted.
     pub id: u64,
     pub generation: Generation,
     pub kind: Kind,
@@ -56,7 +56,7 @@ pub(crate) struct Manifest {
     pub store: StoreId,
     pub token: CheckpointToken,
     pub kind: Kind,
-    /// 日志检查点显式绑定所选索引；完整和索引检查点绑定自己。
+    /// Log checkpoint explicitly binds selected index;Full and index checkpoints bind themselves.
     pub base_index: CheckpointToken,
     pub key_format: FormatId,
     pub value_format: FormatId,
@@ -64,7 +64,7 @@ pub(crate) struct Manifest {
     pub version: CheckpointVersion,
     pub begin: LogAddress,
     pub end: LogAddress,
-    /// 索引模糊区间重放起点。日志检查点保留其绑定索引的起点。
+    /// Index fuzzy interval replay starting point.Log checkpoints retain the starting point of their binding index.
     pub replay_from: LogAddress,
     pub session_progress: Vec<(SessionId, Serial)>,
     pub materials: Vec<Material>,
@@ -206,7 +206,7 @@ impl Manifest {
         if seed_len > MAX_SEED || sessions > MAX_ITEMS || materials > MAX_ITEMS {
             return Err(invalid());
         }
-        // 在按声明分配前验证完整剩余长度，防止短输入导致大分配。
+        // Verify full remaining length before allocating as declared,Prevent short inputs from causing large allocations.
         let expected = 148usize
             .checked_add(seed_len)
             .and_then(|n| n.checked_add(sessions * 24))
@@ -323,7 +323,7 @@ impl Commit {
     }
 }
 
-/// 两份描述必须已分别通过提交标识及全部材料校验；本函数只负责集合语义。
+/// The two descriptions must have passed the submission identification and all material verification respectively.;This function is only responsible for set semantics.
 pub(crate) fn match_recovery(index: &Manifest, log: &Manifest) -> Result<(), Error> {
     index.validate()?;
     log.validate()?;
@@ -391,7 +391,7 @@ mod tests {
         b[n..].copy_from_slice(&crc.to_le_bytes());
     }
     #[test]
-    fn 固定清单与提交样例逐字节往返() {
+    fn fixed_list_and_commit_example_byte_by_byte_round_trip() {
         let b = fixture();
         let m = manifest();
         assert_eq!(m.store, StoreId([1; 16]));
@@ -409,7 +409,7 @@ mod tests {
         match_recovery(&m, &m).unwrap();
     }
     #[test]
-    fn 清单和提交拒绝所有截断及逐字节损坏() {
+    fn manifests_and_commits_reject_all_truncation_and_byte_for_byte_corruption() {
         for b in [
             fixture(),
             bytes(include_str!("../../tests/fixtures/p1-commit.hex")),
@@ -435,7 +435,8 @@ mod tests {
         }
     }
     #[test]
-    fn 重算校验后未知版本计数保留位和身份仍拒绝() {
+    fn after_recalculation_and_verification_the_unknown_version_count_reserved_bit_and_identity_are_still_rejected()
+     {
         for (offset, data) in [
             (4, vec![2, 0]),
             (6, vec![4, 0]),
@@ -448,7 +449,7 @@ mod tests {
             let mut b = fixture();
             b[offset..offset + data.len()].copy_from_slice(&data);
             repair(&mut b);
-            assert!(Manifest::decode(&b).is_err(), "偏移 {offset}");
+            assert!(Manifest::decode(&b).is_err(), "offset {offset}");
         }
         let mut c = bytes(include_str!("../../tests/fixtures/p1-commit.hex"));
         c[6] = 1;
@@ -456,7 +457,7 @@ mod tests {
         assert!(Commit::decode(&c).is_err());
     }
     #[test]
-    fn 重复材料会话范围缺口与索引进度均拒绝() {
+    fn duplicate_material_session_scope_gap_and_index_progress_rejected() {
         let m = manifest();
         let mut bad = m.clone();
         bad.session_progress.push(bad.session_progress[0]);
@@ -483,7 +484,7 @@ mod tests {
         assert!(bad.encode().is_err());
     }
     #[test]
-    fn 分离检查点匹配及错配拒绝() {
+    fn separate_checkpoint_matching_and_mismatch_rejection() {
         let mut index = manifest();
         index.kind = Kind::Index;
         index.session_progress.clear();
@@ -506,7 +507,7 @@ mod tests {
                 6 => bad.replay_from = LogAddress(1),
                 _ => bad.hash.algorithm = FormatId([9; 16]),
             }
-            assert!(match_recovery(&index, &bad).is_err(), "错配项 {n}");
+            assert!(match_recovery(&index, &bad).is_err(), "mismatch {n}");
         }
         assert!(match_recovery(&log, &index).is_err());
         let mut commit =
