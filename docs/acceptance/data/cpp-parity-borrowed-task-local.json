@@ -1,0 +1,28 @@
+{
+  "base": "b2e4a47724488f5ba8b124d9b7ea5d32d31b4509",
+  "scope": "Borrowed initial Read/RMW execution; owned suspended tasks",
+  "source_sha256": {
+    "src/engine/mod.rs": "91af354331f80be1002a74afb4993361381bfa249a1a03e64baac9670c005941",
+    "src/engine/read.rs": "40d1dc0a72d32be2de0ac097d0cd5ee91f3f9f20be724316649c2fbec03a5a97",
+    "src/engine/rmw.rs": "291e58ee9978a4dc1374818589db894a3b8374d25f8c1405a357cd4a02d82df7",
+    "src/engine/task.rs": "a83e13802e31f794c731250a29004150032d66a49533b67f681ab4189ab3780b"
+  },
+  "binary_sha256": {
+    "parity": "be5f115fa9b7f275c224c007813ab0ac553c35570d0a76928ead7de299803cae",
+    "parity_scan": "0dfda79d1787873c33b389bebc5ef7a0f4441905ae33e8bcd31a9345301f8688",
+    "benchmark": "6ea7e152c6ef23f4673211ad6e3dd90ca8a9dfe6fb389f376cd07b6ad55d6701"
+  },
+  "archive": "cpp-parity-borrowed-task-local.tar.gz",
+  "sha256": "892493487fbde2c5a6bb5903c5ac4af1d59d31fe48d08bbf71f229a87e4fb8df",
+  "tests": {
+    "passed": 485,
+    "failed": 0,
+    "ignored": 0
+  },
+  "memory_passed": 11,
+  "scan_passed": 1,
+  "strict_lifecycle_passed": 1,
+  "native_status": "Not run yet; local failures remain open",
+  "trace_files": 24,
+  "unique_traces": 3
+}

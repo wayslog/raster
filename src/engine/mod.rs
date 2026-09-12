@@ -21,6 +21,7 @@ pub(crate) mod scan;
 #[cfg(test)]
 pub(crate) mod session_actor;
 mod storage_progress;
+mod task;
 pub(crate) mod thread_sessions;
 mod upsert;
 mod version_permit;
