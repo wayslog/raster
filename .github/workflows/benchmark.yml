@@ -190,6 +190,9 @@ jobs:
               if [ -f "$executable" ]; then
                 sha256sum "$executable" >> target/parity-evidence/native-code/binaries.sha256
                 objdump -d -C "$executable" > "target/parity-evidence/native-code/$variant-$program.asm"
+                # Preserve constants and relocation data as well as instructions.
+                objdump -h "$executable" > "target/parity-evidence/native-code/$variant-$program.sections"
+                objdump -s "$executable" > "target/parity-evidence/native-code/$variant-$program.contents"
               fi
             done
           done

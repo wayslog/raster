@@ -67,7 +67,7 @@ impl Kind for Variable {
         }
     }
     fn read(view: ValueRead<'_, Schema<Self>>) -> Result<Value, Error> {
-        Ok(Value::Bytes(view.view().clone()))
+        Ok(Value::Bytes(view.into_view()))
     }
     fn update(
         mut view: ValueUpdate<'_, Schema<Self>>,
@@ -91,6 +91,21 @@ impl Kind for Variable {
             Err(Error::Codec(_)) => Ok(UpdateDecision::Append),
             Err(error) => Err(error),
         }
+    }
+}
+
+// Baseline engines without ownership transfer must clone their decoded view.
+// Both benchmark builds use this same source; an inherent method takes priority.
+#[allow(
+    dead_code,
+    reason = "Only baselines without ValueRead::into_view use this fallback."
+)]
+trait LegacyValueView {
+    fn into_view(self) -> Vec<u8>;
+}
+impl LegacyValueView for ValueRead<'_, Schema<Variable>> {
+    fn into_view(self) -> Vec<u8> {
+        self.view().clone()
     }
 }
 pub struct Request<K: Kind> {
