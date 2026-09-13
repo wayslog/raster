@@ -26,13 +26,22 @@ impl ValuePlan {
     }
 }
 
-/// Canonical encoding strategy for common values. Encoding returns owned temporary bytes;
-/// errors never modify the shared slot.
-/// The implementation must stably encode the same logical value,refuse to tail/corrupted input;Does not encode process pointers or locks.
+/// Canonical encoding strategy for common values. Encoding completes before a
+/// shared slot is modified. Implementations must encode each logical value
+/// consistently and reject trailing or corrupted input. Encodings must not contain
+/// process pointers or locks.
 pub trait ValueCodec: Send + Sync + 'static {
     type Value: Send + Sync + 'static;
     fn format_id(&self) -> FormatId;
+    /// Encode a value into an independently owned buffer.
     fn encode(&self, value: &Self::Value) -> Result<Vec<u8>, Error>;
+    /// Return the same encoding as `encode`, borrowing from the input when possible.
+    /// The default preserves existing codecs and their encoding error behavior.
+    /// Borrowed bytes must remain unchanged for the lifetime of the returned view.
+    fn encode_view<'a>(&self, value: &'a Self::Value) -> Result<std::borrow::Cow<'a, [u8]>, Error> {
+        self.encode(value).map(std::borrow::Cow::Owned)
+    }
+
     fn decode(&self, bytes: &[u8]) -> Result<Self::Value, Error>;
 }
 

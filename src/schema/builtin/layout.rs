@@ -30,7 +30,8 @@ unsafe fn encoded<'a>(pointer: NonNull<u8>, len: usize) -> Result<&'a [u8], Erro
 unsafe fn write(pointer: NonNull<u8>, len: usize, bytes: &[u8]) -> Result<(), Error> {
     let needed = bytes.len().checked_add(8).ok_or(Error::CapacityExceeded)?;
     check(pointer, len, needed, 8)?;
-    // SAFETY: Dimensional alignment verified,The caller provides exclusivity,The output does not overlap with the owned temporary encoding.
+    // SAFETY: Size and alignment are checked. The caller exclusively owns the slot;
+    // the encoding borrows separate input storage or owns a temporary buffer.
     let all = unsafe { std::slice::from_raw_parts_mut(pointer.as_ptr(), len) };
     all[..8].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
     all[8..needed].copy_from_slice(bytes);
@@ -48,7 +49,7 @@ impl<C: ValueCodec> SerializedUpdate<'_, C> {
             .decode(unsafe { encoded(self.permit.as_ptr(), self.permit.len())? })
     }
     pub fn replace(&mut self, value: &C::Value) -> Result<(), Error> {
-        let bytes = self.codec.encode(value)?;
+        let bytes = self.codec.encode_view(value)?;
         // SAFETY: Holds an exclusive license;Complete coding first,Capacity failure does not write any bytes.
         unsafe { write(self.permit.as_ptr(), self.permit.len(), &bytes) }
     }
@@ -62,7 +63,15 @@ unsafe impl<C: ValueCodec> ValueLayout for SerializedValue<C> {
         self.codec.format_id()
     }
     fn plan(&self, value: &C::Value) -> Result<ValuePlan, Error> {
-        Ok(self.prepare(value)?.plan())
+        let bytes = self.codec.encode_view(value)?;
+        let live_bytes = bytes.len().checked_add(8).ok_or(Error::CapacityExceeded)?;
+        ValuePlan {
+            live_bytes,
+            encoded_bytes: bytes.len(),
+            capacity: live_bytes,
+            alignment: 8,
+        }
+        .validate()
     }
     fn decode_owned(&self, bytes: &[u8]) -> Result<Self::Owned, Error> {
         self.codec.decode(bytes)
@@ -75,7 +84,7 @@ unsafe impl<C: ValueCodec> ValueLayout for SerializedValue<C> {
         plan.validate()
     }
     fn initialize(&self, p: InitPermit<'_>, value: C::Value) -> Result<(), Error> {
-        let bytes = self.codec.encode(&value)?;
+        let bytes = self.codec.encode_view(&value)?;
         // SAFETY: The initialization permission of an unreleased slot is exclusive to the entire scope.
         unsafe { write(p.as_ptr(), p.len(), &bytes) }
     }

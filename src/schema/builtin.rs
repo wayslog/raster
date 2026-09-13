@@ -146,6 +146,10 @@ impl ValueCodec for ByteValueCodec {
     fn encode(&self, value: &Vec<u8>) -> Result<Vec<u8>, Error> {
         self.decode(value)
     }
+    fn encode_view<'a>(&self, value: &'a Vec<u8>) -> Result<std::borrow::Cow<'a, [u8]>, Error> {
+        checked_length(value.len())?;
+        Ok(std::borrow::Cow::Borrowed(value))
+    }
     fn decode(&self, bytes: &[u8]) -> Result<Vec<u8>, Error> {
         checked_length(bytes.len())?;
         let mut value = Vec::new();
@@ -263,3 +267,6 @@ mod owned_value_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod encoding_tests;

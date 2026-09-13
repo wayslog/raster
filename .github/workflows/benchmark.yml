@@ -130,6 +130,7 @@ jobs:
           } > target/parity-evidence/environment.txt
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           cargo build --locked --release --example parity --example parity_scan
+          cargo build --locked --release --all-features --example benchmark --example benchmark_probe
           sh tools/performance/build.sh target/upstream-source target/parity-build
           if [ -n "$BASELINE_REF" ]; then
             [[ "$BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
@@ -140,6 +141,13 @@ jobs:
             cp examples/parity_scan.rs target/parity-baseline/examples/parity_scan.rs
             cargo build --manifest-path target/parity-baseline/Cargo.toml \
               --target-dir target/parity-baseline-build --locked --release --example parity --example parity_scan
+            mkdir -p target/parity-baseline/examples/benchmark target/parity-baseline/tests/support
+            cp -R examples/benchmark/. target/parity-baseline/examples/benchmark/
+            cp examples/benchmark_probe.rs target/parity-baseline/examples/benchmark_probe.rs
+            cp tests/support/model.rs tests/support/trace.rs target/parity-baseline/tests/support/
+            cargo build --manifest-path target/parity-baseline/Cargo.toml \
+              --target-dir target/parity-baseline-build --locked --release --all-features \
+              --example benchmark --example benchmark_probe
             echo "rust_baseline:$BASELINE_REF" >> target/parity-evidence/environment.txt
           fi
           if [ -n "$SCAN_BASELINE_REF" ]; then
@@ -209,6 +217,37 @@ jobs:
             --baseline target/parity-scan-baseline-build/release/examples/parity_scan \
             --candidate target/release/examples/parity_scan \
             --output target/parity-evidence/resident-scans-anchor 2>&1 | tee target/parity-evidence/scan-anchor-checks.txt
+      - name: Compare repeated variable-memory operations with an identical baseline control
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tools/performance/compare_repeat.py \
+            --baseline target/parity-baseline-build/release/examples/benchmark_probe \
+            --candidate target/release/examples/benchmark_probe --repetitions 32 \
+            --output target/parity-evidence/variable-repeat 2>&1 | tee target/parity-evidence/repeat-checks.txt
+      - name: Compare complete lifecycles against the Rust baseline
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tools/acceptance/paired_benchmark.py \
+            --baseline target/parity-baseline-build/release/examples/benchmark \
+            --candidate target/release/examples/benchmark \
+            --interleaved-control \
+            --output target/parity-evidence/lifecycles 2>&1 | tee target/parity-evidence/lifecycle-checks.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = json.loads(Path('target/parity-evidence/lifecycles/comparison.json').read_text())
+          assert {row['case'] for row in rows} == {'u64-hot-t4-disk-r1', 'bytes-uniform-t1-disk-r1', 'bytes-hot-t1-memory-r1'}
+          failures = [row['case'] for row in rows if row['throughput_ratio'] < .98 or row['p99_ratio'] > 1.10]
+          controls = [row['case'] for row in rows if row['control_throughput_ratio'] < .98 or row['control_p99_ratio'] > 1.10]
+          print('Strict lifecycle failures:', failures)
+          print('Identical-baseline control failures:', controls)
+          assert not failures, failures
+          assert not controls, controls
+          PY
       - name: Preserve results even when parity fails
         if: always()
         uses: actions/upload-artifact@v4
