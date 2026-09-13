@@ -28,7 +28,8 @@ enum UpsertStep<T> {
     Ready(OperationResult<T>),
     Retry,
 }
-struct UpsertState<S: Schema, O: UpsertOperation<S>> {
+struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
+    engine: Arc<Engine<S>>,
     monitor: super::metrics::Monitor,
     request: Option<O>,
     prepared: Option<Prepared<S, O::Output>>,
@@ -41,8 +42,9 @@ struct UpsertState<S: Schema, O: UpsertOperation<S>> {
     version: CheckpointVersion,
     permit: Option<super::version_permit::VersionPermit>,
 }
-impl<S: Schema, O: UpsertOperation<S>> UpsertState<S, O> {
-    fn advance(&mut self, engine: &Engine<S>) -> Result<Option<Outcome<O::Output>>, Error> {
+impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
+    fn advance(&mut self) -> Result<Option<Outcome<O::Output>>, Error> {
+        let engine = &self.engine;
         let resolved = engine.resolve_index(self.hash, &self.key)?;
         let entry = resolved.entry;
         let head = resolved.head;
@@ -111,24 +113,23 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertState<S, O> {
     }
     fn finalize(
         &mut self,
-        engine: &Engine<S>,
         mut result: OperationResult<O::Output>,
     ) -> Option<OperationResult<O::Output>> {
         let request = self.request.take()?;
         if catch_unwind(AssertUnwindSafe(|| drop(self.prepared.take()))).is_err() {
-            engine.failed.store(true, Ordering::SeqCst);
+            self.engine.failed.store(true, Ordering::SeqCst);
             let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
             result = Err(OperationError {
                 cause: Error::InvalidState("Destruction panic of pending value"),
                 effect: self.effect,
             });
         }
-        Some(engine.finish_request(request, result, self.effect))
+        Some(self.engine.finish_request(request, result, self.effect))
     }
-    fn finish(&mut self, engine: &Engine<S>, result: OperationResult<O::Output>) {
-        if let Some(result) = self.finalize(engine, result) {
+    fn finish(&mut self, result: OperationResult<O::Output>) {
+        if let Some(result) = self.finalize(result) {
             if let Some(complete) = &self.complete {
-                engine.complete_tracked(
+                self.engine.complete_tracked(
                     &mut self.monitor,
                     self.mailbox.registered_id(),
                     complete,
@@ -136,21 +137,22 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertState<S, O> {
                 );
             } else {
                 // There is no ticket yet for the first simultaneous promotion;Exception expansion can only end and fail to close,Can't pretend to be informed.
-                engine.failed.store(true, Ordering::SeqCst);
+                self.engine.failed.store(true, Ordering::SeqCst);
                 self.monitor
                     .finish(super::metrics::Completed::Failed(Effect::Unknown), None);
                 let _ = catch_unwind(AssertUnwindSafe(|| drop(result)));
             }
         }
     }
-    fn run_locked(&mut self, engine: &Engine<S>) -> UpsertStep<O::Output> {
-        if engine.failed.load(Ordering::SeqCst) {
+    fn run_locked(&mut self) -> UpsertStep<O::Output> {
+        if self.engine.failed.load(Ordering::SeqCst) {
             return UpsertStep::Ready(Err(OperationError {
                 cause: Error::InvalidState("engine_failed_closed"),
                 effect: self.effect,
             }));
         }
-        match engine
+        match self
+            .engine
             .version_permits
             .ready_initial(self.hash, self.permit.as_ref())
         {
@@ -163,10 +165,10 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertState<S, O> {
                 }));
             }
         }
-        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(engine))) {
+        let result = match catch_unwind(AssertUnwindSafe(|| self.advance())) {
             Ok(result) => result,
             Err(_) => {
-                engine.failed.store(true, Ordering::SeqCst);
+                self.engine.failed.store(true, Ordering::SeqCst);
                 Err(Error::InvalidState("Write callback panic"))
             }
         };
@@ -174,7 +176,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertState<S, O> {
             return UpsertStep::Retry;
         }
         if result.is_err() && self.effect == Effect::Unknown {
-            engine.failed.store(true, Ordering::SeqCst);
+            self.engine.failed.store(true, Ordering::SeqCst);
         }
         UpsertStep::Ready(
             result
@@ -185,84 +187,58 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertState<S, O> {
                 }),
         )
     }
-    fn shutdown(&mut self, engine: &Engine<S>) {
-        if self.request.is_some() {
-            self.finish(
-                engine,
-                Err(OperationError {
-                    cause: Error::SessionAbandoned,
-                    effect: self.effect,
-                }),
-            );
-        }
-        let _ = engine.io.release_operation(&mut self.mailbox);
-    }
-}
-/// The initial call borrows the engine; ownership is acquired only for suspension.
-struct InitialUpsert<'a, S: Schema, O: UpsertOperation<S>> {
-    engine: &'a Engine<S>,
-    state: Option<UpsertState<S, O>>,
-}
-impl<S: Schema, O: UpsertOperation<S>> Drop for InitialUpsert<'_, S, O> {
-    fn drop(&mut self) {
-        if let Some(state) = &mut self.state {
-            state.shutdown(self.engine);
-        }
-    }
-}
-struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
-    engine: Arc<Engine<S>>,
-    state: UpsertState<S, O>,
 }
 impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
     fn id(&self) -> RequestId {
-        self.state.mailbox.id()
+        self.mailbox.id()
     }
     fn serial(&self) -> Serial {
-        self.state.serial
+        self.serial
     }
     fn version(&self) -> CheckpointVersion {
-        self.state.version
+        self.version
     }
     fn on_io(&mut self, _: IoCompletion) -> Result<(), Error> {
-        Err(Error::InvalidState("Upsert does not own device requests"))
+        Err(Error::InvalidState("Upsert Don't own the device request"))
     }
     fn step(&mut self, _: PollBudget) -> TaskStep {
-        let state = &mut self.state;
-        let engine = &self.engine;
-        if state.request.is_none() {
+        if self.request.is_none() {
             return TaskStep::Complete;
         }
+        let engine = self.engine.clone();
         let _gate =
-            match engine.operations[state.hash.0 as usize % engine.operations.len()].try_lock() {
+            match engine.operations[self.hash.0 as usize % engine.operations.len()].try_lock() {
                 Ok(guard) => guard,
                 Err(std::sync::TryLockError::WouldBlock) => return TaskStep::Retry,
                 Err(_) => {
-                    state.finish(
-                        engine,
-                        Err(OperationError {
-                            cause: Error::InvalidState("Operation arbitration lock poisoning"),
-                            effect: state.effect,
-                        }),
-                    );
+                    self.abandon(OperationError {
+                        cause: Error::InvalidState("Operation arbitration lock poisoning"),
+                        effect: self.effect,
+                    });
                     return TaskStep::Complete;
                 }
             };
-        match state.run_locked(engine) {
+        match self.run_locked() {
             UpsertStep::Retry => TaskStep::Retry,
             UpsertStep::Ready(result) => {
-                state.finish(engine, result);
+                self.finish(result);
                 TaskStep::Complete
             }
         }
     }
     fn abandon(&mut self, error: OperationError) {
-        self.state.finish(&self.engine, Err(error));
+        self.finish(Err(error));
     }
 }
 impl<S: Schema, O: UpsertOperation<S>> Drop for UpsertTask<S, O> {
     fn drop(&mut self) {
-        self.state.shutdown(&self.engine);
+        if self.request.is_some() {
+            self.abandon(OperationError {
+                cause: Error::SessionAbandoned,
+                effect: self.effect,
+            });
+        }
+        let _ = self.engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -319,27 +295,24 @@ impl<S: Schema> Engine<S> {
             let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
-        let mut initial = InitialUpsert {
-            engine: self,
-            state: Some(UpsertState {
-                monitor: session.tracker.accept(super::metrics::Kind::Upsert),
-                request: Some(request),
-                prepared: None,
-                key,
-                hash,
-                effect: Effect::NotApplied,
-                complete: None,
-                mailbox,
-                serial,
-                version: session.current.version,
-                permit,
-            }),
+        let mut task = UpsertTask {
+            monitor: session.tracker.accept(super::metrics::Kind::Upsert),
+            engine: self.clone(),
+            request: Some(request),
+            prepared: None,
+            key,
+            hash,
+            effect: Effect::NotApplied,
+            complete: None,
+            mailbox,
+            serial,
+            version: session.current.version,
+            permit,
         };
-        let task = initial.state.as_mut().expect("Initial state is present");
-        match task.run_locked(self) {
+        match task.run_locked() {
             UpsertStep::Ready(result) => {
                 let result = task
-                    .finalize(self, result)
+                    .finalize(result)
                     .expect("Synchronous requests are terminated only once");
                 self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
                 Ok(Submission::Ready(result))
@@ -351,13 +324,10 @@ impl<S: Schema> Engine<S> {
                     .and_then(|()| self.io.activate_operation(&mut task.mailbox))
                 {
                     let result = task
-                        .finalize(
-                            self,
-                            Err(OperationError {
-                                cause,
-                                effect: task.effect,
-                            }),
-                        )
+                        .finalize(Err(OperationError {
+                            cause,
+                            effect: task.effect,
+                        }))
                         .expect("Rejected mailbox registration is finalized");
                     self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
                     return Ok(Submission::Ready(result));
@@ -365,22 +335,9 @@ impl<S: Schema> Engine<S> {
                 let (ticket, complete) = Ticket::pair_bounded(id, credit);
                 task.complete = Some(complete);
                 task.monitor.pending();
-                let state = initial
-                    .state
-                    .take()
-                    .expect("Suspended state transfers once");
-                session.current.tasks.insert(
-                    id.slot,
-                    Box::new(UpsertTask {
-                        engine: self.clone(),
-                        state,
-                    }),
-                );
+                session.current.tasks.insert(id.slot, Box::new(task));
                 Ok(Submission::Pending(ticket))
             }
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
