@@ -51,6 +51,11 @@ The full performance objective also includes delete, variable values,
 over-memory I/O, checkpoint/recovery, compaction, and automatic maintenance.
 Passing these resident cases alone does not complete that objective.
 
+The native workflow preserves source hashes, executable hashes, and integer-driver
+disassembly under `native-code/`. Use a baseline with identical runtime source to
+check build and timing variation before attributing unexplained changes to an
+engine optimization. Preserve all failed measurements alongside those controls.
+
 ## Repeated variable-memory diagnosis
 
 `benchmark_probe` repeats the unchanged 16,384-operation variable-value hotspot
