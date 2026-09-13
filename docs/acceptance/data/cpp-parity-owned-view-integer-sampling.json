@@ -1,0 +1,293 @@
+{
+  "commit": "0b63f75bc0298566118ba03d6ecbcdcc0ed1bf54",
+  "scope": "Diagnostic stack samples only, including blocked threads; not CPU fractions or performance acceptance.",
+  "samples": {
+    "1": {
+      "scope": "Exclusive stack samples within public Session::read only. Samples include blocked threads and are not CPU-time fractions. Inlined work without a visible call-site owner remains unattributed.",
+      "session_read_samples": 2808,
+      "categories": [
+        {
+          "category": "other or inlined work",
+          "samples": 1289,
+          "fraction": 0.45904558404558404
+        },
+        {
+          "category": "resident record lease",
+          "samples": 512,
+          "fraction": 0.18233618233618235
+        },
+        {
+          "category": "epoch protection",
+          "samples": 245,
+          "fraction": 0.08725071225071225
+        },
+        {
+          "category": "session phase observation",
+          "samples": 242,
+          "fraction": 0.08618233618233619
+        },
+        {
+          "category": "index lookup",
+          "samples": 180,
+          "fraction": 0.0641025641025641
+        },
+        {
+          "category": "metrics",
+          "samples": 149,
+          "fraction": 0.053062678062678066
+        },
+        {
+          "category": "value access and callback",
+          "samples": 103,
+          "fraction": 0.03668091168091168
+        },
+        {
+          "category": "request identity and I/O routing",
+          "samples": 60,
+          "fraction": 0.021367521367521368
+        },
+        {
+          "category": "result quota",
+          "samples": 28,
+          "fraction": 0.009971509971509971
+        }
+      ],
+      "exclusive_symbols": [
+        {
+          "symbol": "_RNvMs4_NtCsAenbAmy4Dk_6raster3logINtB5_9HybridLogINtNtB7_6schema11SharedValueINtNtBO_7builtin10SchemaPairNtB1g_6U64KeyNtB1g_14AtomicU64ValueEEE5leaseCsaWeYzSgBbKM_6parity",
+          "samples": 463
+        },
+        {
+          "symbol": "_RNvXs_NtNtCsAenbAmy4Dk_6raster6engine4readINtB4_8ReadTaskINtNtNtB8_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestENtNtB6_7pending11PendingTask4stepB24_",
+          "samples": 283
+        },
+        {
+          "symbol": "pthread_mutex_lock",
+          "samples": 235
+        },
+        {
+          "symbol": "_RINvMs1_NtNtCsAenbAmy4Dk_6raster6engine4readINtB8_6EngineINtNtNtBa_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE4readNtCsaWeYzSgBbKM_6parity7RequestEB2a_",
+          "samples": 189
+        },
+        {
+          "symbol": "pthread_mutex_unlock",
+          "samples": 149
+        },
+        {
+          "symbol": "_RNvMNtCsAenbAmy4Dk_6raster6engineINtB2_6EngineINtNtNtB4_6schema7builtin10SchemaPairNtBL_6U64KeyNtBL_14AtomicU64ValueEE5admitCsaWeYzSgBbKM_6parity",
+          "samples": 138
+        },
+        {
+          "symbol": "_RINvMs2_NtNtCsAenbAmy4Dk_6raster12coordination7sessionNtB8_11Coordinator17with_registrationNtB8_11SystemStateNCNvB2_13session_state0ECsaWeYzSgBbKM_6parity",
+          "samples": 95
+        },
+        {
+          "symbol": "_RNvMs0_NtNtCsAenbAmy4Dk_6raster6engine7metricsNtB5_7Tracker6accept",
+          "samples": 75
+        },
+        {
+          "symbol": "_RNvMs4_NtCsAenbAmy4Dk_6raster3logINtB5_9HybridLogINtNtB7_6schema11SharedValueINtNtBO_7builtin10SchemaPairNtB1g_6U64KeyNtB1g_14AtomicU64ValueEEE9frontiersCsaWeYzSgBbKM_6parity",
+          "samples": 67
+        },
+        {
+          "symbol": "_RINvMNtCsAenbAmy4Dk_6raster6engineINtB3_6EngineINtNtNtB5_6schema7builtin10SchemaPairNtBM_6U64KeyNtBM_14AtomicU64ValueEE7prepareNtCsaWeYzSgBbKM_6parity7RequestEB23_",
+          "samples": 60
+        },
+        {
+          "symbol": "_RNvMNtNtCsAenbAmy4Dk_6raster3log6lookupINtB4_9HybridLogINtNtB6_6schema11SharedValueINtNtBU_7builtin10SchemaPairNtB1m_6U64KeyNtB1m_14AtomicU64ValueEEE13resident_headCsaWeYzSgBbKM_6parity",
+          "samples": 53
+        },
+        {
+          "symbol": "_RNvMs1_NtCsAenbAmy4Dk_6raster5epochNtB5_12EpochManager5enter",
+          "samples": 53
+        },
+        {
+          "symbol": "_RNvMNtNtCsAenbAmy4Dk_6raster6engine4readINtB2_8ReadTaskINtNtNtB6_6schema7builtin10SchemaPairNtBU_6U64KeyNtBU_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestE13read_residentB22_",
+          "samples": 52
+        },
+        {
+          "symbol": "DYLD-STUB$$pthread_mutex_unlock",
+          "samples": 51
+        },
+        {
+          "symbol": "_RNvMs2_NtNtCsAenbAmy4Dk_6raster6engine7metricsNtB5_7Monitor6finish",
+          "samples": 51
+        },
+        {
+          "symbol": "_RNvMNtNtCsAenbAmy4Dk_6raster6engine7observeINtB4_6EngineINtNtNtB6_6schema7builtin10SchemaPairNtBV_6U64KeyNtBV_14AtomicU64ValueEE15observe_sessionCsaWeYzSgBbKM_6parity",
+          "samples": 51
+        },
+        {
+          "symbol": "pthread_mutex_trylock",
+          "samples": 50
+        },
+        {
+          "symbol": "_RINvNtCs8Mbv00yxnRz_4core3ptr9drop_glueINtNtNtCsAenbAmy4Dk_6raster6engine4read8ReadTaskINtNtNtBI_6schema7builtin10SchemaPairNtB1q_6U64KeyNtB1q_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestEEB2A_",
+          "samples": 49
+        },
+        {
+          "symbol": "_RNvMs_NtNtCsAenbAmy4Dk_6raster5index6growthNtB4_8MemIndex7prepare",
+          "samples": 46
+        },
+        {
+          "symbol": "_RNvXs2_NtCsAenbAmy4Dk_6raster5epochNtB5_10EpochGuardNtNtNtCs8Mbv00yxnRz_4core3ops4drop4Drop4drop",
+          "samples": 45
+        }
+      ]
+    },
+    "4": {
+      "scope": "Exclusive stack samples within public Session::read only. Samples include blocked threads and are not CPU-time fractions. Inlined work without a visible call-site owner remains unattributed.",
+      "session_read_samples": 12152,
+      "categories": [
+        {
+          "category": "other or inlined work",
+          "samples": 5181,
+          "fraction": 0.4263495720868993
+        },
+        {
+          "category": "resident record lease",
+          "samples": 3539,
+          "fraction": 0.2912277814351547
+        },
+        {
+          "category": "epoch protection",
+          "samples": 962,
+          "fraction": 0.07916392363396972
+        },
+        {
+          "category": "request identity and I/O routing",
+          "samples": 740,
+          "fraction": 0.0608953258722844
+        },
+        {
+          "category": "session phase observation",
+          "samples": 603,
+          "fraction": 0.049621461487820935
+        },
+        {
+          "category": "index lookup",
+          "samples": 529,
+          "fraction": 0.043531928900592494
+        },
+        {
+          "category": "metrics",
+          "samples": 380,
+          "fraction": 0.031270572745227126
+        },
+        {
+          "category": "value access and callback",
+          "samples": 121,
+          "fraction": 0.009957208689927584
+        },
+        {
+          "category": "result quota",
+          "samples": 97,
+          "fraction": 0.007982225148123766
+        }
+      ],
+      "exclusive_symbols": [
+        {
+          "symbol": "__psynch_mutexwait",
+          "samples": 2691
+        },
+        {
+          "symbol": "_RINvMs1_NtNtCsAenbAmy4Dk_6raster6engine4readINtB8_6EngineINtNtNtBa_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueEE4readNtCsaWeYzSgBbKM_6parity7RequestEB2a_",
+          "samples": 898
+        },
+        {
+          "symbol": "_RNvNtNtCsAenbAmy4Dk_6raster6engine14operation_gate8try_lock",
+          "samples": 776
+        },
+        {
+          "symbol": "_RNvXs_NtNtCsAenbAmy4Dk_6raster6engine4readINtB4_8ReadTaskINtNtNtB8_6schema7builtin10SchemaPairNtBW_6U64KeyNtBW_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestENtNtB6_7pending11PendingTask4stepB24_",
+          "samples": 726
+        },
+        {
+          "symbol": "__psynch_mutexdrop",
+          "samples": 571
+        },
+        {
+          "symbol": "pthread_mutex_unlock",
+          "samples": 546
+        },
+        {
+          "symbol": "_RNvMs4_NtCsAenbAmy4Dk_6raster3logINtB5_9HybridLogINtNtB7_6schema11SharedValueINtNtBO_7builtin10SchemaPairNtB1g_6U64KeyNtB1g_14AtomicU64ValueEEE5leaseCsaWeYzSgBbKM_6parity",
+          "samples": 543
+        },
+        {
+          "symbol": "_RNvMs0_NtNtCsAenbAmy4Dk_6raster6engine6io_hubNtB5_13CompletionHub17reserve_operation",
+          "samples": 519
+        },
+        {
+          "symbol": "pthread_mutex_lock",
+          "samples": 495
+        },
+        {
+          "symbol": "_RINvNtCs8Mbv00yxnRz_4core3ptr9drop_glueINtNtNtCsAenbAmy4Dk_6raster6engine4read8ReadTaskINtNtNtBI_6schema7builtin10SchemaPairNtB1q_6U64KeyNtB1q_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestEEB2A_",
+          "samples": 441
+        },
+        {
+          "symbol": "_RNvMs1_NtCsAenbAmy4Dk_6raster5epochNtB5_12EpochManager5enter",
+          "samples": 382
+        },
+        {
+          "symbol": "_RINvMs2_NtNtCsAenbAmy4Dk_6raster12coordination7sessionNtB8_11Coordinator17with_registrationNtB8_11SystemStateNCNvB2_13session_state0ECsaWeYzSgBbKM_6parity",
+          "samples": 381
+        },
+        {
+          "symbol": "_RNvMs4_NtCsAenbAmy4Dk_6raster3logINtB5_9HybridLogINtNtB7_6schema11SharedValueINtNtBO_7builtin10SchemaPairNtB1g_6U64KeyNtB1g_14AtomicU64ValueEEE9frontiersCsaWeYzSgBbKM_6parity",
+          "samples": 373
+        },
+        {
+          "symbol": "_RNvMs_NtNtCsAenbAmy4Dk_6raster5index6growthNtB4_8MemIndex7prepare",
+          "samples": 322
+        },
+        {
+          "symbol": "_RNvMs0_NtNtCsAenbAmy4Dk_6raster6engine7metricsNtB5_7Tracker6accept",
+          "samples": 290
+        },
+        {
+          "symbol": "_RNvMNtCsAenbAmy4Dk_6raster6engineINtB2_6EngineINtNtNtB4_6schema7builtin10SchemaPairNtBL_6U64KeyNtBL_14AtomicU64ValueEE5admitCsaWeYzSgBbKM_6parity",
+          "samples": 288
+        },
+        {
+          "symbol": "_RNvMs0_NtNtCsAenbAmy4Dk_6raster6engine6io_hubNtB5_13CompletionHub17release_operation",
+          "samples": 221
+        },
+        {
+          "symbol": "_RNvMNtNtCsAenbAmy4Dk_6raster3log6lookupINtB4_9HybridLogINtNtB6_6schema11SharedValueINtNtBU_7builtin10SchemaPairNtB1m_6U64KeyNtB1m_14AtomicU64ValueEEE13resident_headCsaWeYzSgBbKM_6parity",
+          "samples": 160
+        },
+        {
+          "symbol": "_RNvMNtNtCsAenbAmy4Dk_6raster6engine4readINtB2_8ReadTaskINtNtNtB6_6schema7builtin10SchemaPairNtBU_6U64KeyNtBU_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestE6finishB22_",
+          "samples": 110
+        },
+        {
+          "symbol": "_RNvMNtNtCsAenbAmy4Dk_6raster6engine4readINtB2_8ReadTaskINtNtNtB6_6schema7builtin10SchemaPairNtBU_6U64KeyNtBU_14AtomicU64ValueENtCsaWeYzSgBbKM_6parity7RequestE11run_initialB22_",
+          "samples": 107
+        }
+      ]
+    }
+  },
+  "archive": "cpp-parity-owned-view-integer-sampling.tar.gz",
+  "sha256": "dfc5051f9b80b4c8e30f4c3e7f3399ce8fc1d8742c5a1ccd7b37df3df089cd42",
+  "archive_bytes": 33986,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "sampling/1/metadata.json": "92a22a36e691e07bc84d3b06ebe9430d132ab26f08f65975be51fec6b41fe9bd",
+    "sampling/1/read-samples.json": "c71e93185160c641eb3dfc7498bfb59d5350a70deb9df9d87a28404ea6327350",
+    "sampling/1/run.log": "9a7f18e6cf9ee87a80e48e9a95cde9702e49694397f7d41c5d7bad4c867158c9",
+    "sampling/1/sample-command.log": "0e7cf4a58bc180bc258b86241fa00ce3299c96d5f3e91dc3ef425cd5db816a3f",
+    "sampling/1/sample.txt": "c03ce1a5919d4a1a622f5bc662de6d9c730565ebcd83ca249bb7506533bb4e74",
+    "sampling/4/metadata.json": "ed221f7a86c44691e453489642462585551378b1a1b447eddfdfd9b7c1eb3f20",
+    "sampling/4/read-samples.json": "ff94b323a553a2c434398143f99f8b738ff795c7a1a93338542d49147eca1ac4",
+    "sampling/4/run.log": "8234c943f217462435770a137a395f68b4223565060bb0337e36330c1dbd594a",
+    "sampling/4/sample-command.log": "2df00151806d6f3ee8d73060b40fdf4db8a3c4002cb8004873d474ee87620666",
+    "sampling/4/sample.txt": "fc3bc6033c3c54fe2a80cc8e748a47eeac1d47cc8b49501404acf332ccfc6f99",
+    "sampling/analyze.py": "5d4acb035a325e84060a9cac986e48fb7fad48aff8812567d1ae390c4b2ee217",
+    "sampling/manifest.json": "3bcd0a0230d8389e0cf3cb0ca66527bd96adc88cfc3bd09b9a8d46ed2412f70d",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
