@@ -168,6 +168,31 @@ jobs:
               --target-dir target/parity-memory-baseline-build --locked --release --example parity
             echo "rust_memory_baseline:$MEMORY_BASELINE_REF" >> target/parity-evidence/environment.txt
           fi
+          # Keep native code evidence to distinguish source changes from build or run variation.
+          mkdir -p target/parity-evidence/native-code
+          for variant in candidate baseline scan-baseline memory-baseline; do
+            if [ "$variant" = candidate ]; then
+              build_root=target
+              source_root=.
+            else
+              build_root="target/parity-$variant-build"
+              source_root="target/parity-$variant"
+            fi
+            if [ ! -d "$source_root/src" ]; then
+              continue
+            fi
+            (
+              cd "$source_root"
+              git ls-files -z src | xargs -0 sha256sum
+            ) > "target/parity-evidence/native-code/$variant-source.sha256"
+            for program in parity parity_scan; do
+              executable="$build_root/release/examples/$program"
+              if [ -f "$executable" ]; then
+                sha256sum "$executable" >> target/parity-evidence/native-code/binaries.sha256
+                objdump -d -C "$executable" > "target/parity-evidence/native-code/$variant-$program.asm"
+              fi
+            done
+          done
       - name: Compare alternating native engine samples
         shell: bash
         env:
