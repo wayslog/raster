@@ -34,6 +34,8 @@ ShutdownReport 含 device_drained，成功不自动创建检查点。关闭超�
 | RmwOperation | initial、copy_update、update_in_place | initial 无值参数，copy_update 接收 ValueRead，二者返回 `(OwnedValueOf<S>, Output)`；原地接收 ValueUpdate |
 | DeleteOperation | `complete(self, DeleteOutcome) -> Output` | 删除生效后消费操作生成结果 |
 
+`ValueRead::view()` 借用读取视图；`ValueRead::into_view(self)` 消费包装并取出视图，避免对已拥有的解码结果再克隆一次。对于 `SerializedValue`，可将拥有型结果直接用于 Read 输出或 RMW 的 copy_update；对于借用型布局，取出的视图仍受原读取许可寿命限制，不能延长至 static。`ValueUpdate` 的原地修改入口不变。
+
 replacement/initial/copy_update 的接收者为 `&mut self`，结果包装在 `Result<_, Error>` 中。update_in_place 返回 `Result<UpdateDecision<Output>, Error>`，UpdateDecision 为 Updated(T) 或 Append。计算可能因条件发布冲突重做，不应带不可重放的外部副作用；已经生效的修改和删除通知不重放。
 
 | Session 方法 | 选项默认 | 正常结果 |

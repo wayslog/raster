@@ -192,6 +192,20 @@ impl<'a, S: Schema> ValueRead<'a, S> {
     pub fn view(&self) -> &<S::Value as ValueLayout>::Read<'a> {
         &self.view
     }
+    /// Consume the wrapper and move out its view without cloning it.
+    /// Owned views may become operation results. Borrowed views retain the
+    /// lifetime imposed by the record's read permission.
+    ///
+    /// ```compile_fail
+    /// use raster::schema::{Schema, ValueLayout, ValueRead};
+    /// fn escape<'a, S: Schema>(value: ValueRead<'a, S>)
+    ///     -> <S::Value as ValueLayout>::Read<'static> {
+    ///     value.into_view()
+    /// }
+    /// ```
+    pub fn into_view(self) -> <S::Value as ValueLayout>::Read<'a> {
+        self.view
+    }
 }
 pub struct ValueUpdate<'a, S: Schema> {
     pub(crate) view: <S::Value as ValueLayout>::Update<'a>,
@@ -201,3 +215,6 @@ impl<'a, S: Schema> ValueUpdate<'a, S> {
         &mut self.view
     }
 }
+
+#[cfg(test)]
+mod ownership_tests;
