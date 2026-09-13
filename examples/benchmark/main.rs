@@ -5,15 +5,20 @@ mod meter;
     dead_code,
     reason = "Baseline inputs are precomputed by a deterministic value model;There is also a special track acceptance for non-deterministic blind deletion observation."
 )]
-mod model;
+pub(crate) mod model;
 mod operation;
+#[allow(
+    dead_code,
+    reason = "The separate benchmark_probe example drives these diagnostics."
+)]
+pub(crate) mod probe;
 mod scenario;
 #[allow(
     dead_code,
     reason = "Multiplexing full text format with trajectory acceptance;This program only generates and checks fixed input"
 )]
 #[path = "../../tests/support/trace.rs"]
-mod trace;
+pub(crate) mod trace;
 
 use meter::Meter;
 use model::ResultValue;

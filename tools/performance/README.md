@@ -44,3 +44,33 @@ and thresholds, and still run when the C++ parity step fails.
 The full performance objective also includes delete, variable values,
 over-memory I/O, checkpoint/recovery, compaction, and automatic maintenance.
 Passing these resident cases alone does not complete that objective.
+
+## Repeated variable-memory diagnosis
+
+`benchmark_probe` repeats the unchanged 16,384-operation variable-value hotspot
+trajectory on fresh stores. It reuses the original worker and operation callbacks,
+checks all results and all 2,048 final keys per repetition, and rejects data I/O,
+Pending, or retries. Each repetition resets the store, so increasing the repeat
+count preserves the original value-growth pattern. Timing excludes setup and final
+key verification. Checkpoint and recovery coverage stays with `benchmark`.
+
+```sh
+cargo build --locked --release --all-features --example benchmark_probe
+target/release/examples/benchmark_probe target/repeated-memory 32
+python3 tools/performance/compare_repeat.py \
+  --baseline target/preserved/benchmark_probe \
+  --candidate target/release/examples/benchmark_probe \
+  --repetitions 32 --output target/repeated-comparison
+```
+
+Build both runtime versions with identical probe, callback, generator, and oracle
+sources. The comparator executes six permutations of the baseline, candidate, and
+an identical-baseline control. It verifies the fixed input hash, row counts,
+operation/key counts, and timing sums, then applies the existing 0.98 throughput
+and 1.10 overall P99 limits. Preserve short-window failures alongside this evidence.
+
+The JSON field `engine_ns` sums the original worker's `execute` intervals, including
+its API adapter and user callbacks; it is not exclusive engine CPU time. Wall time
+also includes the worker's result checks and bookkeeping. `operation_time_ratios`
+are candidate duration divided by baseline duration, so lower values are faster.
+This diagnostic does not establish C++ parity or replace lifecycle acceptance.
