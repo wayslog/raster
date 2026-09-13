@@ -803,3 +803,7 @@ mod tests {
         pool.release(PageId(0), Generation(0)).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "value/encoding_tests.rs"]
+mod encoding_tests;

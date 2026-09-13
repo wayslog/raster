@@ -41,6 +41,12 @@ regression, while retaining the immediate baseline comparison and all results.
 Likewise, `memory_baseline_ref` adds a second full-commit memory baseline with
 the current direct driver. Both memory comparisons use the same case filter
 and thresholds, and still run when the C++ parity step fails.
+With `baseline_ref`, the workflow also compares repeated variable-memory traces
+with an identical-baseline control and runs the three paired lifecycle scenarios
+with the same control and six execution orders.
+It overlays the same benchmark, generator, and oracle sources on the baseline.
+The lifecycle step requires throughput of at least 0.98 and P99 of at most 1.10
+relative to that baseline; the older tool's looser review flag is not the gate.
 The full performance objective also includes delete, variable values,
 over-memory I/O, checkpoint/recovery, compaction, and automatic maintenance.
 Passing these resident cases alone does not complete that objective.

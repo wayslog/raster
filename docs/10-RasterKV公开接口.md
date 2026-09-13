@@ -134,6 +134,8 @@ KeyCodec 定义 Key/OwnedKey、规范编码、完整哈希、format_id/hash_desc
 
 安全 ValueCodec 通过 SerializedValue 适配普通值；AtomicU64Value 提供原子值。unsafe ValueLayout 定义拥有值、短期 Read/Update 视图、plan/plan_decode、初始化、稳定编码、拥有解码和销毁。许可由引擎构造，专家必须满足 [11 状态协议](11-RasterKV内存与状态协议.md)。
 
+ValueCodec::encode 返回独立拥有的字节；新增的 encode_view 返回相同编码的 Cow，可借用输入。默认实现调用 encode，已有编码器无需改动。SerializedValue 的容量规划、初始化和替换使用 encode_view；内建 ByteValueCodec 直接借用输入，prepare 仍返回独立拥有的 PreparedValue。编码视图仅在本次规划或写槽调用中使用，容量检查在写槽前完成，稳定磁盘编码不变。
+
 DeviceFactory::open 返回 `Result<Box<dyn Device>, Error>`。Device::submit 返回 IoId 或归还整个 RejectedIo；poll 交付拥有型 IoCompletion；shutdown 按 Deadline 排空。读写、同步、长度、目录、重命名、删除、锁、关闭和取消显式建模，失败也须归还缓冲。Null/Memory/ThreadPool 可用，Windows/io_uring 后置。
 
 [16 公开流程](16-公开接口使用流程.md)提供真实示例。精确签名可直接生成源码文档：
