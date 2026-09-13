@@ -1,0 +1,33 @@
+{
+  "scope": "Missing lifetime prerequisite for a proposed optimization; not a failure of the current Arc-based public API.",
+  "result": {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--all-features",
+      "--lib",
+      "engine_epoch_alone_must_retain_a_retired_record_before_borrowed_access_is_safe"
+    ],
+    "exit_code": 101,
+    "expected_prerequisite_failure": true,
+    "source_restored": true,
+    "finding": "After entering the actual engine epoch, unlinking the index and retiring the record destroys the PageValue owner when no Arc lease remains. Epoch-only borrowed record access is not currently safe. Existing public operations retain Arc leases.",
+    "next_requirement": "Integrate record-owner retirement with the matching engine epoch before using borrowed pointers, including eviction, allocation failure, shutdown and stale-address tests."
+  },
+  "archive": "cpp-parity-epoch-record-lifetime.tar.gz",
+  "sha256": "211f529ea4bb70174a1120fa5d778682fa75788c31033cb72919bd6ed1cdb660",
+  "archive_bytes": 11054,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "diagnostic/base-log-mod.rs": "9c2141fdf5eb7a8ad365c56a973f72b60975d60d0cbc4b5b8838e152dbb920da",
+    "diagnostic/fixture.patch": "c3d5e62f52ee587f73e758fa25d403b2f402f17317cf643ab4e3bc417a976a80",
+    "diagnostic/fixture.rs": "198aa314cdaa6d673d1d43e2a1ab2e5326fdc3d81953dbf61fd6db034a0ae17d",
+    "diagnostic/manifest.json": "87804362e7f1494b938e1dc9ea093e8ffd98aaf146cd4142bea703cf73568e60",
+    "diagnostic/red.log": "b208b6e97c504e07b70f209d9cb4ac699332a9102d2ae92f48029da3ec863103",
+    "diagnostic/result.json": "0375c8ec198e24edaab0ad036c787bd270323309dcc93184c55e6a483b078abc",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
