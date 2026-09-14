@@ -24,6 +24,9 @@ unsafe impl<S: Schema> ValueLayout for SharedValue<S> {
     type Owned = OwnedValueOf<S>;
     type Read<'a> = <S::Value as ValueLayout>::Read<'a>;
     type Update<'a> = <S::Value as ValueLayout>::Update<'a>;
+    fn concurrent_reads(&self) -> bool {
+        self.0.value_layout().concurrent_reads()
+    }
     fn concurrent_updates(&self) -> bool {
         self.0.value_layout().concurrent_updates()
     }

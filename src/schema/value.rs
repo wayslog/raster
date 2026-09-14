@@ -158,6 +158,19 @@ pub unsafe trait ValueLayout: Send + Sync + 'static {
     fn concurrent_updates(&self) -> bool {
         false
     }
+    /// Opt in to concurrent reads of a live record.
+    ///
+    /// Returning true promises that `read` and all returned views are safe
+    /// alongside other reads and update views, including exclusive updates
+    /// requested by layouts whose `concurrent_updates` returns false. Read
+    /// access must preserve the logical value. The promise must remain true
+    /// for every record created by this layout for its entire live lifetime.
+    /// Stable encoding, tombstone publication, initialization, and destruction
+    /// remain excluded by the record owner. The default preserves exclusive
+    /// read access for existing expert layouts and ordinary byte values.
+    fn concurrent_reads(&self) -> bool {
+        false
+    }
     fn format_id(&self) -> FormatId;
     fn plan(&self, value: &Self::Owned) -> Result<ValuePlan, Error>;
     /// Plan active objects according to stable coding;Disk slot capacity cannot be directly used as active layout.

@@ -304,7 +304,14 @@ impl<V: ValueLayout> PageValue<V> {
         &self,
         f: impl for<'a> FnOnce(V::Read<'a>) -> R,
     ) -> Result<ValueAccess<R>, Error> {
-        match self.try_read_live(f)? {
+        // Copy-update callbacks require a stable source throughout the call,
+        // even when the layout supports concurrent ordinary reads.
+        let _gate = match self.gate.try_replace() {
+            Ok(gate) => gate,
+            Err(Error::Busy) => return Ok(ValueAccess::Contended),
+            Err(error) => return Err(error),
+        };
+        match self.read_live_locked(f)? {
             ValueAccess::Ready(Some(value)) => Ok(ValueAccess::Ready(value)),
             ValueAccess::Ready(None) => Err(Error::InvalidState(
                 "Tombstones do not contain active values",
@@ -312,16 +319,35 @@ impl<V: ValueLayout> PageValue<V> {
             ValueAccess::Contended => Ok(ValueAccess::Contended),
         }
     }
-    /// Tombstone Checking and User Value View Shared Exclusive License,Avoid concurrent deletions from being falsely reported as layout errors.
+    /// Read under a shared permit only when the expert layout opts in.
+    /// Both permit kinds exclude tombstone publication and stable snapshots.
     pub fn try_read_live<R>(
         &self,
         f: impl for<'a> FnOnce(V::Read<'a>) -> R,
     ) -> Result<ValueAccess<Option<R>>, Error> {
-        let _gate = match self.gate.try_replace() {
-            Ok(gate) => gate,
-            Err(Error::Busy) => return Ok(ValueAccess::Contended),
-            Err(error) => return Err(error),
-        };
+        let _shared;
+        let _exclusive;
+        if self.layout.concurrent_reads() {
+            _shared = Some(match self.gate.try_read() {
+                Ok(gate) => gate,
+                Err(Error::Busy) => return Ok(ValueAccess::Contended),
+                Err(error) => return Err(error),
+            });
+            _exclusive = None;
+        } else {
+            _exclusive = Some(match self.gate.try_replace() {
+                Ok(gate) => gate,
+                Err(Error::Busy) => return Ok(ValueAccess::Contended),
+                Err(error) => return Err(error),
+            });
+            _shared = None;
+        }
+        self.read_live_locked(f)
+    }
+    fn read_live_locked<R>(
+        &self,
+        f: impl for<'a> FnOnce(V::Read<'a>) -> R,
+    ) -> Result<ValueAccess<Option<R>>, Error> {
         if self.is_tombstone() {
             return Ok(ValueAccess::Ready(None));
         }
@@ -812,3 +838,6 @@ mod tests {
 #[cfg(test)]
 #[path = "value/encoding_tests.rs"]
 mod encoding_tests;
+
+#[cfg(test)]
+mod concurrent_read_tests;

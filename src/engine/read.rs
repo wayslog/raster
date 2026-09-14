@@ -367,22 +367,36 @@ impl<S: Schema> Engine<S> {
         options: ReadOptions,
         hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
-        if let Err(reason) = self.observe_session(session) {
-            return Err(Rejected { request, reason });
-        }
+        let at_rest = match self.observe_read_entry(session) {
+            Ok(at_rest) => at_rest,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
         let (hash, key) = match self.prepare(session, serial, &request) {
             Ok(value) => value,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let _gate = match super::operation_gate::try_lock(
-            &self.operations[hash.0 as usize % self.operations.len()],
-        ) {
-            Ok(guard) => guard,
-            Err(_) => {
+        let gate = &self.operations[hash.0 as usize % self.operations.len()];
+        let _gate = if at_rest {
+            // This thread cannot acknowledge a newly started Prepare until the
+            // call returns. Admission, callbacks and Pending registration below
+            // therefore precede any newer checkpoint version for this session.
+            // Record/index synchronization still arbitrates concurrent writes.
+            if gate.is_poisoned() {
                 return Err(Rejected {
                     request,
                     reason: Error::Busy,
                 });
+            }
+            None
+        } else {
+            match super::operation_gate::try_lock(gate) {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    return Err(Rejected {
+                        request,
+                        reason: Error::Busy,
+                    });
+                }
             }
         };
         if session.pending() >= self.config.session.max_pending {

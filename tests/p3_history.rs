@@ -9,6 +9,7 @@ use std::sync::{
     Barrier, Mutex,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::{Duration, Instant};
 #[path = "support/history.rs"]
 mod history;
 use history::{Action, Event, Reply, Request};
@@ -128,9 +129,9 @@ fn three_session_four_operation_mixed_history_linearizable() {
                                     DeleteOptions::default(),
                                 ),
                             };
-                            let end = clock.fetch_add(1, Ordering::SeqCst);
                             match result {
                                 Err(rejected) => {
+                                    clock.fetch_add(1, Ordering::SeqCst);
                                     assert!(matches!(rejected.reason, Error::Busy));
                                     assert_eq!(
                                         session.last_accepted(),
@@ -139,10 +140,22 @@ fn three_session_four_operation_mixed_history_linearizable() {
                                     std::thread::yield_now();
                                 }
                                 Ok(result) => {
+                                    // Pending is accepted work: finish its ticket
+                                    // once rather than submitting the operation again.
+                                    let result = match result {
+                                        Submission::Ready(result) => result,
+                                        Submission::Pending(mut ticket) => session
+                                            .wait(
+                                                &mut ticket,
+                                                Deadline(Instant::now() + Duration::from_secs(5)),
+                                            )
+                                            .unwrap(),
+                                    };
+                                    let end = clock.fetch_add(1, Ordering::SeqCst);
                                     let reply = match result {
-                                        Submission::Ready(Ok(Outcome::Success(reply))) => reply,
-                                        Submission::Ready(Ok(Outcome::NotFound)) => Reply::Missing,
-                                        _ => panic!("unexpected end result"),
+                                        Ok(Outcome::Success(reply)) => reply,
+                                        Ok(Outcome::NotFound) => Reply::Missing,
+                                        result => panic!("unexpected final result: {result:?}"),
                                     };
                                     history.lock().unwrap().push(Event {
                                         start,

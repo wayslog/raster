@@ -1,4 +1,5 @@
-//! Atomic updates are shareable,Replacement and normal byte access must be exclusive;All operations attempt only one state transition.
+//! Shared atomic access excludes replacement and ordinary byte access. Read
+//! acquisition retries compatible count changes within a fixed attempt budget.
 use crate::{
     sync::{AtomicU64, PUBLISH_ORDER},
     types::Error,
@@ -38,6 +39,32 @@ impl MutationGate {
             gate: self,
             local: PhantomData,
         })
+    }
+    /// Retry only compatible reader/update count changes. An exclusive owner,
+    /// count overflow, or exhausted budget suspends the operation as before.
+    /// No user callback runs during these bounded admission attempts.
+    fn try_read_from(&self, mut state: u64) -> Result<SharedUpdatePermit<'_>, Error> {
+        for _ in 0..8 {
+            if state >= EXCLUSIVE - 1 {
+                return Err(Error::Busy);
+            }
+            match self
+                .state
+                .compare_exchange(state, state + 1, PUBLISH_ORDER, PUBLISH_ORDER)
+            {
+                Ok(_) => {
+                    return Ok(SharedUpdatePermit {
+                        gate: self,
+                        local: PhantomData,
+                    });
+                }
+                Err(current) => state = current,
+            }
+        }
+        Err(Error::Busy)
+    }
+    pub fn try_read(&self) -> Result<SharedUpdatePermit<'_>, Error> {
+        self.try_read_from(self.state.load(PUBLISH_ORDER))
     }
     /// Upgrading with a shared license is not supported;Read ordinary bytes,Use this entrance to write ordinary values and replace them..
     pub fn try_replace(&self) -> Result<ReplacementPermit<'_>, Error> {
@@ -117,6 +144,37 @@ mod tests {
             state: AtomicU64::new(EXCLUSIVE - 1),
         };
         assert!(gate.try_update().is_err());
+        assert_eq!(gate.state.load(PUBLISH_ORDER), EXCLUSIVE - 1);
+    }
+}
+
+#[cfg(test)]
+mod read_admission_tests {
+    use super::*;
+    #[test]
+    fn a_compatible_reader_count_change_does_not_force_read_suspension() {
+        let gate = MutationGate::default();
+        let observed = gate.state.load(PUBLISH_ORDER);
+        let other = gate.try_update().unwrap();
+        let reader = gate.try_read_from(observed);
+        assert!(
+            reader.is_ok(),
+            "compatible shared-count changes should be retried before suspending a Read"
+        );
+        assert!(gate.try_replace().is_err());
+        drop(reader);
+        drop(other);
+        assert!(gate.try_replace().is_ok());
+    }
+    #[test]
+    fn a_stale_shared_count_never_bypasses_an_exclusive_owner_or_overflows() {
+        let gate = MutationGate::default();
+        let owner = gate.try_replace().unwrap();
+        assert!(gate.try_read_from(0).is_err());
+        assert_eq!(gate.state.load(PUBLISH_ORDER), EXCLUSIVE);
+        drop(owner);
+        gate.state.store(EXCLUSIVE - 1, PUBLISH_ORDER);
+        assert!(gate.try_read_from(0).is_err());
         assert_eq!(gate.state.load(PUBLISH_ORDER), EXCLUSIVE - 1);
     }
 }
