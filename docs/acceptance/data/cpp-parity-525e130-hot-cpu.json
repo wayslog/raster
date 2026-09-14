@@ -1,0 +1,1125 @@
+{
+  "commit": "525e130d2fce63c52fd1d1a333c665d71ea36b91",
+  "run": 34818784708,
+  "validation": {
+    "exact_commit": "525e130d2fce63c52fd1d1a333c665d71ea36b91",
+    "timed_and_profiled_binaries_match": true,
+    "binary_sha256": {
+      "cpp": "b1b9bb3e5136b75516cddaddd52e9b46d3c6b82483ab4b4036b77147e198c647",
+      "rust": "dffbb90796cc14e354f9845e80016352838eeb54bc27864b3136a959ce798ad6"
+    },
+    "profile_operations_verified": 80000000,
+    "profile_raw_hashes_and_leaf_counts_verified": true,
+    "scope": "Whole-process samples including setup and final verification. No sampled timing is acceptance evidence."
+  },
+  "summary": [
+    {
+      "case": "upsert/shared-hot/1",
+      "engine": "cpp",
+      "samples": 637,
+      "single_frame_events": 26,
+      "unknown_caller_events": 603,
+      "top_leaf_symbols": [
+        [
+          "main::{lambda()#1}::operator()() const",
+          316
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]",
+          244
+        ],
+        [
+          "main",
+          26
+        ],
+        [
+          "TLS init function for FASTER::core::Thread::id_",
+          25
+        ],
+        [
+          "[unknown]",
+          12
+        ],
+        [
+          "FASTER::core::CheckpointLockGuard<FASTER::core::IndexKeyHash<FASTER::index::HotLogIndexBucketEntryDef, (unsigned char)0, (unsigned char)0> >::~CheckpointLockGuard()",
+          6
+        ],
+        [
+          "void std::__introsort_loop<__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter>(__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, __gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter) [clone .isra.0]",
+          4
+        ],
+        [
+          "FASTER::core::MallocFixedPageSize<FASTER::index::HotLogIndexHashBucket, FASTER::device::NullDisk>::Allocate()",
+          2
+        ],
+        [
+          "FASTER::core::FasterKv<Key, Value, FASTER::device::NullDisk, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition> >::FasterKv(FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::Config, unsigned long, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, double, FASTER::core::ReadCacheConfig, FASTER::core::HlogCompactionConfig, bool, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
+          1
+        ],
+        [
+          "FASTER::core::FasterKv<Key, Value, FASTER::device::NullDisk, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition> >::Refresh(bool) [clone .constprop.0]",
+          1
+        ]
+      ],
+      "leaf_offsets": [
+        [
+          "main::{lambda()#1}::operator()() const+0xf46",
+          38
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xf42",
+          36
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x145",
+          30
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x18f",
+          26
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x162",
+          26
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1c2a",
+          22
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xcf",
+          21
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x43e",
+          20
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x38b",
+          15
+        ],
+        [
+          "[unknown]",
+          12
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x124",
+          12
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x2e8",
+          12
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xde",
+          11
+        ],
+        [
+          "main+0x16ce",
+          11
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x12f",
+          10
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xf01",
+          10
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x8f",
+          10
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xdb",
+          9
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x38e",
+          9
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xf54",
+          9
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x133",
+          9
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xdd1",
+          9
+        ],
+        [
+          "TLS init function for FASTER::core::Thread::id_+0x3f",
+          8
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x2d2",
+          8
+        ],
+        [
+          "main+0x16b0",
+          8
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x35c",
+          7
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xb6",
+          7
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x65b",
+          7
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xd3",
+          7
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x149",
+          7
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x16a",
+          7
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xf4b",
+          6
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x13",
+          6
+        ],
+        [
+          "TLS init function for FASTER::core::Thread::id_+0x6",
+          6
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xa1",
+          6
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x10a1",
+          6
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x13d",
+          6
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xe5f",
+          6
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1b5",
+          6
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x57",
+          6
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x33",
+          6
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1c22",
+          6
+        ],
+        [
+          "TLS init function for FASTER::core::Thread::id_+0x0",
+          5
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xe36",
+          5
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xf2f",
+          5
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x14d",
+          5
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x388",
+          5
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x159",
+          5
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x42f",
+          5
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1763",
+          5
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x73",
+          4
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x103",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x179b",
+          4
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xac",
+          4
+        ],
+        [
+          "FASTER::core::CheckpointLockGuard<FASTER::core::IndexKeyHash<FASTER::index::HotLogIndexBucketEntryDef, (unsigned char)0, (unsigned char)0> >::~CheckpointLockGuard()+0xa",
+          4
+        ],
+        [
+          "TLS init function for FASTER::core::Thread::id_+0x18",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x42c",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xed8",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x415",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1742",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xf57",
+          4
+        ],
+        [
+          "main+0x16d6",
+          4
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x10c5",
+          3
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xc0",
+          3
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x426",
+          3
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xe10",
+          3
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x10b8",
+          3
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1d8",
+          3
+        ],
+        [
+          "FASTER::core::MallocFixedPageSize<FASTER::index::HotLogIndexHashBucket, FASTER::device::NullDisk>::Allocate()+0x187",
+          2
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xe70",
+          2
+        ],
+        [
+          "FASTER::core::CheckpointLockGuard<FASTER::core::IndexKeyHash<FASTER::index::HotLogIndexBucketEntryDef, (unsigned char)0, (unsigned char)0> >::~CheckpointLockGuard()+0x4",
+          2
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xfd9",
+          2
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1778",
+          2
+        ],
+        [
+          "TLS init function for FASTER::core::Thread::id_+0x2a",
+          2
+        ],
+        [
+          "main+0x16d8",
+          2
+        ],
+        [
+          "FASTER::core::FasterKv<Key, Value, FASTER::device::NullDisk, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition> >::FasterKv(FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::Config, unsigned long, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, double, FASTER::core::ReadCacheConfig, FASTER::core::HlogCompactionConfig, bool, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)+0xcf3",
+          1
+        ],
+        [
+          "FASTER::core::FasterKv<Key, Value, FASTER::device::NullDisk, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>, FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition> >::Refresh(bool) [clone .constprop.0]+0x56",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x6c",
+          1
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1752",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x0",
+          1
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0xe6a",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x81",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x5d",
+          1
+        ],
+        [
+          "main::{lambda()#1}::operator()() const+0x1c2e",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0xcc",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x9e",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x96",
+          1
+        ],
+        [
+          "FASTER::core::Status FASTER::index::MemHashIndex<FASTER::device::NullDisk, FASTER::index::HotLogHashIndexDefinition>::FindOrCreateEntry<FASTER::core::PendingUpsertContext<Request, false> >(FASTER::core::ExecutionContext&, FASTER::core::PendingUpsertContext<Request, false>&) [clone .isra.0]+0x7e",
+          1
+        ],
+        [
+          "void std::__introsort_loop<__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter>(__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, __gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter) [clone .isra.0]+0xaa",
+          1
+        ],
+        [
+          "void std::__introsort_loop<__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter>(__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, __gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter) [clone .isra.0]+0xb8",
+          1
+        ],
+        [
+          "void std::__introsort_loop<__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter>(__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, __gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter) [clone .isra.0]+0xe1",
+          1
+        ],
+        [
+          "void std::__introsort_loop<__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter>(__gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, __gnu_cxx::__normal_iterator<unsigned long*, std::vector<unsigned long, std::allocator<unsigned long> > >, long, __gnu_cxx::__ops::_Iter_less_iter) [clone .isra.0]+0xd6",
+          1
+        ],
+        [
+          "main+0x1797",
+          1
+        ]
+      ],
+      "thread_samples": {
+        "4042": 34,
+        "4043": 603
+      }
+    },
+    {
+      "case": "upsert/shared-hot/1",
+      "engine": "rust",
+      "samples": 5402,
+      "single_frame_events": 2948,
+      "unknown_caller_events": 2260,
+      "top_leaf_symbols": [
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>",
+          826
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked",
+          692
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>",
+          471
+        ],
+        [
+          "<raster::coordination::Coordinator>::with_registration::<raster::coordination::SystemState, <raster::coordination::Coordinator>::session_state::{closure#0}>",
+          237
+        ],
+        [
+          "<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::update_at_version::<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>",
+          194
+        ],
+        [
+          "<raster::index::growth::MemIndex>::prepare_guarded",
+          181
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::reserve_operation",
+          179
+        ],
+        [
+          "<raster::epoch::EpochManager>::enter_scope",
+          176
+        ],
+        [
+          "<raster::api::session::Session<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>",
+          167
+        ],
+        [
+          "<raster::epoch::EpochGuard as core::ops::drop::Drop>::drop",
+          155
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash",
+          152
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::admit",
+          131
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::retain_operation",
+          125
+        ],
+        [
+          "std::sys::backtrace::__rust_begin_short_backtrace::<parity::main::{closure#1}::{closure#0}, core::result::Result<parity::Measurement, alloc::boxed::Box<dyn core::error::Error + core::marker::Send + core::marker::Sync>>>",
+          125
+        ],
+        [
+          "std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::try_update_if_mutable<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>::{closure#0}>, core::result::Result<raster::api::operation::UpdateDecision<u64>, raster::types::error::Error>>",
+          114
+        ],
+        [
+          "<raster::index::Table>::prepare",
+          92
+        ],
+        [
+          "<raster::log::HybridLog<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::resident_head_borrowed",
+          91
+        ],
+        [
+          "core::ptr::drop_glue::<raster::types::error::Error>",
+          90
+        ],
+        [
+          "[unknown]",
+          80
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::observe_entry",
+          70
+        ],
+        [
+          "<raster::engine::metrics::Monitor>::finish",
+          69
+        ],
+        [
+          "<raster::engine::pending::SessionRuntime>::reserve_result",
+          66
+        ],
+        [
+          "<raster::engine::metrics::Tracker>::accept",
+          63
+        ],
+        [
+          "core::ptr::drop_glue::<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>",
+          62
+        ],
+        [
+          "raster::engine::operation_gate::try_lock",
+          61
+        ],
+        [
+          "<std::sync::poison::mutex::Mutex<alloc::collections::btree::map::BTreeMap<raster::types::id::LogAddress, alloc::sync::Arc<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>>>>::lock",
+          58
+        ],
+        [
+          "<raster::coordination::session::PoisonNotification as core::ops::drop::Drop>::drop",
+          57
+        ],
+        [
+          "<raster::log::gate::MutationGate>::try_update",
+          51
+        ],
+        [
+          "parity::ready",
+          49
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::record_ready::<u64>",
+          38
+        ],
+        [
+          "<raster::engine::metrics::Metrics>::timer",
+          35
+        ],
+        [
+          "<raster::schema::encoded_key::EncodedKey as core::ops::deref::Deref>::deref",
+          31
+        ],
+        [
+          "parity::key_for",
+          29
+        ],
+        [
+          "parity::main",
+          28
+        ],
+        [
+          "<raster::log::HybridLog<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::mutable_head_borrowed",
+          27
+        ]
+      ],
+      "leaf_offsets": [
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0x201",
+          141
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::reserve_operation+0x114",
+          139
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x98c",
+          132
+        ],
+        [
+          "<raster::index::growth::MemIndex>::prepare_guarded+0x206",
+          130
+        ],
+        [
+          "<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::update_at_version::<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>+0x176",
+          114
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0xc3",
+          113
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0xd54",
+          113
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x394",
+          109
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x4e7",
+          109
+        ],
+        [
+          "<raster::coordination::Coordinator>::with_registration::<raster::coordination::SystemState, <raster::coordination::Coordinator>::session_state::{closure#0}>+0x3df",
+          98
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::retain_operation+0x30",
+          97
+        ],
+        [
+          "<raster::api::session::Session<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x88",
+          91
+        ],
+        [
+          "[unknown]",
+          80
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x2d",
+          79
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x238",
+          74
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x6a1",
+          74
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0xc84",
+          66
+        ],
+        [
+          "raster::engine::operation_gate::try_lock+0x12",
+          48
+        ],
+        [
+          "<raster::coordination::Coordinator>::with_registration::<raster::coordination::SystemState, <raster::coordination::Coordinator>::session_state::{closure#0}>+0xdb",
+          47
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0x10d",
+          45
+        ],
+        [
+          "<raster::epoch::EpochGuard as core::ops::drop::Drop>::drop+0x1f0",
+          45
+        ],
+        [
+          "<raster::epoch::EpochGuard as core::ops::drop::Drop>::drop+0x5d",
+          44
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x324",
+          43
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x3ef",
+          42
+        ],
+        [
+          "<raster::coordination::session::PoisonNotification as core::ops::drop::Drop>::drop+0x0",
+          40
+        ],
+        [
+          "<raster::epoch::EpochManager>::enter_scope+0x6c",
+          40
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x99c",
+          39
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0x160",
+          38
+        ],
+        [
+          "<raster::log::gate::MutationGate>::try_update+0x17",
+          37
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x38b",
+          36
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0xcb",
+          36
+        ],
+        [
+          "<std::sync::poison::mutex::Mutex<alloc::collections::btree::map::BTreeMap<raster::types::id::LogAddress, alloc::sync::Arc<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>>>>::lock+0x12",
+          36
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x145",
+          35
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0xce6",
+          31
+        ],
+        [
+          "<raster::engine::metrics::Tracker>::accept+0xbe",
+          29
+        ],
+        [
+          "<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::update_at_version::<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>+0x131",
+          27
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x5cd",
+          27
+        ],
+        [
+          "std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::try_update_if_mutable<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>::{closure#0}>, core::result::Result<raster::api::operation::UpdateDecision<u64>, raster::types::error::Error>>+0x8",
+          26
+        ],
+        [
+          "<raster::epoch::EpochManager>::enter_scope+0x2cf",
+          24
+        ],
+        [
+          "std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::try_update_if_mutable<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>::{closure#0}>, core::result::Result<raster::api::operation::UpdateDecision<u64>, raster::types::error::Error>>+0x47",
+          24
+        ],
+        [
+          "std::sys::backtrace::__rust_begin_short_backtrace::<parity::main::{closure#1}::{closure#0}, core::result::Result<parity::Measurement, alloc::boxed::Box<dyn core::error::Error + core::marker::Send + core::marker::Sync>>>+0x418",
+          24
+        ],
+        [
+          "<raster::engine::metrics::Monitor>::finish+0x40",
+          22
+        ],
+        [
+          "<raster::engine::pending::SessionRuntime>::reserve_result+0x40",
+          22
+        ],
+        [
+          "<raster::schema::encoded_key::EncodedKey as core::ops::deref::Deref>::deref+0x0",
+          22
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x3b6",
+          21
+        ],
+        [
+          "core::ptr::drop_glue::<raster::types::error::Error>+0x12",
+          21
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x240",
+          20
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x4ff",
+          20
+        ],
+        [
+          "<raster::engine::pending::SessionRuntime>::reserve_result+0x1a4",
+          20
+        ],
+        [
+          "core::ptr::drop_glue::<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>+0x6c",
+          19
+        ],
+        [
+          "<raster::api::session::Session<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x8d",
+          19
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x0",
+          18
+        ],
+        [
+          "std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::try_update_if_mutable<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>::{closure#0}>, core::result::Result<raster::api::operation::UpdateDecision<u64>, raster::types::error::Error>>+0x29",
+          18
+        ],
+        [
+          "<raster::engine::metrics::Metrics>::timer+0x0",
+          18
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x630",
+          18
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x79",
+          18
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0x165",
+          17
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x45",
+          17
+        ],
+        [
+          "<raster::coordination::session::PoisonNotification as core::ops::drop::Drop>::drop+0x3",
+          17
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x6c1",
+          17
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x8a",
+          17
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0x112",
+          17
+        ],
+        [
+          "<raster::index::Table>::prepare+0x24a",
+          17
+        ],
+        [
+          "core::ptr::drop_glue::<raster::types::error::Error>+0xe",
+          16
+        ],
+        [
+          "core::ptr::drop_glue::<std::sync::poison::mutex::MutexGuard<raster::engine::checkpoint::CheckpointRuntime>>+0x1d",
+          16
+        ],
+        [
+          "<raster::engine::pending::SessionRuntime>::pending+0x0",
+          15
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x83",
+          15
+        ],
+        [
+          "std::sys::backtrace::__rust_begin_short_backtrace::<parity::main::{closure#1}::{closure#0}, core::result::Result<parity::Measurement, alloc::boxed::Box<dyn core::error::Error + core::marker::Send + core::marker::Sync>>>+0x738",
+          15
+        ],
+        [
+          "std::sys::backtrace::__rust_begin_short_backtrace::<parity::main::{closure#1}::{closure#0}, core::result::Result<parity::Measurement, alloc::boxed::Box<dyn core::error::Error + core::marker::Send + core::marker::Sync>>>+0x6db",
+          15
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::record_ready::<u64>+0x95",
+          15
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::encode+0x0",
+          14
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x34",
+          13
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x6f",
+          12
+        ],
+        [
+          "<raster::log::page::PagePool>::ensure_healthy+0x3",
+          12
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x947",
+          12
+        ],
+        [
+          "<raster::index::Table>::prepare+0x41",
+          12
+        ],
+        [
+          "<raster::log::HybridLog<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::mutable_head_borrowed+0x44",
+          12
+        ],
+        [
+          "parity::main+0x10ea",
+          12
+        ],
+        [
+          "<raster::engine::metrics::Monitor as core::ops::drop::Drop>::drop+0x0",
+          11
+        ],
+        [
+          "core::ptr::drop_glue::<raster::types::error::Error>+0x1f",
+          11
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>+0xd0",
+          11
+        ],
+        [
+          "<raster::epoch::EpochGuard as core::ops::drop::Drop>::drop+0x0",
+          11
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::admit+0x3",
+          11
+        ],
+        [
+          "<raster::log::gate::MutationGate>::try_update+0x0",
+          11
+        ],
+        [
+          "<raster::engine::metrics::Monitor>::finish+0x0",
+          11
+        ],
+        [
+          "<raster::log::page::PagePool>::tail+0x0",
+          11
+        ],
+        [
+          "<raster::log::HybridLog<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::resident_head_borrowed+0x6e",
+          11
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::reserve_operation+0x12e",
+          11
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x73",
+          11
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::admit+0x16b",
+          11
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x37d",
+          10
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::record_ready::<u64>+0x9a",
+          10
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x5f8",
+          10
+        ],
+        [
+          "<raster::engine::io_hub::CompletionHub>::reuse_operation+0x28",
+          10
+        ],
+        [
+          "<raster::epoch::EpochManager>::enter_scope+0x246",
+          10
+        ],
+        [
+          "core::ptr::drop_glue::<raster::types::error::Error>+0x0",
+          10
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::admit+0xc7",
+          10
+        ],
+        [
+          "<std::sync::poison::mutex::Mutex<alloc::collections::btree::map::BTreeMap<raster::types::id::LogAddress, alloc::sync::Arc<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>>>>::lock+0x3a",
+          10
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::observe_entry+0x3",
+          10
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::admit+0x3e1",
+          10
+        ],
+        [
+          "parity::ready+0x13",
+          9
+        ],
+        [
+          "<raster::schema::encoded_key::EncodedKey>::zeroed+0x0",
+          9
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x5d",
+          9
+        ],
+        [
+          "<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::run_locked+0x1d4",
+          9
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x1a0",
+          9
+        ],
+        [
+          "core::ptr::drop_glue::<raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>+0x5e",
+          9
+        ],
+        [
+          "parity::ready+0x9",
+          9
+        ],
+        [
+          "std::panicking::catch_unwind::do_call::<core::panic::unwind_safe::AssertUnwindSafe<<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::try_update_if_mutable<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>::{closure#0}>, core::result::Result<raster::api::operation::UpdateDecision<u64>, raster::types::error::Error>>+0x31",
+          9
+        ],
+        [
+          "<raster::api::session::Session<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0xb4",
+          9
+        ],
+        [
+          "<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>::update_at_version::<raster::api::operation::UpdateDecision<u64>, <raster::engine::upsert::UpsertTask<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>, parity::Request>>::advance::{closure#2}>+0x64",
+          9
+        ],
+        [
+          "<raster::schema::encoded_key::EncodedKey as core::ops::deref::Deref>::deref+0x3",
+          9
+        ],
+        [
+          "<raster::epoch::EpochManager>::enter_scope+0x46",
+          9
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x15e",
+          9
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::admit+0x50",
+          9
+        ],
+        [
+          "<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash+0x17",
+          9
+        ],
+        [
+          "<raster::coordination::Coordinator>::with_registration::<raster::coordination::SystemState, <raster::coordination::Coordinator>::session_state::{closure#0}>+0xa",
+          9
+        ],
+        [
+          "<raster::api::session::Session<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x92",
+          9
+        ],
+        [
+          "<raster::coordination::Coordinator>::with_registration::<raster::coordination::SystemState, <raster::coordination::Coordinator>::session_state::{closure#0}>+0x23",
+          9
+        ],
+        [
+          "<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::upsert::<parity::Request>+0x5",
+          9
+        ],
+        [
+          "<std::sync::poison::mutex::Mutex<alloc::collections::btree::map::BTreeMap<raster::types::id::LogAddress, alloc::sync::Arc<raster::log::value::PageValue<raster::schema::SharedValue<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>>>>>::lock+0x4",
+          9
+        ]
+      ],
+      "thread_samples": {
+        "4054": 59,
+        "4055": 5343
+      }
+    }
+  ],
+  "status": "Exact timed executables verified. Hot single-thread Upsert leaf PCs identify frequent stack result moves; not a speedup proof.",
+  "archive": "cpp-parity-525e130-hot-cpu.tar.gz",
+  "sha256": "14fd8fb6c57d41ef5e27269a262587cc180d96c53c5e02618850c545136ff391",
+  "archive_bytes": 9422069,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "profile/analysis.json": "5ceb4db1451c5162b40724bf6fc1884f2de5f96b05a51206ac4d3dfc15d076bb",
+    "profile/cpu-profile/environment.json": "a6216f68505b13d6cf616a6b79d61df332939a6c6aba10df41d5ea51270e66e4",
+    "profile/cpu-profile/results.json": "da4ac2c1307e90e1bd9340e4ba3f9083e8f1e1ed4ca7f6f95e33ed0a8a7e2395",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/callgraph.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/callgraph.stdout": "a8a813bd5951ccdaaa72dfd6776452abcc05a68e73232ae64102dde971f8f19b",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/command.json": "b357310b95f3d41e58983bf35f01a4841562904f52b6ae8e01faf016337707c1",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/perf.data.gz": "0ae2cf3a7c6ed73f1c5eaa2da3e3289fd8d41e77cd5ddd784829e69788ac78e5",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/record.stderr": "bab89064947544591501709f5d30655ca7395794553466e62f038862675c3b93",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/record.stdout": "0e0578b324322a9d4428a0917d9fd744e11adf109cd5a3e7d44f761ae20f11be",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/self.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/self.stdout": "b53aebd443c4f16fd335225a56b15a679c914d7dc109bc8ddb79bad8b733add4",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/stacks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "profile/cpu-profile/upsert-shared-hot-1-cpp/stacks.txt.gz": "c8f520ad3a86c0d2756cc31dca5e5152ea25613f3a31214ac24c72235c4cfb26",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/callgraph.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/callgraph.stdout": "66e0389a2ee9b7b0ecafa38d79209cf39e6cf622aed86a9f40194673d8891812",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/command.json": "363ac0f50350a6e33bc88506398ca1d12933eeb671546332bcda6d6738bbe27b",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/perf.data.gz": "973ec0dc419bc2e2a5a44884ee10ea741f1592e48cad4c9ad57186d53e4484a9",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/record.stderr": "099fae059784057e673bc75c41d8b190957a66f9f8373b4073cad67eaa2ccbec",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/record.stdout": "2d3e458da8e5f7eb8e0f2ce61053d263dbced462b2ded41991bcb6e7c6d8a537",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/self.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/self.stdout": "fbed936f1ae05fc409a155609a898f097d26dc86b134fe545af9e84877b4dc9b",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/stacks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "profile/cpu-profile/upsert-shared-hot-1-rust/stacks.txt.gz": "6eefdc2c320a0f08b0c06c8aeb3426c5a4b00dc433b7dd5ad9b9d86f7bc23f6f",
+    "profile/environment.txt": "169932176eb6eb9224fa699cac46e7d6a356419e1014226cd87fadfda9a69c6c",
+    "profile/native-code/binaries.sha256": "798e2164f15228244c3ad9fc05498df50598cc31d2260de8857a0ddbba199e76",
+    "profile/native-code/candidate-parity.asm": "a3e3f6a60e61ad39afe11a9e223013d8e05d36b331ce47c519f4279fd578caba",
+    "profile/native-code/candidate-parity.contents": "62ba5ea2e03e85657ff2a041f2a22cb126d73eb5673a3f1286601acbb078bb8b",
+    "profile/native-code/candidate-parity.sections": "01764cdb11e4edf9bc4e6b122ceb2b0033a39839fb6fad92513907746de6ea2f",
+    "profile/native-code/candidate-parity_scan.asm": "a15739f886217768364624ada1353404f1d83f09f3803077a2318d79a341b0fc",
+    "profile/native-code/candidate-parity_scan.contents": "862bf2b36af5748b509b65546b32f2d13e7af192a781ad44c26bc79f3c6b04dc",
+    "profile/native-code/candidate-parity_scan.sections": "40e6b53d77d576da70ffcedbafcb6e9bbe1c16391ac3abdc68871caba8e3ae8c",
+    "profile/native-code/candidate-source.sha256": "716e86eaf47d902be8987620dc2c237793c73cae2aa3c04afae9ce4cfccccabc",
+    "profile/profile-checks.txt": "f2b8ec1cae70f9faac5ce26fecca56a22e9b3d1095239278f2411b16125d732a",
+    "profile/profile-validation.json": "96bc39b5ad554329d7c15bfb2ebeae3aee3ab9db5454c4fd793ba38922b378f0",
+    "profile/run.json": "11542bbc8fc1dc342896ec3237f1c97622f1708a59337b7a074cf3e5667888b2",
+    "profile/summarize-parity-evidence.py": "b01c5863e331ce47061c933cd2d72f358e219f30939479ab57644fc5e7cc3324",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
