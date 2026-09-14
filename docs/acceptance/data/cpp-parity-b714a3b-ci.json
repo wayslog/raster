@@ -1,0 +1,28 @@
+{
+  "commit": "b714a3b60b409514988df01ad3e57bfe0e970668",
+  "run": 34836365971,
+  "status": "All six native platform/feature jobs passed; default544, config/all550 tests, examples and directory protection verified.",
+  "archive": "cpp-parity-b714a3b-ci.tar.gz",
+  "sha256": "2c0b861476b56e3ea3c630c2024b5222ae9f0a31570aaf78463130711fec7a03",
+  "archive_bytes": 125311,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "ci/p0-macos-14-all/checks.txt": "53fb0a69a5c4fbf2810bb63551fe572dd7759103690aad6699f67c37c674c6d5",
+    "ci/p0-macos-14-all/environment.txt": "787166d1d96db90c549d7141e1718e972421f309e22863923b8413f6c33c24d0",
+    "ci/p0-macos-14-config-toml/checks.txt": "d50f1b22a81aa3d5a850f1e0380461ea3657e60426198c5a6266f82e42b020e4",
+    "ci/p0-macos-14-config-toml/environment.txt": "14e91ce7323c4b705c343b65b24c1282b9aa559e06acdcd7246f47947881358f",
+    "ci/p0-macos-14-default/checks.txt": "8bb33500a29be102fb3e52fcd5b3064eb85e7668952eb7483f83c5e278c73805",
+    "ci/p0-macos-14-default/environment.txt": "22c9e8685ec57c315a4cf226a8e20846a0fa9016c3a948b25b2db2c2edf03e10",
+    "ci/p0-ubuntu-24.04-all/checks.txt": "aa8c1cfdcd826bb9fe04e34e8ff94b47b0c73b7fa100cb1959d564f7a0c27594",
+    "ci/p0-ubuntu-24.04-all/environment.txt": "46693ae3060992fce4236aaa7a1855bbff9b0436260b0d80eaaa988b765b2310",
+    "ci/p0-ubuntu-24.04-config-toml/checks.txt": "5c976d102d1e7f8f3b7ed368bda95b5cdd2b9f3e0282db7890fed76d8214ecae",
+    "ci/p0-ubuntu-24.04-config-toml/environment.txt": "9a4ae2c2a524d1e6d98cb5b12945908265e558048850e11bb8cccf19b7447a22",
+    "ci/p0-ubuntu-24.04-default/checks.txt": "2325801de6f4ee88e70d0da6bff832a82ed68be6a165ba4aced2a01da6279a14",
+    "ci/p0-ubuntu-24.04-default/environment.txt": "87dab130ecd603f030c035717ade381b526e25b45d9cee90e2fc1ba28c562c70",
+    "ci/run.json": "74d5b6c9dbc2252555677dc79e69b3884e56c71578116be06c5477122ad2047f",
+    "ci/validation.json": "c673b6752c0788e4ada49ad580e5d4e9fc00cb65537bff28326c798756463f35",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}

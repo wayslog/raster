@@ -1704,3 +1704,28 @@ Rust 共 5,357 个样本：Engine::upsert **909（16.97%）**、run_locked **619
 当前恢复 74d4d4 的原始结果预算查找。与该提交比较，src/ 唯一差异为新增的多 Ticket 尾部额度复用测试，生产实现相同；此恢复消除已确认退化的代码变更，同时也撤回其大量保留结果场景的收益。因此不能把撤回标为完整性能修复，长期占用前缀问题仍未解决，C++ 完整功能持平仍未达成。保留三组原生结果预算诊断模式，后续改动继续接受该场景及普通请求的共同约束。
 
 撤回后重新完成 **550 项功能测试**、全目标/全特性 Clippy、格式检查、严格 rustdoc 和五个 release 示例构建。五个程序（parity、result_budget、parity_scan、benchmark、benchmark_probe）的 SHA-256 分别与冻结的 74d4d4 普通构建完全相同；因此恢复的不仅是源码分支，实际计时可执行文件也已恢复。756 个本地文档链接及验收归档哈希检查通过，私人路径命中为 0。[撤回验证日志、源码差异和二进制身份](data/cpp-parity-result-budget-withdrawal.tar.gz) 与 [清单](data/cpp-parity-result-budget-withdrawal.json) 保存证据。
+
+### 实验 66：撤回后工程验收与 Read 原生 CPU 归因
+
+提交 `b714a3b60b409514988df01ad3e57bfe0e970668` 已推送。[工程 CI 34836365971](https://github.com/wayslog/raster/actions/runs/34836365971) 六组成功，逐份原始日志确认 Linux/macOS 的 default 各 **544 项**，config-toml/all 各 **550 项**，公共磁盘、自动维护示例及目录保护检查完成。[CI 环境和输出](data/cpp-parity-b714a3b-ci.tar.gz) 与 [清单](data/cpp-parity-b714a3b-ci.json) 保存实际证据。这是撤回后的工程检查，不改变 C++ 性能目标的未完成状态。
+
+[原生 CPU 采样 34836370588](https://github.com/wayslog/raster/actions/runs/34836370588) 对均匀单线程 Read 两端各执行 **40,000,000 次操作**。业务输出、perf.data 哈希与事件数已复核。候选源码哈希逐文件对应准确提交，采样程序哈希 `0b16479368870cb29a09b25ed3ef218f4580d3920c0b79673ec9b486b7dc290a` 与保存反汇编的程序身份相同。该运行没有执行完整计时矩阵，不把采样耗时纳入验收。
+
+C++ 共 **608** 个 CPU 事件，其中 **448** 个叶子 PC 属于 InternalRead。Rust 共 **5,812** 个事件，主要叶子如下。采样包括整个进程的初始化和最终校验；3,607 个 Rust 事件只有单帧，2,040 个事件的调用方包含未知帧，因此继续按实际叶子 PC 归因，不依赖不完整调用栈推断排他成本。
+
+| Rust 叶子函数 | 样本 | 占全部 Rust 样本 |
+| --- | ---: | ---: |
+| ReadTask::step_with_hint | 762 | 13.11% |
+| Engine::read | 628 | 10.81% |
+| Engine::prepare | 484 | 8.33% |
+| Coordinator::with_registration（session_state） | 269 | 4.63% |
+| EpochManager::enter_scope | 249 | 4.28% |
+| Engine::resolve_index_guarded | 202 | 3.48% |
+| MemIndex::prepare_guarded | 193 | 3.32% |
+| U64Key::hash | 185 | 3.18% |
+| Engine::reserve_operation | 184 | 3.17% |
+| EpochGuard::drop | 128 | 2.20% |
+
+参与者进入和退出合计约 **6.49%**，不足以单独解释与 C++ 的整体差距。step_with_hint 的 +0x47e 与 +0x1b6 位置分别收到 144 / 122 个样本，准确指令片段显示它们位于值回调或索引结果返回后的栈数据搬运处；prepare+0x201 也在返回对象搬运附近。PC 采样和指令位置不是唯一根因或可直接累加的收益证明。下一步优先检查 Read 常用调用路径的中间结果与协议访问，保持接受序号、视图寿命、Pending 继续推进及失败关闭契约；不能通过跨请求保留记录保护阻塞原有回收行为。
+
+[两端原始 perf、反汇编、热点片段及身份验证](data/cpp-parity-b714a3b-read-cpu.tar.gz) 与 [清单](data/cpp-parity-b714a3b-read-cpu.json) 保留本次归因。现有完整 C++ 结果仍为 **0/18**，长期占用结果预算池的扫描成本仍未解决。
