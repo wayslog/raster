@@ -39,6 +39,7 @@ pub struct Session<S: Schema> {
     pub(crate) id: SessionId,
     pub(crate) participant: Option<crate::epoch::ParticipantId>,
     pub(crate) runtime: SessionRuntime,
+    pub(crate) resident_hints: crate::log::resident::ResidentHints<crate::schema::SharedValue<S>>,
     pub(crate) local: PhantomData<Rc<()>>,
 }
 impl<S: Schema> Session<S> {
@@ -59,12 +60,21 @@ impl<S: Schema> Session<S> {
             .participant
             .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
-            .and_then(|participant| engine.epoch.enter(participant))
+            .and_then(|participant| engine.epoch.enter_records(participant))
         {
             Ok(guard) => guard,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        engine.read(&mut self.runtime, serial, request, options)
+        engine.read(
+            &mut self.runtime,
+            serial,
+            request,
+            options,
+            crate::log::resident::ReadHint {
+                guard: &_guard,
+                cache: &mut self.resident_hints,
+            },
+        )
     }
     pub fn upsert<U: UpsertOperation<S>>(
         &mut self,
@@ -272,6 +282,11 @@ impl<S: Schema> Session<S> {
         if self.participant.is_some() {
             self.runtime.closing = true;
             self.complete_pending(WaitMode::Until(deadline))?;
+            if let Some(mut route) = self.runtime.reusable_route.take() {
+                self.engine.io.release_operation(&mut route)?;
+            }
+            self.resident_hints.clear();
+            self.engine.log.collect_retired()?;
             let participant = self.participant.as_ref().expect("Participants exist");
             let current = (
                 self.runtime.current.version,
@@ -297,6 +312,9 @@ impl<S: Schema> Session<S> {
 
 impl<S: Schema> Drop for Session<S> {
     fn drop(&mut self) {
+        if let Some(mut route) = self.runtime.reusable_route.take() {
+            let _ = self.engine.io.release_operation(&mut route);
+        }
         self.runtime.current.tasks.clear();
         if let Some(previous) = &mut self.runtime.previous {
             previous.tasks.clear();

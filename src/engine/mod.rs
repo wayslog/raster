@@ -55,7 +55,7 @@ pub(crate) struct Engine<S: Schema> {
     pub log: HybridLog<crate::schema::SharedValue<S>>,
     pub shutdown_state: crate::sync::Mutex<bool>,
     pub cache: ReadCache,
-    pub epoch: EpochManager,
+    pub epoch: std::sync::Arc<EpochManager>,
     pub coordinator: Coordinator,
     pub storage: SegmentedStorage,
 }
@@ -126,6 +126,28 @@ impl<S: Schema> Engine<S> {
         )?;
         session.current.last_accepted = Some(serial);
         Ok(())
+    }
+    fn reserve_operation(
+        &self,
+        session: &mut SessionRuntime,
+    ) -> Result<io_hub::OperationRoute, Error> {
+        if let Some(mut route) = session.reusable_route.take() {
+            if let Err(error) = self.io.reuse_operation(&mut route, session.id) {
+                let _ = self.io.release_operation(&mut route);
+                return Err(error);
+            }
+            Ok(route)
+        } else {
+            self.io.reserve_operation(session.id)
+        }
+    }
+    fn retain_operation(&self, session: &mut SessionRuntime, route: &mut io_hub::OperationRoute) {
+        if session.reusable_route.is_none()
+            && !session.closing
+            && !self.failed.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            session.reusable_route = self.io.retain_operation(route);
+        }
     }
     fn head(entry: crate::index::EntrySnapshot) -> Result<Option<LogAddress>, Error> {
         match entry.head {

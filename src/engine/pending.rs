@@ -29,6 +29,8 @@ pub(crate) struct SessionRuntime {
     pub previous: Option<ExecutionContext>,
     pub closing: bool,
     pub poll_cursor: Option<u64>,
+    // At most one unregistered, already-accounted route credit is kept while idle.
+    pub reusable_route: Option<super::io_hub::OperationRoute>,
     // The pool only retains budget control blocks;It can only be reused after all external holders exit.,User results are not retained.
     results: Vec<std::rc::Rc<()>>,
 }
@@ -56,6 +58,7 @@ impl SessionRuntime {
             previous: None,
             closing: false,
             poll_cursor: None,
+            reusable_route: None,
             results: Vec::new(),
         }
     }

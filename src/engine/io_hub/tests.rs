@@ -91,6 +91,282 @@ mod synchronous_operations {
         }
     }
     #[test]
+    fn warmed_public_reads_reuse_an_unpublished_reservation() {
+        let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+            .device(Box::new(crate::device::null::NullDeviceFactory))
+            .create()
+            .unwrap();
+        let hub = store.inner.io.clone();
+        let callbacks = Arc::new(AtomicUsize::new(0));
+        let request = || Checked {
+            key: 1,
+            value: 7,
+            hub: hub.clone(),
+            callbacks: callbacks.clone(),
+        };
+        let mut session = store.start_session(SessionOptions::default()).unwrap();
+        ready(
+            session
+                .upsert(Serial(0), request())
+                .map_err(|e| e.reason)
+                .unwrap(),
+        );
+        for serial in 1..=32 {
+            assert_eq!(
+                ready(
+                    session
+                        .read(Serial(serial), request(), ReadOptions::default())
+                        .map_err(|e| e.reason)
+                        .unwrap()
+                ),
+                7
+            );
+        }
+        assert_eq!(callbacks.load(Ordering::Acquire), 33);
+        assert_eq!(hub.next.load(Ordering::Acquire), 1);
+        assert_eq!(
+            hub.capacity_acquisitions.load(Ordering::Acquire),
+            1,
+            "warmed Ready operations repeatedly acquire global capacity"
+        );
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 1);
+        session
+            .close(Deadline(Instant::now() + Duration::from_secs(5)))
+            .unwrap();
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+    }
+    struct PlainRead;
+    impl Keyed<Schema> for PlainRead {
+        fn key(&self) -> &u64 {
+            &1
+        }
+    }
+    impl ReadOperation<Schema> for PlainRead {
+        type Output = u64;
+        fn read(&mut self, value: ValueRead<'_, Schema>) -> Result<u64, Error> {
+            Ok(*value.view())
+        }
+    }
+    fn warmed_store() -> (RasterKV<Schema>, crate::Session<Schema>) {
+        let mut config = crate::config::Config::default();
+        config.session.max_sessions = 1;
+        config.session.max_pending = 1;
+        let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+            .config(config)
+            .device(Box::new(crate::device::null::NullDeviceFactory))
+            .create()
+            .unwrap();
+        let mut session = store.start_session(Default::default()).unwrap();
+        ready(
+            session
+                .upsert(
+                    Serial(0),
+                    Checked {
+                        key: 1,
+                        value: 7,
+                        hub: store.inner.io.clone(),
+                        callbacks: Arc::new(AtomicUsize::new(0)),
+                    },
+                )
+                .map_err(|e| e.reason)
+                .unwrap(),
+        );
+        (store, session)
+    }
+    #[test]
+    fn a_reused_credit_transfers_to_pending_and_is_released_after_completion() {
+        use crate::schema::KeyCodec;
+        let (store, mut session) = warmed_store();
+        let hub = &store.inner.io;
+        let entry = store.inner.index.prepare(U64Key.hash(&1)).unwrap();
+        let crate::index::IndexHead::Log(address) = entry.head else {
+            panic!("missing record")
+        };
+        let mut ticket = std::thread::scope(|scope| {
+            let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let owner = &store;
+            let holder = scope.spawn(move || {
+                owner
+                    .inner
+                    .log
+                    .lease(address)
+                    .unwrap()
+                    .read(|_| {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    })
+                    .unwrap();
+            });
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let submission = session
+                .read(Serial(1), PlainRead, ReadOptions::default())
+                .map_err(|e| e.reason)
+                .unwrap();
+            let Submission::Pending(ticket) = submission else {
+                panic!("expected Pending")
+            };
+            assert_eq!(ticket.id().slot, 0);
+            assert!(session.runtime.reusable_route.is_none());
+            assert_eq!(hub.occupied.load(Ordering::Acquire), 1);
+            assert_eq!(hub.capacity_acquisitions.load(Ordering::Acquire), 1);
+            assert!(matches!(
+                session.read(Serial(2), PlainRead, ReadOptions::default()),
+                Err(Rejected {
+                    reason: Error::Busy,
+                    ..
+                })
+            ));
+            assert_eq!(hub.next.load(Ordering::Acquire), 1);
+            release_tx.send(()).unwrap();
+            holder.join().unwrap();
+            ticket
+        });
+        assert!(matches!(
+            session
+                .wait(
+                    &mut ticket,
+                    Deadline(Instant::now() + Duration::from_secs(5))
+                )
+                .unwrap()
+                .unwrap(),
+            Outcome::Success(7)
+        ));
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+        assert_eq!(
+            ready(
+                session
+                    .read(Serial(2), PlainRead, ReadOptions::default())
+                    .map_err(|e| e.reason)
+                    .unwrap()
+            ),
+            7
+        );
+        assert_eq!(hub.next.load(Ordering::Acquire), 2);
+        assert_eq!(hub.capacity_acquisitions.load(Ordering::Acquire), 2);
+        drop(session);
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+    }
+    #[test]
+    fn dropping_an_idle_session_returns_its_credit_before_replacement_enrollment() {
+        let (store, session) = warmed_store();
+        let hub = &store.inner.io;
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 1);
+        drop(session);
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+        let mut replacement = store.start_session(Default::default()).unwrap();
+        assert_eq!(
+            ready(
+                replacement
+                    .read(Serial(0), PlainRead, ReadOptions::default())
+                    .map_err(|e| e.reason)
+                    .unwrap()
+            ),
+            7
+        );
+        assert_eq!(hub.next.load(Ordering::Acquire), 2);
+        drop(replacement);
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+    }
+    #[test]
+    fn a_preissued_reservation_survives_exhaustion_but_a_fresh_request_is_rejected() {
+        let (store, mut session) = warmed_store();
+        let hub = &store.inner.io;
+        hub.next.store(u64::MAX, Ordering::Release);
+        assert_eq!(
+            ready(
+                session
+                    .read(Serial(1), PlainRead, ReadOptions::default())
+                    .map_err(|e| e.reason)
+                    .unwrap()
+            ),
+            7
+        );
+        let mut issued = session.runtime.reusable_route.take().unwrap();
+        hub.activate_operation(&mut issued).unwrap();
+        assert!(hub.retain_operation(&mut issued).is_none());
+        hub.release_operation(&mut issued).unwrap();
+        assert!(matches!(
+            session.read(Serial(2), PlainRead, ReadOptions::default()),
+            Err(Rejected {
+                reason: Error::CapacityExceeded,
+                ..
+            })
+        ));
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+        assert_eq!(session.runtime.current.last_accepted, Some(Serial(1)));
+        assert!(session.runtime.reusable_route.is_none());
+    }
+    struct CountedPut(Arc<AtomicUsize>);
+    impl Keyed<Schema> for CountedPut {
+        fn key(&self) -> &u64 {
+            &1
+        }
+    }
+    impl UpsertOperation<Schema> for CountedPut {
+        type Output = u64;
+        fn replacement(&mut self) -> Result<(u64, u64), Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok((42, 42))
+        }
+        fn update_in_place(
+            &mut self,
+            _: ValueUpdate<'_, Schema>,
+        ) -> Result<UpdateDecision<u64>, Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(UpdateDecision::Append)
+        }
+    }
+    #[test]
+    fn a_full_global_pool_rejects_before_callbacks_and_does_not_consume_the_serial() {
+        let mut config = crate::config::Config::default();
+        config.log.page_bytes = 4096;
+        config.log.memory_pages = 4;
+        config.session.max_sessions = 1;
+        config.session.max_pending = 1;
+        let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+            .config(config)
+            .device(Box::new(crate::device::null::NullDeviceFactory))
+            .create()
+            .unwrap();
+        let hub = &store.inner.io;
+        let mut session = store.start_session(Default::default()).unwrap();
+        let mut occupied: Vec<_> = (0..hub.capacity)
+            .map(|_| hub.reserve(SessionId([9; 16])).unwrap())
+            .collect();
+        let count = Arc::new(AtomicUsize::new(0));
+        let before = hub.next.load(Ordering::Acquire);
+        assert!(matches!(
+            session.upsert(Serial(0), CountedPut(count.clone())),
+            Err(Rejected {
+                reason: Error::Busy,
+                ..
+            })
+        ));
+        assert_eq!(count.load(Ordering::Acquire), 0);
+        assert_eq!(session.runtime.current.last_accepted, None);
+        assert_eq!(hub.next.load(Ordering::Acquire), before);
+        hub.release(occupied.pop().unwrap()).unwrap();
+        assert_eq!(
+            ready(
+                session
+                    .upsert(Serial(0), CountedPut(count.clone()))
+                    .map_err(|e| e.reason)
+                    .unwrap()
+            ),
+            42
+        );
+        assert_eq!(count.load(Ordering::Acquire), 1);
+        assert_eq!(hub.occupied.load(Ordering::Acquire), hub.capacity);
+        session
+            .close(Deadline(Instant::now() + Duration::from_secs(5)))
+            .unwrap();
+        for id in occupied {
+            hub.release(id).unwrap();
+        }
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+    }
+    #[test]
     fn four_operations_hold_capacity_without_registering_mailboxes_or_losing_statistics() {
         let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
             .device(Box::new(crate::device::null::NullDeviceFactory))
@@ -149,8 +425,10 @@ mod synchronous_operations {
                 .unwrap(),
         );
         assert_eq!(callbacks.load(Ordering::SeqCst), 5);
+        assert_eq!(hub.next.load(Ordering::Acquire), 1);
         assert_eq!(hub.state.lock().unwrap().mailboxes.len(), 0);
-        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 1);
+        assert_eq!(hub.capacity_acquisitions.load(Ordering::Acquire), 1);
         let statistics = store.statistics();
         assert!(statistics.measurements_complete);
         for (operation, count) in [
@@ -165,6 +443,7 @@ mod synchronous_operations {
         }
         let deadline = || Deadline(Instant::now() + Duration::from_secs(5));
         session.close(deadline()).unwrap();
+        assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
         store.shutdown(deadline()).unwrap();
     }
 }
@@ -424,4 +703,51 @@ fn repeated_uncollected_completion_and_unknown_routing_errors_are_reported_but_o
     ));
     assert!(hub.take(first).unwrap().is_none());
     assert!(hub.take(second).unwrap().is_none());
+}
+
+#[test]
+fn unused_reservations_preserve_capacity_and_published_routes_cannot_be_reused() {
+    let hub = CompletionHub::new(StoreId([1; 16]), 1).unwrap();
+    let other = CompletionHub::new(StoreId([2; 16]), 1).unwrap();
+    let session = SessionId([3; 16]);
+    let mut old = hub.reserve_operation(session).unwrap();
+    let old_id = old.id();
+    assert!(other.retain_operation(&mut old).is_none());
+    let mut held = hub.retain_operation(&mut old).unwrap();
+    assert!(hub.retain_operation(&mut old).is_none());
+    assert!(hub.release_operation(&mut old).is_err());
+    assert!(hub.reuse_operation(&mut old, session).is_err());
+    assert!(other.reuse_operation(&mut held, session).is_err());
+    assert!(hub.reuse_operation(&mut held, SessionId([4; 16])).is_err());
+    assert_eq!(hub.next.load(Ordering::Acquire), 1);
+    assert!(matches!(hub.reserve(session), Err(Error::Busy)));
+    hub.reuse_operation(&mut held, session).unwrap();
+    assert_eq!(held.id(), old_id);
+    assert_eq!(hub.occupied.load(Ordering::Acquire), 1);
+    assert_eq!(hub.capacity_acquisitions.load(Ordering::Acquire), 1);
+    hub.activate_operation(&mut held).unwrap();
+    assert!(hub.retain_operation(&mut held).is_none());
+    assert!(hub.reuse_operation(&mut held, session).is_err());
+    assert!(hub.take(old_id).unwrap().is_none());
+    hub.release_operation(&mut held).unwrap();
+    assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
+    assert_eq!(other.occupied.load(Ordering::Acquire), 0);
+}
+#[test]
+fn poisoning_prevents_reservation_reuse_but_allows_unregistered_cleanup() {
+    let hub = CompletionHub::new(StoreId([1; 16]), 1).unwrap();
+    let session = SessionId([2; 16]);
+    let mut route = hub.reserve_operation(session).unwrap();
+    let mut held = hub.retain_operation(&mut route).unwrap();
+    assert!(
+        std::panic::catch_unwind(|| {
+            let _lock = hub.state.lock().unwrap();
+            panic!("injected mailbox poison");
+        })
+        .is_err()
+    );
+    assert!(hub.reuse_operation(&mut held, session).is_err());
+    assert_eq!(hub.next.load(Ordering::Acquire), 1);
+    hub.release_operation(&mut held).unwrap();
+    assert_eq!(hub.occupied.load(Ordering::Acquire), 0);
 }

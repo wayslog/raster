@@ -276,7 +276,7 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let mut mailbox = match self.io.reserve_operation(session.id) {
+        let mut mailbox = match self.reserve_operation(session) {
             Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
@@ -315,6 +315,7 @@ impl<S: Schema> Engine<S> {
                     .finalize(result)
                     .expect("Synchronous requests are terminated only once");
                 self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
+                self.retain_operation(session, &mut task.mailbox);
                 Ok(Submission::Ready(result))
             }
             UpsertStep::Retry => {
@@ -330,6 +331,7 @@ impl<S: Schema> Engine<S> {
                         }))
                         .expect("Rejected mailbox registration is finalized");
                     self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
+                    self.retain_operation(session, &mut task.mailbox);
                     return Ok(Submission::Ready(result));
                 }
                 let (ticket, complete) = Ticket::pair_bounded(id, credit);

@@ -20,6 +20,8 @@ pub(crate) struct ParticipantId {
 pub(crate) struct EpochGuard<'a> {
     manager: &'a EpochManager,
     participant: &'a ParticipantId,
+    version: EpochVersion,
+    records: bool,
     local: PhantomData<Rc<()>>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +34,8 @@ struct Slot {
     registered: bool,
     active: usize,
     epoch: EpochVersion,
+    record_active: usize,
+    record_epoch: EpochVersion,
 }
 #[repr(align(64))]
 #[derive(Debug)]
@@ -75,12 +79,14 @@ struct State {
     current: EpochVersion,
     slots: Vec<Arc<ParticipantSlot>>,
     deferred: Vec<(EpochVersion, DeferredAction)>,
+    retained: Vec<(EpochVersion, Arc<dyn std::any::Any + Send + Sync>)>,
 }
 static NEXT_MANAGER: crate::sync::AtomicU64 = crate::sync::AtomicU64::new(0);
 pub(crate) struct EpochManager {
     owner: u64,
     current: AtomicU64,
     failed: AtomicBool,
+    retained_pending: AtomicBool,
     state: Mutex<State>,
 }
 impl EpochManager {
@@ -96,10 +102,12 @@ impl EpochManager {
             owner,
             current: AtomicU64::new(0),
             failed: AtomicBool::new(false),
+            retained_pending: AtomicBool::new(false),
             state: Mutex::new(State {
                 current: EpochVersion(0),
                 slots: Vec::new(),
                 deferred: Vec::new(),
+                retained: Vec::new(),
             }),
         })
     }
@@ -145,6 +153,8 @@ impl EpochManager {
                 registered: true,
                 active: 0,
                 epoch: EpochVersion(0),
+                record_active: 0,
+                record_epoch: EpochVersion(0),
             }),
         });
         let id = ParticipantId {
@@ -174,17 +184,41 @@ impl EpochManager {
         })
     }
     pub fn enter<'a>(&'a self, id: &'a ParticipantId) -> Result<EpochGuard<'a>, Error> {
-        self.with_slot(id, |slot| {
+        self.enter_scope(id, false)
+    }
+    pub fn enter_records<'a>(&'a self, id: &'a ParticipantId) -> Result<EpochGuard<'a>, Error> {
+        self.enter_scope(id, true)
+    }
+    fn enter_scope<'a>(
+        &'a self,
+        id: &'a ParticipantId,
+        records: bool,
+    ) -> Result<EpochGuard<'a>, Error> {
+        let version = self.with_slot(id, |slot| {
             let active = slot.active.checked_add(1).ok_or(Error::CapacityExceeded)?;
+            let record_active = slot
+                .record_active
+                .checked_add(usize::from(records))
+                .ok_or(Error::CapacityExceeded)?;
             if slot.active == 0 {
                 slot.epoch = EpochVersion(self.current.load(Ordering::SeqCst));
             }
+            if records && slot.record_active == 0 {
+                slot.record_epoch = EpochVersion(self.current.load(Ordering::SeqCst));
+            }
             slot.active = active;
-            Ok(())
+            slot.record_active = record_active;
+            Ok(if records {
+                slot.record_epoch
+            } else {
+                slot.epoch
+            })
         })?;
         Ok(EpochGuard {
             manager: self,
             participant: id,
+            version,
+            records,
             local: PhantomData,
         })
     }
@@ -244,6 +278,74 @@ impl EpochManager {
         });
         Ok(actions)
     }
+    /// Reserve ownership before unlinking. Failure leaves the visible structure
+    /// intact. The unlink closure must not invoke user code or reenter this manager.
+    pub fn retain_unlinked<T: Send + Sync + 'static>(
+        &self,
+        owners: &[Arc<T>],
+        unlink: impl FnOnce(),
+    ) -> Result<(), Error> {
+        let mut state = self.lock()?;
+        let next = EpochVersion(
+            state
+                .current
+                .0
+                .checked_add(1)
+                .ok_or(Error::CapacityExceeded)?,
+        );
+        state
+            .retained
+            .try_reserve(owners.len())
+            .map_err(|_| Error::OutOfMemory)?;
+        let epoch = state.current;
+        for owner in owners {
+            state.retained.push((epoch, owner.clone()));
+        }
+        self.retained_pending
+            .store(!state.retained.is_empty(), Ordering::Release);
+        unlink();
+        state.current = next;
+        self.current.store(next.0, Ordering::SeqCst);
+        Ok(())
+    }
+    /// Collect record owners separately from index actions, dropping outside all
+    /// epoch locks. A poisoned participant conservatively prevents reclamation.
+    pub fn collect_owners(&self) -> Result<usize, Error> {
+        if !self.retained_pending.load(Ordering::Acquire) {
+            return Ok(0);
+        }
+        let mut state = self.lock()?;
+        let mut oldest: Option<EpochVersion> = None;
+        for entry in &state.slots {
+            entry.with_state(&self.failed, |slot| {
+                if slot.record_active != 0
+                    && oldest.is_none_or(|epoch| slot.record_epoch.0 < epoch.0)
+                {
+                    oldest = Some(slot.record_epoch);
+                }
+                Ok(())
+            })?;
+        }
+        self.healthy()?;
+        let mut ready = Vec::new();
+        ready
+            .try_reserve_exact(state.retained.len())
+            .map_err(|_| Error::OutOfMemory)?;
+        let mut index = 0;
+        while index < state.retained.len() {
+            if oldest.is_none_or(|epoch| state.retained[index].0.0 < epoch.0) {
+                ready.push(state.retained.swap_remove(index).1);
+            } else {
+                index += 1;
+            }
+        }
+        self.retained_pending
+            .store(!state.retained.is_empty(), Ordering::Release);
+        drop(state);
+        let count = ready.len();
+        drop(ready);
+        Ok(count)
+    }
     pub fn unregister(&self, id: &ParticipantId) -> Result<(), Error> {
         if id.owner != self.owner {
             return Err(Error::InvalidState("Participants belong to other managers"));
@@ -265,11 +367,24 @@ impl EpochManager {
         })
     }
 }
+impl EpochGuard<'_> {
+    pub(crate) fn protects(&self, manager: &EpochManager) -> Result<EpochVersion, Error> {
+        if !self.records || !std::ptr::eq(self.manager, manager) {
+            return Err(Error::InvalidState(
+                "epoch guard belongs to another manager",
+            ));
+        }
+        self.manager.healthy()?;
+        Ok(self.version)
+    }
+}
+
 impl Drop for EpochGuard<'_> {
     fn drop(&mut self) {
         // Poisoning conservatively retains counts and prevents all reclamation.
         let _ = self.manager.with_slot(self.participant, |slot| {
             slot.active -= 1;
+            slot.record_active -= usize::from(self.records);
             Ok(())
         });
     }
@@ -595,3 +710,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod owners_tests;
