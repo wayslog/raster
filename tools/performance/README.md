@@ -101,6 +101,40 @@ built with ordinary `cargo build`: the extra compiler options can change the
 generated program. If the build recipe changes, rebuild both sides and repeat
 the comparison; record their hashes before interpreting the result.
 
+## Retained result-budget diagnosis
+
+`result_budget` uses public APIs and the serialized integer layout. A blocking
+Read callback makes other reads return Pending; the driver then completes those
+requests but retains their tickets while timing synchronous reads. Setup, pending
+completion, final ticket collection, and shutdown are outside the timed interval.
+Every retained output is checked after timing, including its one-time delivery.
+
+```sh
+cargo build --locked --release --all-features --example result_budget
+python3 tools/performance/compare_result_budget.py \
+  --baseline-rust target/preserved/result_budget \
+  --rust target/release/examples/result_budget \
+  --output target/result-budget-comparison
+```
+
+The default cases retain 0, 32, or 960 completed results and perform two million
+reads, with 1,024 warmup reads per process and one latency sample per 64 reads.
+Each case includes three unmeasured warmup processes and all six orders of the
+baseline, candidate, and identical-baseline control. The comparator validates
+both timed and retained checksums, the final accepted serial, and sample counts.
+It uses the same candidate and reciprocal-control limits as focused comparisons.
+Failed controls invalidate their case even if its candidate ratio passes.
+
+The native `cpp-parity` workflow builds this same driver for both Rust versions
+and preserves the additional results under `result-budget/`. This diagnoses Rust
+result ownership overhead; it does not replace the C++ matrix or lifecycle gates.
+For a historical primary baseline that still holds its operation stripe across
+a REST Read callback, supply `result_baseline_ref` with a compatible full commit
+SHA, such as `74d4d4dc5093337173ddf7c318681a8a87a725d3`. That input selects only
+the additional retained-result comparison; it does not replace the primary or
+retained memory baselines. Incompatible setup must fail without producing a
+performance sample.
+
 ## Repeated variable-memory diagnosis
 
 `benchmark_probe` repeats the unchanged 16,384-operation variable-value hotspot

@@ -117,23 +117,30 @@ impl SessionRuntime {
         })
     }
     pub fn reserve_result(&mut self, limit: usize) -> Result<std::rc::Rc<()>, Error> {
-        if let Some(credit) = self
-            .results
-            .iter()
-            .find(|credit| std::rc::Rc::strong_count(credit) == 1)
+        // A historical allocation does not authorize exceeding a lower limit.
+        if self.results.len() > limit
+            && self
+                .results
+                .iter()
+                .filter(|credit| std::rc::Rc::strong_count(credit) > 1)
+                .count()
+                >= limit
         {
-            // When the historical capacity is greater than the current limit,A free slot does not mean that a request can still be accepted.
-            if self.results.len() > limit
-                && self
-                    .results
-                    .iter()
-                    .filter(|credit| std::rc::Rc::strong_count(credit) > 1)
-                    .count()
-                    >= limit
-            {
-                return Err(Error::Busy);
+            return Err(Error::Busy);
+        }
+        if let Some((first, tail)) = self.results.split_first_mut() {
+            if std::rc::Rc::strong_count(first) == 1 {
+                return Ok(std::rc::Rc::clone(first));
             }
-            return Ok(std::rc::Rc::clone(credit));
+            if let Some(credit) = tail
+                .iter_mut()
+                .find(|credit| std::rc::Rc::strong_count(credit) == 1)
+            {
+                // Retained tickets may occupy a long prefix. Reuse the free
+                // control block first next time without moving user results.
+                std::mem::swap(first, credit);
+                return Ok(std::rc::Rc::clone(first));
+            }
         }
         if self.results.len() >= limit {
             return Err(Error::Busy);
@@ -241,6 +248,48 @@ mod result_budget_tests {
         let only = runtime.reserve_result(1).unwrap();
         assert!(matches!(runtime.reserve_result(1), Err(Error::Busy)));
         drop(only);
+        assert!(runtime.reserve_result(1).is_ok());
+    }
+
+    #[test]
+    fn reusing_a_tail_credit_preserves_retained_results_and_capacity() {
+        let mut runtime = runtime();
+        let mut tickets = Vec::new();
+        for slot in 0..8 {
+            let mut id = request_id();
+            id.slot = slot;
+            let (ticket, complete) = Ticket::pair_bounded(id, runtime.reserve_result(8).unwrap());
+            complete.finish(Ok(Outcome::Success(slot))).unwrap();
+            drop(complete);
+            tickets.push(ticket);
+        }
+        assert!(matches!(runtime.reserve_result(8), Err(Error::Busy)));
+        assert!(matches!(
+            tickets[7].try_take(),
+            Ok(TicketState::Ready(Ok(Outcome::Success(7))))
+        ));
+        for _ in 0..32 {
+            let reused = runtime.reserve_result(8).unwrap();
+            assert!(matches!(runtime.reserve_result(8), Err(Error::Busy)));
+            assert!(matches!(runtime.reserve_result(7), Err(Error::Busy)));
+            drop(reused);
+        }
+        for (value, ticket) in tickets.iter_mut().take(7).enumerate() {
+            assert!(matches!(
+                ticket.try_take(),
+                Ok(TicketState::Ready(Ok(Outcome::Success(actual)))) if actual == value as u64
+            ));
+            assert!(matches!(ticket.try_take(), Err(TicketError::AlreadyTaken)));
+        }
+        assert!(matches!(
+            tickets[7].try_take(),
+            Err(TicketError::AlreadyTaken)
+        ));
+        let credits = (0..8)
+            .map(|_| runtime.reserve_result(8).unwrap())
+            .collect::<Vec<_>>();
+        assert!(matches!(runtime.reserve_result(8), Err(Error::Busy)));
+        drop(credits);
         assert!(runtime.reserve_result(1).is_ok());
     }
 }
