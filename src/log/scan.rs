@@ -7,7 +7,6 @@ impl<V: ValueLayout> HybridLog<V> {
         let mut state = self.state.write().unwrap();
         assert!(state.frontiers.begin <= begin && begin <= state.frontiers.head);
         self.publish_mutable_floor(begin);
-        self.publish_resident_floor(begin);
         state.frontiers.begin = begin;
     }
 
