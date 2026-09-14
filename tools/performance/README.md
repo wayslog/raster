@@ -51,6 +51,44 @@ The full performance objective also includes delete, variable values,
 over-memory I/O, checkpoint/recovery, compaction, and automatic maintenance.
 Passing these resident cases alone does not complete that objective.
 
+## Focused single-thread controls
+
+When a short comparison's identical-program control fails, use
+`focused_compare.py` to diagnose the same case with longer measurement windows.
+It pins its Linux process to one allowed CPU; benchmark processes and their
+worker threads inherit that mask. It executes all six orders of baseline,
+candidate, and an identical-baseline control, with 20 million operations per
+process by default. Affinity inheritance follows the Linux
+[process](https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html) and
+[thread](https://man7.org/linux/man-pages/man3/pthread_setaffinity_np.3.html) rules;
+it applies to internal threads as well as the requested worker. Each program has
+an unmeasured warmup. Raw results, commands,
+binary hashes, the CPU mask, and every measured round are retained.
+
+```sh
+python3 tools/performance/focused_compare.py \
+  --baseline target/preserved/parity \
+  --candidate target/release/examples/parity \
+  --case upsert/shared-hot/1 --count 20000000 \
+  --output target/focused-comparison
+```
+
+The candidate keeps the existing 0.98 throughput and 1.10 P99 limits. The
+identical control additionally uses reciprocal bounds: throughput must be between
+0.98 and 1/0.98, and P99 between 1/1.10 and 1.10. An implausibly faster control
+is also unstable. A failed control makes the diagnostic fail even when the
+candidate is faster. Per-round ratios are retained alongside the median verdict.
+Longer windows and CPU affinity do not guarantee stable measurements;
+retain the earlier failures and inspect the control before interpreting a delta.
+Only single-thread cases are accepted, so this tool cannot silently serialize a
+multi-thread workload. `--allow-unpinned --count 16384` is available for local
+smoke validation on platforms without affinity; its timing is not native evidence.
+
+The `cpp-focused` workflow mode runs this diagnostic on Ubuntu when supplied a
+`baseline_ref` and a single-thread `case`. It preserves the existing `cpp-parity`
+matrix and lifecycle gates. A passing focused result does not establish C++
+parity or replace failed full-scope measurements.
+
 The native workflow preserves source hashes, executable hashes, and integer-driver
 disassembly under `native-code/`. Use a baseline with identical runtime source to
 check build and timing variation before attributing unexplained changes to an
