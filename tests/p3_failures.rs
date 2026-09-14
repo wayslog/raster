@@ -1,7 +1,7 @@
 //! reject before accepting,callback/Exposed bounds on destructor panics and error effects.
 use raster::{
     RasterKV, Submission,
-    api::{operation::*, session::SessionOptions},
+    api::{completion::Outcome, operation::*, session::SessionOptions},
     schema::{
         ValueRead, ValueUpdate,
         builtin::{AtomicU64Value, SchemaPair, U64Key},
@@ -59,6 +59,84 @@ fn store() -> RasterKV<Schema> {
         .device(Box::new(raster::device::null::NullDeviceFactory))
         .create()
         .unwrap()
+}
+
+struct HeadRmw {
+    key: u64,
+    append: bool,
+    updates: Rc<Cell<usize>>,
+    copies: Rc<Cell<usize>>,
+}
+impl Keyed<Schema> for HeadRmw {
+    fn key(&self) -> &u64 {
+        &self.key
+    }
+}
+impl RmwOperation<Schema> for HeadRmw {
+    type Output = u64;
+    fn initial(&mut self) -> Result<(u64, u64), Error> {
+        Err(Error::InvalidState(
+            "The existing key must remain reachable",
+        ))
+    }
+    fn copy_update(&mut self, value: ValueRead<'_, Schema>) -> Result<(u64, u64), Error> {
+        self.copies.set(self.copies.get() + 1);
+        let next = value.view().wrapping_add(1);
+        Ok((next, next))
+    }
+    fn update_in_place(
+        &mut self,
+        mut value: ValueUpdate<'_, Schema>,
+    ) -> Result<UpdateDecision<u64>, Error> {
+        self.updates.set(self.updates.get() + 1);
+        if self.append {
+            Ok(UpdateDecision::Append)
+        } else {
+            let next = value
+                .view_mut()
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                .wrapping_add(1);
+            Ok(UpdateDecision::Updated(next))
+        }
+    }
+}
+
+#[test]
+fn successive_rmw_head_replacements_preserve_values_and_invoke_each_callback_once() {
+    let store = store();
+    let mut session = store.start_session(SessionOptions::default()).unwrap();
+    session
+        .upsert(Serial(0), request())
+        .map_err(|r| r.reason)
+        .unwrap();
+    let updates = Rc::new(Cell::new(0));
+    let copies = Rc::new(Cell::new(0));
+    for (index, append) in [false, true, false, true, false].into_iter().enumerate() {
+        let result = session
+            .rmw(
+                Serial(index as u64 + 1),
+                HeadRmw {
+                    key: 1,
+                    append,
+                    updates: updates.clone(),
+                    copies: copies.clone(),
+                },
+                RmwOptions::default(),
+            )
+            .map_err(|r| r.reason)
+            .unwrap();
+        assert!(
+            matches!(result, Submission::Ready(Ok(Outcome::Success(value))) if value == 10 + index as u64)
+        );
+        assert_eq!(updates.get(), index + 1);
+    }
+    assert_eq!(copies.get(), 2);
+    assert_eq!(session.last_accepted(), Some(Serial(5)));
+    let read = session
+        .read(Serial(6), request(), ReadOptions::default())
+        .map_err(|r| r.reason)
+        .unwrap();
+    assert!(matches!(read, Submission::Ready(Ok(Outcome::Success(14)))));
 }
 #[test]
 fn serial_number_rejection_does_not_call_the_key_method_and_returns_the_original_request() {

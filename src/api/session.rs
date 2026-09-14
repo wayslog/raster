@@ -112,12 +112,21 @@ impl<S: Schema> Session<S> {
             .participant
             .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
-            .and_then(|participant| engine.epoch.enter(participant))
+            .and_then(|participant| engine.epoch.enter_records(participant))
         {
             Ok(guard) => guard,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        engine.rmw(&mut self.runtime, serial, request, options)
+        engine.rmw(
+            &mut self.runtime,
+            serial,
+            request,
+            options,
+            crate::log::resident::ReadHint {
+                guard: &_guard,
+                cache: &mut self.resident_hints,
+            },
+        )
     }
     pub fn delete<D: DeleteOperation<S>>(
         &mut self,
