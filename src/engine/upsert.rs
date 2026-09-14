@@ -24,9 +24,12 @@ struct Prepared<S: Schema, T> {
     output: Option<T>,
     plan: ValuePlan,
 }
+// Keep the common return value independent of the public error payload.
+// Failures are moved into the caller's local slot without allocating.
 enum UpsertStep<T> {
-    Ready(OperationResult<T>),
+    Ready(T),
     Retry,
+    Failed,
 }
 struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     engine: Arc<Engine<S>>,
@@ -46,7 +49,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn advance(
         &mut self,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
-    ) -> Result<Option<Outcome<O::Output>>, Error> {
+    ) -> Result<Option<O::Output>, Error> {
         let engine = &self.engine;
         let resolved = match hint.as_ref() {
             Some(hint) => engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?,
@@ -75,7 +78,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 })? {
                     ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
                         self.effect = Effect::Applied;
-                        return Ok(Some(Outcome::Success(output)));
+                        return Ok(Some(output));
                     }
                     ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
                         self.effect = Effect::NotApplied
@@ -116,7 +119,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 self.effect = Effect::Applied;
                 let output = prepared.output.take().expect("Output not delivered yet");
                 self.prepared = None;
-                Ok(Some(Outcome::Success(output)))
+                Ok(Some(output))
             }
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
@@ -161,12 +164,14 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn run_locked(
         &mut self,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+        failure: &mut Option<OperationError>,
     ) -> UpsertStep<O::Output> {
         if self.engine.failed.load(Ordering::SeqCst) {
-            return UpsertStep::Ready(Err(OperationError {
+            *failure = Some(OperationError {
                 cause: Error::InvalidState("engine_failed_closed"),
                 effect: self.effect,
-            }));
+            });
+            return UpsertStep::Failed;
         }
         match self
             .engine
@@ -176,10 +181,11 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             Ok(true) => {}
             Ok(false) => return UpsertStep::Retry,
             Err(cause) => {
-                return UpsertStep::Ready(Err(OperationError {
+                *failure = Some(OperationError {
                     cause,
                     effect: self.effect,
-                }));
+                });
+                return UpsertStep::Failed;
             }
         }
         let result = match catch_unwind(AssertUnwindSafe(|| self.advance(hint))) {
@@ -195,14 +201,16 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         if result.is_err() && self.effect == Effect::Unknown {
             self.engine.failed.store(true, Ordering::SeqCst);
         }
-        UpsertStep::Ready(
-            result
-                .map(|value| value.expect("Waiting space excluded"))
-                .map_err(|cause| OperationError {
+        match result {
+            Ok(value) => UpsertStep::Ready(value.expect("Waiting space excluded")),
+            Err(cause) => {
+                *failure = Some(OperationError {
                     cause,
                     effect: self.effect,
-                }),
-        )
+                });
+                UpsertStep::Failed
+            }
+        }
     }
 }
 impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
@@ -235,10 +243,15 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
                     return TaskStep::Complete;
                 }
             };
-        match self.run_locked(None) {
+        let mut failure = None;
+        match self.run_locked(None, &mut failure) {
             UpsertStep::Retry => TaskStep::Retry,
             UpsertStep::Ready(result) => {
-                self.finish(result);
+                self.finish(Ok(Outcome::Success(result)));
+                TaskStep::Complete
+            }
+            UpsertStep::Failed => {
+                self.finish(Err(failure.expect("Failed steps provide an error")));
                 TaskStep::Complete
             }
         }
@@ -327,15 +340,10 @@ impl<S: Schema> Engine<S> {
             version: session.current.version,
             permit,
         };
-        match task.run_locked(Some(&mut hint)) {
-            UpsertStep::Ready(result) => {
-                let result = task
-                    .finalize(result)
-                    .expect("Synchronous requests are terminated only once");
-                self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
-                self.retain_operation(session, &mut task.mailbox);
-                Ok(Submission::Ready(result))
-            }
+        let mut failure = None;
+        let result = match task.run_locked(Some(&mut hint), &mut failure) {
+            UpsertStep::Ready(result) => Ok(Outcome::Success(result)),
+            UpsertStep::Failed => Err(failure.expect("Failed steps provide an error")),
             UpsertStep::Retry => {
                 if let Err(cause) = self
                     .version_permits
@@ -356,8 +364,14 @@ impl<S: Schema> Engine<S> {
                 task.complete = Some(complete);
                 task.monitor.pending();
                 session.current.tasks.insert(id.slot, Box::new(task));
-                Ok(Submission::Pending(ticket))
+                return Ok(Submission::Pending(ticket));
             }
-        }
+        };
+        let result = task
+            .finalize(result)
+            .expect("Synchronous requests are terminated only once");
+        self.record_ready(&mut task.monitor, task.mailbox.registered_id(), &result);
+        self.retain_operation(session, &mut task.mailbox);
+        Ok(Submission::Ready(result))
     }
 }
