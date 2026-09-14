@@ -1,0 +1,133 @@
+{
+  "commit": "44a626de2c6663ddf2563d5a03ce7b2b2860be30",
+  "validation": {
+    "processes": 36,
+    "fixed_input_sha256": "f7d0162b83bae580441c8088d568893b6b414ae5eb476d549d7fe48ff366aa72",
+    "same_source_binaries": "verified",
+    "business_recovery": "verified",
+    "workload_counters": {
+      "operation_count": [
+        16384
+      ],
+      "readoperation_count": [
+        4096
+      ],
+      "writeoperation_count": [
+        4096
+      ],
+      "RMWoperation_count": [
+        4096
+      ],
+      "deleteoperation_count": [
+        4096
+      ],
+      "readpending_count": [
+        4096
+      ],
+      "writepending_count": [
+        0
+      ],
+      "RMWpending_count": [
+        0
+      ],
+      "deletepending_count": [
+        0
+      ],
+      "Deny retry": [
+        0
+      ],
+      "post_workload_read_bytes": [
+        67256320
+      ],
+      "post_workload_write_bytes": [
+        131360
+      ],
+      "application_write_bytes": [
+        81952
+      ]
+    },
+    "comparisons": [
+      {
+        "run": "full-lifecycles",
+        "candidate": {
+          "throughput_ratio": 0.9356403418601129,
+          "p99_ratio": 1.1213220087211235,
+          "passed": false
+        },
+        "control": {
+          "throughput_ratio": 0.9897231424330647,
+          "p99_ratio": 1.010119794290583,
+          "valid": true
+        }
+      },
+      {
+        "run": "disk-recheck",
+        "candidate": {
+          "throughput_ratio": 1.0047178125496294,
+          "p99_ratio": 0.9649072971407969,
+          "passed": true
+        },
+        "control": {
+          "throughput_ratio": 1.074736656147765,
+          "p99_ratio": 0.8401152972662026,
+          "valid": false
+        }
+      }
+    ],
+    "conclusion": "Original failure remains. Recheck candidate passes but control is invalid. Workload and I/O volume differences are ruled out for these samples; stable candidate-specific attribution is not established."
+  },
+  "status": "Recheckcandidatepassesbutcontrolinvalid. Originalvalid-controlfailure remains;36processesverifiedsameworkload/Pending/IObytes.",
+  "archive": "cpp-parity-44a626d-disk-recheck.tar.gz",
+  "sha256": "749b336b95d9ef03c81fdbc2f63036d21b080d4f7c42c0dc081cd13c379ab41c",
+  "archive_bytes": 81337,
+  "input_references": 18,
+  "unique_inputs": 1,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "metadata/disk-hypotheses.json": "7136d5c2dba8a0b4b7ce977f8bafe39bd6d8dd72c1dcced2bfe9f7bb373cb335",
+    "metadata/disk-recheck-validation.json": "3e94830145c154d40719c1053562af2c970990dd9a72682f57386b90fd8b8098",
+    "metadata/disk-recheck.log": "3734ab67a36d1e5d9df357d829db54faa82d6ae83ff1c982352f04d2f4d15f13",
+    "metadata/validate-disk-recheck.py": "372b800a58a7e364b7f94d254afc5ee93b2a59dfa509ca04d82bac8a68cd6bde",
+    "recheck/binaries.json": "eb20ce2deca4dea06bd62427735c0bf197c46052290a8d7e29719d384aae89cf",
+    "recheck/comparison.json": "8430b30857013d8d175e26360841e9933b11ac4482ba26f8cf816b22e4434b27",
+    "recheck/u64-hot-t4-disk-r1-pair1-baseline.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair1-baseline/matrix.csv": "d62810f933652ffdb1be28508b734500ffb428d2882cf8d68d4b9c32782e66b8",
+    "recheck/u64-hot-t4-disk-r1-pair1-candidate.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair1-candidate/matrix.csv": "373fbe92db7ef3a44e04ea5544022b4b82b046016595648f83b7254aea397d9d",
+    "recheck/u64-hot-t4-disk-r1-pair1-control.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair1-control/matrix.csv": "83424ca53ec9a17657d04be1e0c03286b5453671fc986b55cfda28b858d515ce",
+    "recheck/u64-hot-t4-disk-r1-pair2-baseline.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair2-baseline/matrix.csv": "1f52f8f4af33ab48776eba2cdb9e7c5dfbf9a9cb39ea6952c3f3091ce228520f",
+    "recheck/u64-hot-t4-disk-r1-pair2-candidate.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair2-candidate/matrix.csv": "04caf777591e4505a2d4225af31fdd79cf3d56f548d5987ed96f30fba4b03571",
+    "recheck/u64-hot-t4-disk-r1-pair2-control.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair2-control/matrix.csv": "11e97d076144fd44d21e051e54fe16cdd1f121c3e10479a0dbce97bd884a0c90",
+    "recheck/u64-hot-t4-disk-r1-pair3-baseline.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair3-baseline/matrix.csv": "8ce69fe0a85b781bfb62d5e624caad95c957c4aa48dba51d9483e151bc2638fc",
+    "recheck/u64-hot-t4-disk-r1-pair3-candidate.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair3-candidate/matrix.csv": "4229276bb8b4ceaeaf77e62708d924a62b7c598ba483c30727fc39d2fb007adb",
+    "recheck/u64-hot-t4-disk-r1-pair3-control.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair3-control/matrix.csv": "cef1b4981121d0a3d3cf8f71fe8adb4c45e6f4f117a5e9292bc94a46331bccfa",
+    "recheck/u64-hot-t4-disk-r1-pair4-baseline.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair4-baseline/matrix.csv": "3bae48f0ccd1cbef490505e50f743c3ec8d5bb3f04edb518c649d6de524c0c5b",
+    "recheck/u64-hot-t4-disk-r1-pair4-candidate.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair4-candidate/matrix.csv": "b4dbb13392c0252c98b7eff53f92116dc705c801a1aa8e838b7ea45f3248cdac",
+    "recheck/u64-hot-t4-disk-r1-pair4-control.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair4-control/matrix.csv": "60f9a83b992cdc4758a7c43521327a77c2324f9fe484fca179f8d2b48f61b89c",
+    "recheck/u64-hot-t4-disk-r1-pair5-baseline.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair5-baseline/matrix.csv": "cd5db3da797845c41657227acec6f4f3730cd4933359ff72e9f7842abca75db2",
+    "recheck/u64-hot-t4-disk-r1-pair5-candidate.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair5-candidate/matrix.csv": "fd6ed52bb1911bac5025bec536af9300fc00a8a98dfb8129625e5f20ffa03b36",
+    "recheck/u64-hot-t4-disk-r1-pair5-control.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair5-control/matrix.csv": "b473107a02635e1e81a61dbf1b9372b4e0510ba59ac31d787e7a5f538146087f",
+    "recheck/u64-hot-t4-disk-r1-pair6-baseline.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair6-baseline/matrix.csv": "f51bd9e328e1263ea331d662ecf37c299517567663f79b632063ab775db2eccf",
+    "recheck/u64-hot-t4-disk-r1-pair6-candidate.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair6-candidate/matrix.csv": "03e09b407007134c53d203679f06c023c663be848d4e443c2017bd9909d62d4c",
+    "recheck/u64-hot-t4-disk-r1-pair6-control.txt": "8250d1cda2c133eab48640afdbbd8a98167436646ad10dfb2194e2a86e558cd2",
+    "recheck/u64-hot-t4-disk-r1-pair6-control/matrix.csv": "8550324d94fe20805a2e91121a84a6cf21a91b65273259d418e801bb80484181",
+    "recheck/u64-hot-t4-disk-r1-pairs.json": "fcd2f954399ce0436dc98c0201caa7fc0f0c56326038e76f571bed3f1f976955",
+    "trace-references.json": "5921bb106c4c71e69726e4a460814510c0a7ed2fa0b3b3802eaa51776480c121",
+    "traces/f7d0162b83bae580441c8088d568893b6b414ae5eb476d549d7fe48ff366aa72.trace": "f7d0162b83bae580441c8088d568893b6b414ae5eb476d549d7fe48ff366aa72"
+  }
+}
