@@ -5,7 +5,7 @@ on:
       mode:
         description: Benchmark suite
         type: choice
-        options: [matrix, cpp-parity, cpp-profile, launch-control, cpp-focused]
+        options: [matrix, cpp-parity, cpp-profile, launch-control, cpp-focused, result-budget]
         default: matrix
       case:
         description: Optional direct benchmark filter (operation/distribution/threads)
@@ -94,8 +94,8 @@ jobs:
           path: target/p9-benchmark-evidence
           if-no-files-found: error
   cpp-parity:
-    if: inputs.mode == 'cpp-parity' || inputs.mode == 'cpp-profile' || inputs.mode == 'launch-control' || inputs.mode == 'cpp-focused'
-    name: Direct C++ and Rust engine comparison
+    if: inputs.mode == 'cpp-parity' || inputs.mode == 'cpp-profile' || inputs.mode == 'launch-control' || inputs.mode == 'cpp-focused' || inputs.mode == 'result-budget'
+    name: ${{ inputs.mode == 'result-budget' && 'Retained result budget diagnostic' || 'Direct C++ and Rust engine comparison' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -124,7 +124,7 @@ jobs:
           MEMORY_BASELINE_REF: ${{ inputs.memory_baseline_ref }}
           RESULT_BASELINE_REF: ${{ inputs.result_baseline_ref }}
         run: |
-          if { [ "$BENCHMARK_MODE" = launch-control ] || [ "$BENCHMARK_MODE" = cpp-focused ]; } && [ -z "$BASELINE_REF" ]; then
+          if { [ "$BENCHMARK_MODE" = launch-control ] || [ "$BENCHMARK_MODE" = cpp-focused ] || [ "$BENCHMARK_MODE" = result-budget ]; } && [ -z "$BASELINE_REF" ]; then
             echo 'The selected diagnostic requires baseline_ref'
             exit 2
           fi
@@ -137,6 +137,7 @@ jobs:
             lscpu
             cat /etc/os-release
             stat -f -c 'file_system:%T' .
+            echo "benchmark_mode:$BENCHMARK_MODE"
           } > target/parity-evidence/environment.txt
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
           cargo build --locked --release --example parity --example parity_scan --example result_budget
@@ -310,7 +311,7 @@ jobs:
           assert not controls, controls
           PY
       - name: Compare retained completed results with interleaved controls
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (inputs.mode == 'cpp-parity' || inputs.mode == 'result-budget') && inputs.baseline_ref != '' }}
         shell: bash
         env:
           RESULT_BASELINE_REF: ${{ inputs.result_baseline_ref }}

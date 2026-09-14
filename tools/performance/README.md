@@ -135,6 +135,11 @@ the additional retained-result comparison; it does not replace the primary or
 retained memory baselines. Incompatible setup must fail without producing a
 performance sample.
 
+Use workflow mode `result-budget` with `baseline_ref` to rerun just these three
+retained-result cases and their interleaved controls after a targeted correction.
+The build recipes and output validation are unchanged. This shorter diagnostic
+does not run or replace the complete `cpp-parity` regression and lifecycle gates.
+
 ## Repeated variable-memory diagnosis
 
 `benchmark_probe` repeats the unchanged 16,384-operation variable-value hotspot
