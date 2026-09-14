@@ -24,26 +24,36 @@ impl<V: ValueLayout> HybridLog<V> {
                 retired
                     .try_reserve_exact(count)
                     .map_err(|_| Error::OutOfMemory)?;
-                // Address table removal and head Publishing is done in the same control phase;No waiting for old lease.
-                while let Some(address) = records
-                    .range(begin..end)
-                    .next()
-                    .map(|(address, _)| *address)
-                {
-                    retired.push(
-                        records
-                            .remove(&address)
-                            .expect("The address is still in the table"),
-                    );
+                retired.extend(records.range(begin..end).map(|(_, value)| value.clone()));
+                let mut unlink = || {
+                    for value in &retired {
+                        value
+                            .visible
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    while let Some(address) = records
+                        .range(begin..end)
+                        .next()
+                        .map(|(address, _)| *address)
+                    {
+                        records.remove(&address);
+                    }
+                };
+                if let Some(epoch) = self.state.epoch.get() {
+                    epoch.retain_unlinked(&retired, unlink)?;
+                } else {
+                    unlink();
                 }
                 state.reclaim = Some((page, generation));
                 self.publish_mutable_floor(end);
+                self.publish_resident_floor(end);
                 state.frontiers.head = end;
             }
             retired
         };
         // Expert destruction is not performed within the control lock;Destruction failure retains allocation and blocks safe_head move forward.
         drop(retired);
+        self.collect_retired()?;
         let mut state = self
             .state
             .write()

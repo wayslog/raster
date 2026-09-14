@@ -401,6 +401,8 @@ fn build<S: Schema>(
     let mut cache = crate::cache::ReadCache::new(config.cache.clone());
     cache.set_metrics(metrics.clone());
     cache.preallocate()?;
+    let epoch = Arc::new(crate::epoch::EpochManager::new()?);
+    log.bind_epoch(epoch.clone())?;
     let engine = Engine {
         thread_sessions: Arc::new(crate::engine::thread_sessions::ThreadSessions::new(
             config.session.max_sessions,
@@ -423,7 +425,7 @@ fn build<S: Schema>(
         log,
         coordinator,
         storage,
-        epoch: crate::epoch::EpochManager::new()?,
+        epoch,
         cache,
         config,
         shutdown_state: crate::sync::Mutex::new(false),

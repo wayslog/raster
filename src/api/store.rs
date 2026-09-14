@@ -78,6 +78,7 @@ impl<S: Schema> RasterKV<S> {
             id,
             participant: Some(participant),
             runtime: crate::engine::SessionRuntime::new(id, registered, tracker),
+            resident_hints: Default::default(),
             local: std::marker::PhantomData,
         })
     }
@@ -104,6 +105,7 @@ impl<S: Schema> RasterKV<S> {
                 id,
                 participant: Some(participant),
                 runtime: crate::engine::SessionRuntime::new(id, registered, tracker),
+                resident_hints: Default::default(),
                 local: std::marker::PhantomData,
             },
             progress: super::maintenance::DurableProgress {
@@ -240,6 +242,7 @@ impl<S: Schema> RasterKV<S> {
                     Some(error)
                 }
             };
+            self.inner.log.collect_retired()?;
             self.inner.storage.device.shutdown(deadline)?;
             self.inner.release_stopped_scans()?;
             self.inner.release_stopped_storage()?;
@@ -292,7 +295,8 @@ impl<S: Schema> Builder<S> {
         if self.config.storage.pre_allocate_log {
             log.preallocate()?;
         }
-        let epoch = crate::epoch::EpochManager::new()?;
+        let epoch = Arc::new(crate::epoch::EpochManager::new()?);
+        log.bind_epoch(epoch.clone())?;
         let coordinator = crate::coordination::Coordinator::new(self.config.session.max_sessions)?;
         let mut cache = crate::cache::ReadCache::new(self.config.cache.clone());
         cache.set_metrics(metrics.clone());

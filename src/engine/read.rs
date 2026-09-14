@@ -36,23 +36,35 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
-    fn read_resident(
-        &mut self,
-        value: crate::log::RecordLease<crate::schema::SharedValue<S>>,
-    ) -> Result<Option<Outcome<O::Output>>, Error> {
-        let request = self
-            .request
-            .as_mut()
-            .expect("The request has not yet been finalized");
-        match value.try_read_live(|view| request.read(ValueRead { view }))? {
-            crate::log::ValueAccess::Ready(Some(value)) => {
-                value.map(|value| Some(Outcome::Success(value)))
-            }
-            crate::log::ValueAccess::Ready(None) => Ok(Some(if self.options.abort_if_tombstone {
+    fn invoke_read(
+        request: &mut O,
+        options: ReadOptions,
+        value: crate::log::resident::BorrowedRecord<'_, crate::schema::SharedValue<S>>,
+    ) -> Result<crate::log::ValueAccess<Outcome<O::Output>>, Error> {
+        let tombstone = || {
+            if options.abort_if_tombstone {
                 Outcome::Aborted(AbortReason::Tombstone)
             } else {
                 Outcome::NotFound
-            })),
+            }
+        };
+        if value.is_tombstone() {
+            return Ok(crate::log::ValueAccess::Ready(tombstone()));
+        }
+        match value.try_read_live(|view| request.read(ValueRead { view }))? {
+            crate::log::ValueAccess::Ready(Some(value)) => {
+                value.map(|value| crate::log::ValueAccess::Ready(Outcome::Success(value)))
+            }
+            crate::log::ValueAccess::Ready(None) => Ok(crate::log::ValueAccess::Ready(tombstone())),
+            crate::log::ValueAccess::Contended => Ok(crate::log::ValueAccess::Contended),
+        }
+    }
+    fn finish_read_access(
+        &mut self,
+        result: crate::log::ValueAccess<Outcome<O::Output>>,
+    ) -> Result<Option<Outcome<O::Output>>, Error> {
+        match result {
+            crate::log::ValueAccess::Ready(value) => Ok(Some(value)),
             crate::log::ValueAccess::Contended => {
                 self.lookup = None;
                 self.observed = None;
@@ -60,73 +72,24 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
             }
         }
     }
-    fn prepare_pending(&mut self) -> Result<bool, Error> {
-        let awaiting_route = self.lookup.as_ref().is_some_and(LogLookup::awaiting_route);
-        self.engine
-            .version_permits
-            .activate(self.hash, self.version, &mut self.permit)?;
-        self.engine.io.activate_operation(&mut self.mailbox)?;
-        if let Some(lookup) = &mut self.lookup {
-            lookup.enable_io();
-        }
-        Ok(awaiting_route)
+    fn read_resident(
+        &mut self,
+        value: crate::log::RecordLease<crate::schema::SharedValue<S>>,
+    ) -> Result<Option<Outcome<O::Output>>, Error> {
+        let result = Self::invoke_read(
+            self.request
+                .as_mut()
+                .expect("The request has not yet been finalized"),
+            self.options,
+            value.borrow(),
+        )?;
+        self.finish_read_access(result)
     }
-    fn run_initial(&mut self, budget: PollBudget) -> TaskStep {
-        if matches!(self.step(budget), TaskStep::Complete) {
-            return TaskStep::Complete;
-        }
-        match self.prepare_pending() {
-            // Only the pre-I/O suspension is resumed here. It has not called
-            // a value callback or submitted any device request yet.
-            Ok(true) => self.step(budget),
-            Ok(false) => TaskStep::Retry,
-            Err(cause) => {
-                self.finish(Err(OperationError {
-                    cause,
-                    effect: Effect::NotApplied,
-                }));
-                TaskStep::Complete
-            }
-        }
-    }
-    fn finish(&mut self, result: OperationResult<O::Output>) {
-        if let Some(request) = self.request.take() {
-            let result = self
-                .engine
-                .finish_request(request, result, Effect::NotApplied);
-            if let Some(complete) = &self.complete {
-                self.engine.complete_tracked(
-                    &mut self.monitor,
-                    self.mailbox.registered_id(),
-                    complete,
-                    result,
-                );
-            } else {
-                self.engine
-                    .record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
-                self.ready = Some(result);
-            }
-        }
-    }
-}
-impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
-    fn id(&self) -> RequestId {
-        self.mailbox.id()
-    }
-    fn serial(&self) -> Serial {
-        self.serial
-    }
-    fn version(&self) -> CheckpointVersion {
-        self.version
-    }
-    fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
-        self.lookup
-            .as_mut()
-            .ok_or(Error::InvalidState("Read without waiting for disk query"))?
-            .accept(&self.engine.storage, completion)
-            .map_err(|rejected| rejected.reason)
-    }
-    fn step(&mut self, budget: PollBudget) -> TaskStep {
+    fn step_with_hint(
+        &mut self,
+        budget: PollBudget,
+        mut hint: Option<crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+    ) -> TaskStep {
         if self.request.is_none() {
             return TaskStep::Complete;
         }
@@ -184,7 +147,24 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
                             })?
                             .map(|value| Some(Outcome::Success(value)));
                     }
-                    if let Some(value) = self.engine.log.resident_head(&self.key, resolved.head)? {
+                    if let Some(hint) = hint.as_mut() {
+                        if let Some(value) = self.engine.log.resident_head_borrowed(
+                            &self.key,
+                            resolved.head,
+                            hint,
+                        )? {
+                            let result = Self::invoke_read(
+                                self.request
+                                    .as_mut()
+                                    .expect("The request has not yet been finalized"),
+                                self.options,
+                                value,
+                            )?;
+                            return self.finish_read_access(result);
+                        }
+                    } else if let Some(value) =
+                        self.engine.log.resident_head(&self.key, resolved.head)?
+                    {
                         // Keep tombstone and callback behavior identical to the chain lookup.
                         if value.is_tombstone() {
                             return Ok(Some(if self.options.abort_if_tombstone {
@@ -272,6 +252,79 @@ impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
             }
         }
     }
+    fn prepare_pending(&mut self) -> Result<bool, Error> {
+        let awaiting_route = self.lookup.as_ref().is_some_and(LogLookup::awaiting_route);
+        self.engine
+            .version_permits
+            .activate(self.hash, self.version, &mut self.permit)?;
+        self.engine.io.activate_operation(&mut self.mailbox)?;
+        if let Some(lookup) = &mut self.lookup {
+            lookup.enable_io();
+        }
+        Ok(awaiting_route)
+    }
+    fn run_initial(
+        &mut self,
+        budget: PollBudget,
+        hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
+    ) -> TaskStep {
+        if matches!(self.step_with_hint(budget, Some(hint)), TaskStep::Complete) {
+            return TaskStep::Complete;
+        }
+        match self.prepare_pending() {
+            // Only the pre-I/O suspension is resumed here. It has not called
+            // a value callback or submitted any device request yet.
+            Ok(true) => self.step(budget),
+            Ok(false) => TaskStep::Retry,
+            Err(cause) => {
+                self.finish(Err(OperationError {
+                    cause,
+                    effect: Effect::NotApplied,
+                }));
+                TaskStep::Complete
+            }
+        }
+    }
+    fn finish(&mut self, result: OperationResult<O::Output>) {
+        if let Some(request) = self.request.take() {
+            let result = self
+                .engine
+                .finish_request(request, result, Effect::NotApplied);
+            if let Some(complete) = &self.complete {
+                self.engine.complete_tracked(
+                    &mut self.monitor,
+                    self.mailbox.registered_id(),
+                    complete,
+                    result,
+                );
+            } else {
+                self.engine
+                    .record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
+                self.ready = Some(result);
+            }
+        }
+    }
+}
+impl<S: Schema, O: ReadOperation<S>> PendingTask for ReadTask<S, O> {
+    fn id(&self) -> RequestId {
+        self.mailbox.id()
+    }
+    fn serial(&self) -> Serial {
+        self.serial
+    }
+    fn version(&self) -> CheckpointVersion {
+        self.version
+    }
+    fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
+        self.lookup
+            .as_mut()
+            .ok_or(Error::InvalidState("Read without waiting for disk query"))?
+            .accept(&self.engine.storage, completion)
+            .map_err(|rejected| rejected.reason)
+    }
+    fn step(&mut self, budget: PollBudget) -> TaskStep {
+        self.step_with_hint(budget, None)
+    }
     fn abandon(&mut self, error: OperationError) {
         self.finish(Err(error));
     }
@@ -294,6 +347,7 @@ impl<S: Schema> Engine<S> {
         serial: Serial,
         request: O,
         options: ReadOptions,
+        hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
         if let Err(reason) = self.observe_session(session) {
             return Err(Rejected { request, reason });
@@ -323,7 +377,7 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let mut mailbox = match self.io.reserve_operation(session.id) {
+        let mut mailbox = match self.reserve_operation(session) {
             Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
@@ -358,7 +412,11 @@ impl<S: Schema> Engine<S> {
             version: session.current.version,
             permit,
         };
-        if matches!(task.run_initial(PollBudget::default()), TaskStep::Complete) {
+        if matches!(
+            task.run_initial(PollBudget::default(), hint),
+            TaskStep::Complete
+        ) {
+            self.retain_operation(session, &mut task.mailbox);
             Ok(Submission::Ready(
                 task.ready
                     .take()

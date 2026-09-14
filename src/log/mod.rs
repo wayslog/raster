@@ -31,6 +31,9 @@ struct LogControl {
     // Keep the derived restriction with the control allocation instead of
     // shifting the page pool, record table, and enclosing engine fields.
     mutable_floor: crate::sync::AtomicU64,
+    // Resident reads exclude addresses before begin and head, but include read-only records.
+    resident_floor: crate::sync::AtomicU64,
+    epoch: std::sync::OnceLock<Arc<crate::epoch::EpochManager>>,
 }
 impl LogControl {
     fn new(state: LogState) -> Self {
@@ -39,9 +42,12 @@ impl LogControl {
             .begin
             .max(state.frontiers.read_only)
             .max(state.frontiers.head);
+        let resident_floor = state.frontiers.begin.max(state.frontiers.head);
         Self {
             state: std::sync::RwLock::new(state),
             mutable_floor: crate::sync::AtomicU64::new(floor.0),
+            resident_floor: crate::sync::AtomicU64::new(resident_floor.0),
+            epoch: std::sync::OnceLock::new(),
         }
     }
 }
@@ -113,12 +119,7 @@ impl<V: ValueLayout> RecordLease<V> {
     ) -> Result<ValueAccess<Option<bool>>, Error> {
         self.value.tombstone_at_version(version, publish)
     }
-    pub fn try_read_live<R>(
-        &self,
-        f: impl for<'a> FnOnce(V::Read<'a>) -> R,
-    ) -> Result<ValueAccess<Option<R>>, Error> {
-        self.value.try_read_live(f)
-    }
+
     #[cfg(test)]
     pub fn version(&self) -> CheckpointVersion {
         self.value.version()
@@ -186,6 +187,18 @@ impl<V: ValueLayout> HybridLog<V> {
             records: crate::sync::Mutex::new(BTreeMap::new()),
         })
     }
+    pub fn bind_epoch(&mut self, epoch: Arc<crate::epoch::EpochManager>) -> Result<(), Error> {
+        self.state
+            .epoch
+            .set(epoch)
+            .map_err(|_| Error::InvalidState("log epoch already bound"))
+    }
+    pub(crate) fn collect_retired(&self) -> Result<usize, Error> {
+        self.state
+            .epoch
+            .get()
+            .map_or(Ok(0), |epoch| epoch.collect_owners())
+    }
     pub fn preallocate(&mut self) -> Result<(), Error> {
         self.pool.preallocate()
     }
@@ -232,6 +245,7 @@ impl<V: ValueLayout> HybridLog<V> {
         })
     }
     fn enter_reservation(&self) -> Result<ReservationActivity<'_>, Error> {
+        self.collect_retired()?;
         let mut state = self
             .state
             .write()
@@ -258,6 +272,7 @@ impl<V: ValueLayout> HybridLog<V> {
             return Err(Error::Busy);
         }
         self.publish_mutable_floor(begin);
+        self.publish_resident_floor(begin);
         state.frontiers.begin = begin;
         Ok(())
     }
@@ -288,8 +303,31 @@ impl<V: ValueLayout> HybridLog<V> {
         result.tail = self.pool.tail()?;
         Ok(result)
     }
-    /// Called under the control write lock after validating the transition.
-    /// Failed freezes keep their target restriction, just like read_only.
+    /// Publish after validation while holding the control write lock.
+    /// This only restricts the candidate range; it does not grant record access.
+    fn publish_resident_floor(&self, frontier: LogAddress) {
+        self.state
+            .resident_floor
+            .fetch_max(frontier.0, crate::sync::PUBLISH_ORDER);
+    }
+    fn resident_range_contains(&self, address: LogAddress) -> Result<bool, Error> {
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("Log boundary lock poisoning"));
+        }
+        let floor = LogAddress(self.state.resident_floor.load(crate::sync::PUBLISH_ORDER));
+        let tail = self.pool.tail()?;
+        if address < floor {
+            return Ok(false);
+        }
+        if address >= tail {
+            return Err(Error::InvalidFormat(
+                "The query address exceeds the end of the log",
+            ));
+        }
+        Ok(true)
+    }
+    /// Publish the mutable range restriction while holding the control write lock.
+    /// Preserve the published read-only target even if freezing fails.
     fn publish_mutable_floor(&self, frontier: LogAddress) {
         self.state
             .mutable_floor
@@ -501,9 +539,24 @@ impl<V: ValueLayout> HybridLog<V> {
             .lock()
             .map_err(|_| Error::InvalidState("Record table lock poisoning"))?;
         records.get(&address).ok_or(Error::RangeTruncated)?.seal()?;
-        let value = records.remove(&address).expect("Confirmed record exists");
+        let owner = records
+            .get(&address)
+            .expect("Confirmed record exists")
+            .clone();
+        let mut unlink = || {
+            owner
+                .visible
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            records.remove(&address);
+        };
+        if let Some(epoch) = self.state.epoch.get() {
+            epoch.retain_unlinked(std::slice::from_ref(&owner), unlink)?;
+        } else {
+            unlink();
+        }
         drop(records);
-        drop(value);
+        drop(owner);
+        self.collect_retired()?;
         Ok(())
     }
     #[cfg(test)]
@@ -1186,3 +1239,11 @@ pub(crate) mod read_page;
 
 #[cfg(test)]
 mod resident_read_tests;
+
+#[cfg(test)]
+mod epoch_lifetime_tests;
+
+pub(crate) mod resident;
+
+#[cfg(test)]
+mod resident_tests;

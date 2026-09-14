@@ -334,7 +334,7 @@ impl<S: Schema> Engine<S> {
             Ok(credit) => credit,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let mut mailbox = match self.io.reserve_operation(session.id) {
+        let mut mailbox = match self.reserve_operation(session) {
             Ok(mailbox) => mailbox,
             Err(reason) => return Err(Rejected { request, reason }),
         };
@@ -371,6 +371,7 @@ impl<S: Schema> Engine<S> {
             permit,
         };
         if matches!(task.run_initial(PollBudget::default()), TaskStep::Complete) {
+            self.retain_operation(session, &mut task.mailbox);
             Ok(Submission::Ready(
                 task.ready
                     .take()

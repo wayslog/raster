@@ -18,7 +18,9 @@ struct Mailbox {
 struct State {
     mailboxes: Mailboxes,
 }
-/// A capacity credit and unique identity, owned by one operation task.
+/// A capacity credit and a reserved identity, owned by one operation task.
+/// Before registration it may return to the session after a Ready completion.
+/// Published tickets and device routes always consume their reservation permanently.
 /// The engine must register it before exposing a pending ticket or submitting I/O.
 #[must_use = "Operation routes must be released by their owning task"]
 pub(crate) struct OperationRoute {
@@ -97,6 +99,8 @@ pub(crate) struct CompletionHub {
     store: StoreId,
     capacity: usize,
     occupied: AtomicUsize,
+    #[cfg(test)]
+    capacity_acquisitions: AtomicUsize,
     next: AtomicU64,
     state: Mutex<State>,
     polling: Mutex<()>,
@@ -111,6 +115,8 @@ impl CompletionHub {
             store,
             capacity,
             occupied: AtomicUsize::new(0),
+            #[cfg(test)]
+            capacity_acquisitions: AtomicUsize::new(0),
             next: AtomicU64::new(0),
             state: Mutex::new(State {
                 mailboxes: Mailboxes::new(),
@@ -136,6 +142,8 @@ impl CompletionHub {
                 (count < self.capacity).then(|| count + 1)
             })
             .map_err(|_| Error::Busy)?;
+        #[cfg(test)]
+        self.capacity_acquisitions.fetch_add(1, Ordering::Relaxed);
         let slot = match self
             .next
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |next| {
@@ -158,6 +166,39 @@ impl CompletionHub {
             registered: false,
             released: false,
         })
+    }
+    /// Reuse only a reservation that has never reached a mailbox or public ticket.
+    pub fn reuse_operation(
+        &self,
+        route: &mut OperationRoute,
+        session: SessionId,
+    ) -> Result<(), Error> {
+        if route.id.store != self.store
+            || route.id.session != session
+            || route.registered
+            || route.released
+        {
+            return Err(Error::InvalidState(
+                "published or released reservation cannot be reused",
+            ));
+        }
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("completion_mailbox_lock_poisoned"));
+        }
+        Ok(())
+    }
+    /// Transfer an unused mailbox credit out of a terminal task. Registered
+    /// routes follow normal release so late device completions cannot be reused.
+    pub fn retain_operation(&self, route: &mut OperationRoute) -> Option<OperationRoute> {
+        if route.id.store != self.store || route.registered || route.released {
+            return None;
+        }
+        let retired = OperationRoute {
+            id: route.id,
+            registered: false,
+            released: true,
+        };
+        Some(std::mem::replace(route, retired))
     }
     pub fn activate_operation(&self, route: &mut OperationRoute) -> Result<(), Error> {
         if route.id.store != self.store || route.released {

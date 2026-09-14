@@ -77,6 +77,7 @@ pub(crate) struct PageValue<V: ValueLayout> {
     gate: MutationGate,
     failed: AtomicBool,
     sealed: AtomicBool,
+    pub(super) visible: AtomicBool,
 }
 macro_rules! permit {
     ($owner:expr,$name:ident) => {{
@@ -108,6 +109,7 @@ impl<V: ValueLayout> PageValue<V> {
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
+            visible: AtomicBool::new(true),
         };
         owner.layout.initialize(permit!(owner, InitPermit), value)?;
         owner.initialized = true;
@@ -156,6 +158,7 @@ impl<V: ValueLayout> PageValue<V> {
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
+            visible: AtomicBool::new(true),
         })
     }
     pub fn initialize_owned(mut self, value: V::Owned) -> Result<Self, Error> {
@@ -231,6 +234,7 @@ impl<V: ValueLayout> PageValue<V> {
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
+            visible: AtomicBool::new(true),
         })
     }
     pub fn is_tombstone(&self) -> bool {
@@ -260,6 +264,7 @@ impl<V: ValueLayout> PageValue<V> {
             gate: MutationGate::default(),
             failed: AtomicBool::new(false),
             sealed: AtomicBool::new(false),
+            visible: AtomicBool::new(true),
         };
         owner
             .layout
