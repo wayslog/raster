@@ -5,7 +5,7 @@ on:
       mode:
         description: Benchmark suite
         type: choice
-        options: [matrix, cpp-parity, cpp-profile]
+        options: [matrix, cpp-parity, cpp-profile, launch-control]
         default: matrix
       case:
         description: Optional direct benchmark filter (operation/distribution/threads)
@@ -90,7 +90,7 @@ jobs:
           path: target/p9-benchmark-evidence
           if-no-files-found: error
   cpp-parity:
-    if: inputs.mode == 'cpp-parity' || inputs.mode == 'cpp-profile'
+    if: inputs.mode == 'cpp-parity' || inputs.mode == 'cpp-profile' || inputs.mode == 'launch-control'
     name: Direct C++ and Rust engine comparison
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -114,10 +114,15 @@ jobs:
         id: build
         shell: bash
         env:
+          BENCHMARK_MODE: ${{ inputs.mode }}
           BASELINE_REF: ${{ inputs.baseline_ref }}
           SCAN_BASELINE_REF: ${{ inputs.scan_baseline_ref }}
           MEMORY_BASELINE_REF: ${{ inputs.memory_baseline_ref }}
         run: |
+          if [ "$BENCHMARK_MODE" = launch-control ] && [ -z "$BASELINE_REF" ]; then
+            echo 'launch-control requires baseline_ref'
+            exit 2
+          fi
           mkdir -p target/parity-evidence
           {
             git rev-parse HEAD
@@ -289,6 +294,19 @@ jobs:
           assert not failures, failures
           assert not controls, controls
           PY
+      - name: Compare original and fixed native process names
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'launch-control' }}
+        shell: bash
+        env:
+          CASE_FILTER: ${{ inputs.case }}
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/performance -p 'test_*control.py'
+          python3 -u tools/performance/launch_control.py \
+            --candidate target/release/examples/parity \
+            --baseline target/parity-baseline-build/release/examples/parity \
+            --case "$CASE_FILTER" --output target/parity-evidence/launch-control \
+            2>&1 | tee target/parity-evidence/launch-checks.txt
       - name: Collect native CPU profiles outside acceptance timing
         if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-profile' }}
         shell: bash
