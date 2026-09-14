@@ -21,6 +21,8 @@ mod read_admission_tests;
 #[cfg(test)]
 mod read_ownership_tests;
 mod rmw;
+#[cfg(test)]
+mod rmw_ownership_tests;
 pub(crate) mod scan;
 #[cfg(test)]
 pub(crate) mod session_actor;

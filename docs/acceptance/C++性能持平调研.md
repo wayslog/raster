@@ -2060,3 +2060,18 @@ Rust 主要叶子样本为：Engine::rmw **1,500**、RmwTask::run_locked **1,499
 | rmw/worker-hot/4 | 1.613292 / 0.730286 | 1.026810 / 1.000000 | 候选通过，控制无效，收益尚不能确认 |
 
 候选没有验收，也未将失败源码提交为已完成优化。[完整原始结果、补丁、测试及普通 release 反汇编](data/cpp-parity-rmw-engine-borrow-initial.tar.gz) 和 [清单](data/cpp-parity-rmw-engine-borrow-initial.json) 保留这些结果。内部 run_locked 仅产生 Complete / Retry，却返回含大型 OperationError 的 TaskStep；实际代码经输出指针传递这个状态。下一项独立修订将验证窄内部状态能否消除该成本，同时保留错误的原有终结路径。C++ 基本持平目标仍未完成。
+
+
+### 实验 80：缩小 RMW 内部状态返回
+
+在实验 79 的所有权候选上，只将内部 run_locked / run_initial 的返回值改为私有 RmwStep（Complete / Retry）。错误继续经原有 finish / abandon 路径终结，进入 Pending 的 trait 边界才转换为 TaskStep；没有去掉任何错误检查、回调保护或释放步骤。普通 release 反汇编确认返回值改为寄存器，原输出指针参数消失；局部栈帧仍为 **0x380**，不能据此宣称减少了全部栈开销。
+
+全部 **553** 项测试、Clippy、严格 rustdoc、格式和五个普通 release 示例编译通过。沿用 b354699 冻结程序、每进程 **20,000,000** 操作和六种轮换顺序，独立核验 **63** 份输出的业务、全部采样、二进制和当前源码身份：
+
+| 场景 | 候选吞吐 / P99 | 控制吞吐 / P99 | 结论 |
+| --- | --- | --- | --- |
+| rmw/worker-hot/1 | 0.988487 / 1.000000 | 1.007914 / 1.000000 | 候选与双向控制通过 |
+| read/worker-hot/4 | 1.004637 / 0.999455 | 0.993326 / 1.113959 | 候选通过，控制 P99 无效 |
+| rmw/worker-hot/4 | 1.595652 / 0.838235 | 0.969577 / 1.015867 | 候选通过，控制吞吐无效 |
+
+单线程 RMW 在本次有效控制长测中回到原门槛内，但这不证明单独改动带来了精确 1% 收益。四线程 RMW 的约 60% 提升仍因控制无效而不能确认，四线程 Read 的旧失败也没有据此关闭。[窄状态补丁、普通 release 反汇编及完整长测](data/cpp-parity-rmw-narrow-progress-focused.tar.gz) 和 [清单](data/cpp-parity-rmw-narrow-progress-focused.json) 保留证据。该修订进入完整本地与原生验证，尚未完成性能验收，C++ 基本持平目标仍未完成。
