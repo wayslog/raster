@@ -90,6 +90,9 @@ pub(crate) struct EpochManager {
     state: Mutex<State>,
 }
 impl EpochManager {
+    pub(crate) fn identity(&self) -> u64 {
+        self.owner
+    }
     pub fn new() -> Result<Self, Error> {
         let owner = NEXT_MANAGER
             .fetch_update(
@@ -368,6 +371,14 @@ impl EpochManager {
     }
 }
 impl EpochGuard<'_> {
+    pub(crate) fn protects_index(&self, owner: u64) -> Result<(), Error> {
+        if self.manager.owner != owner {
+            return Err(Error::InvalidState(
+                "index epoch guard belongs to another manager",
+            ));
+        }
+        self.manager.healthy()
+    }
     pub(crate) fn protects(&self, manager: &EpochManager) -> Result<EpochVersion, Error> {
         if !self.records || !std::ptr::eq(self.manager, manager) {
             return Err(Error::InvalidState(

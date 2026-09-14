@@ -125,7 +125,11 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
         let result = catch_unwind(AssertUnwindSafe(
             || -> Result<Option<Outcome<O::Output>>, Error> {
                 if self.lookup.is_none() {
-                    let resolved = engine.resolve_index(self.hash, &self.key)?;
+                    let resolved = if let Some(hint) = hint.as_ref() {
+                        engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?
+                    } else {
+                        engine.resolve_index(self.hash, &self.key)?
+                    };
                     if engine.config.cache.enabled {
                         engine.metrics.cache(super::metrics::CacheEvent::Lookup);
                     }

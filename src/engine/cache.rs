@@ -4,6 +4,22 @@ use crate::{
     cache::Resolved, index::EntrySnapshot, log::lookup::LogLookup, schema::Schema, types::*,
 };
 impl<S: Schema> Engine<S> {
+    pub(crate) fn resolve_index_guarded(
+        &self,
+        hash: KeyHash,
+        key: &[u8],
+        guard: &crate::epoch::EpochGuard<'_>,
+    ) -> Result<Resolved, Error> {
+        if self.config.cache.enabled {
+            return self.cache.resolve(&self.index, hash, key);
+        }
+        let entry = self.index.prepare_guarded(hash, guard)?;
+        Ok(Resolved {
+            entry,
+            head: Self::head(entry)?,
+            cached: None,
+        })
+    }
     pub(crate) fn resolve_index(&self, hash: KeyHash, key: &[u8]) -> Result<Resolved, Error> {
         if self.config.cache.enabled {
             return self.cache.resolve(&self.index, hash, key);

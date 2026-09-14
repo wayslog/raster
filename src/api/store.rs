@@ -297,6 +297,7 @@ impl<S: Schema> Builder<S> {
         }
         let epoch = Arc::new(crate::epoch::EpochManager::new()?);
         log.bind_epoch(epoch.clone())?;
+        index.bind_epoch(&epoch)?;
         let coordinator = crate::coordination::Coordinator::new(self.config.session.max_sessions)?;
         let mut cache = crate::cache::ReadCache::new(self.config.cache.clone());
         cache.set_metrics(metrics.clone());

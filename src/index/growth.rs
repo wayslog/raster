@@ -1,10 +1,17 @@
 //! Routing to only writable table during bucket-by-bucket migration;The old table was created by the caller in epoch Release after safety.
 use super::*;
-use std::sync::{Arc, RwLock};
+#[cfg(test)]
+mod epoch_tests;
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicPtr, Ordering},
+};
 
 pub(crate) struct MemIndex {
     pub(super) state: RwLock<State>,
     metrics: Arc<crate::engine::metrics::Metrics>,
+    epoch_owner: Option<u64>,
+    stable: AtomicPtr<Table>,
 }
 pub(super) struct State {
     pub active: Arc<Table>,
@@ -36,10 +43,14 @@ impl State {
 }
 impl MemIndex {
     pub fn new(config: IndexConfig) -> Result<Self, Error> {
+        let active = Arc::new(Table::new(config)?);
+        let stable = AtomicPtr::new(Arc::as_ptr(&active).cast_mut());
         Ok(Self {
             metrics: Arc::new(crate::engine::metrics::Metrics::new(false)),
+            epoch_owner: None,
+            stable,
             state: RwLock::new(State {
-                active: Arc::new(Table::new(config)?),
+                active,
                 growing: None,
                 retired: None,
             }),
@@ -47,6 +58,58 @@ impl MemIndex {
     }
     pub fn set_metrics(&mut self, metrics: Arc<crate::engine::metrics::Metrics>) {
         self.metrics = metrics;
+    }
+    pub fn bind_epoch(&mut self, epoch: &crate::epoch::EpochManager) -> Result<(), Error> {
+        if self.epoch_owner.is_some() {
+            return Err(Error::InvalidState("index epoch is already bound"));
+        }
+        self.epoch_owner = Some(epoch.identity());
+        Ok(())
+    }
+    pub fn validate_epoch(&self, epoch: &crate::epoch::EpochManager) -> Result<(), Error> {
+        if self.epoch_owner != Some(epoch.identity()) {
+            return Err(Error::InvalidState("index reclamation epoch mismatch"));
+        }
+        Ok(())
+    }
+    /// The guard must belong to the manager responsible for retiring this index.
+    /// Migration uses the canonical routing lock; only stable routing is cached.
+    pub fn prepare_guarded(
+        &self,
+        hash: KeyHash,
+        guard: &crate::epoch::EpochGuard<'_>,
+    ) -> Result<EntrySnapshot, Error> {
+        self.metrics
+            .index(crate::engine::metrics::IndexEvent::Lookup);
+        let owner = self
+            .epoch_owner
+            .ok_or(Error::InvalidState("index epoch is not bound"))?;
+        guard.protects_index(owner)?;
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("Index route lock poisoning"));
+        }
+        let table = self.stable.load(Ordering::SeqCst);
+        if table.is_null() {
+            return self.prepare_locked(hash);
+        }
+        // SAFETY: The pointer was published from an Arc owned by State. Growth
+        // unlinks it before migration and retains the old Arc until the bound
+        // epoch manager delivers its retirement. This guard entered before the
+        // pointer load and stays alive through prepare. Restore requires &mut
+        // self, and neither this reference nor a table reference escapes.
+        self.prepare_loaded(hash, unsafe { &*table })
+    }
+    fn prepare_loaded(&self, hash: KeyHash, table: &Table) -> Result<EntrySnapshot, Error> {
+        let result = table.prepare(hash);
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("Index route lock poisoning"));
+        }
+        // A migration may have started after the stable pointer was loaded.
+        // Resolve against current routing without counting a second lookup.
+        if !std::ptr::eq(table, self.stable.load(Ordering::SeqCst)) {
+            return self.prepare_locked(hash);
+        }
+        result
     }
     pub fn identity(&self) -> Result<u64, Error> {
         Ok(self
@@ -59,6 +122,9 @@ impl MemIndex {
     pub fn prepare(&self, hash: KeyHash) -> Result<EntrySnapshot, Error> {
         self.metrics
             .index(crate::engine::metrics::IndexEvent::Lookup);
+        self.prepare_locked(hash)
+    }
+    fn prepare_locked(&self, hash: KeyHash) -> Result<EntrySnapshot, Error> {
         let state = self
             .state
             .read()
@@ -216,6 +282,7 @@ impl MemIndex {
         })?;
         restored.restore(image)?;
         state.active = Arc::new(restored);
+        *self.stable.get_mut() = Arc::as_ptr(&state.active).cast_mut();
         Ok(())
     }
     pub fn begin_growth(&self) -> Result<GrowthProgress, Error> {
@@ -241,6 +308,7 @@ impl MemIndex {
         })?;
         table.owner = state.active.owner;
         table.generation = generation;
+        self.stable.store(std::ptr::null_mut(), Ordering::SeqCst);
         state.growing = Some(Growing {
             table: Arc::new(table),
             next: 0,
@@ -316,11 +384,19 @@ impl MemIndex {
         if result.complete {
             let next = state.growing.take().expect("Expansion exists").table;
             state.retired = Some(std::mem::replace(&mut state.active, next));
+            self.stable
+                .store(Arc::as_ptr(&state.active).cast_mut(), Ordering::SeqCst);
         }
         Ok(result)
     }
-    /// Only in correspondence ReleaseIndex epoch Called after the action has been safely delivered.
-    pub fn release_retired(&self, generation: Generation) -> Result<(), Error> {
+    /// Release an old table after its epoch retirement has been delivered.
+    ///
+    /// # Safety
+    /// For a bound index, the caller must use the bound epoch manager and defer
+    /// ReleaseIndex only after grow_step has completed, then wait for collect
+    /// to deliver it. No previously observed pointer may remain unprotected.
+    /// An unbound index cannot issue guarded reads and needs no epoch grace.
+    pub unsafe fn release_retired(&self, generation: Generation) -> Result<(), Error> {
         let mut state = self
             .state
             .write()
@@ -397,8 +473,10 @@ mod tests {
         assert_eq!(index.snapshot().unwrap().buckets, 4);
         assert_eq!(index.snapshot().unwrap().generation, Generation(1));
         assert!(matches!(index.begin_growth(), Err(Error::Busy)));
-        assert!(index.release_retired(Generation(1)).is_err());
-        index.release_retired(Generation(0)).unwrap();
+        // SAFETY: This test index is unbound and has no guarded readers.
+        assert!(unsafe { index.release_retired(Generation(1)) }.is_err());
+        // SAFETY: This test index is unbound and has no guarded readers.
+        unsafe { index.release_retired(Generation(0)) }.unwrap();
         assert!(index.begin_growth().is_ok());
     }
     #[test]
@@ -421,7 +499,8 @@ mod tests {
         drop(guard);
         for action in epoch.collect().unwrap() {
             let DeferredAction::ReleaseIndex(generation) = action;
-            index.release_retired(generation).unwrap();
+            // SAFETY: The old reader exited and the epoch delivered this retirement.
+            unsafe { index.release_retired(generation) }.unwrap();
         }
         assert!(old.upgrade().is_none());
         epoch.unregister(&participant).unwrap();
