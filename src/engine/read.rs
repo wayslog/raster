@@ -37,6 +37,7 @@ struct ReadTask<S: Schema, O: ReadOperation<S>> {
     permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
+    #[inline(always)]
     fn invoke_read(
         request: &mut O,
         options: ReadOptions,
