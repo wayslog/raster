@@ -121,6 +121,9 @@ unsafe impl ValueLayout for AtomicU64Value {
     type Owned = u64;
     type Read<'a> = u64;
     type Update<'a> = &'a AtomicU64;
+    fn concurrent_reads(&self) -> bool {
+        true
+    }
     fn concurrent_updates(&self) -> bool {
         true
     }

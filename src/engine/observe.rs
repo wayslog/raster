@@ -7,8 +7,25 @@ use crate::{
     types::*,
 };
 use std::sync::atomic::Ordering;
+struct EntryObservation {
+    changed: bool,
+    rest: bool,
+}
 impl<S: Schema> Engine<S> {
+    #[inline]
     pub(crate) fn observe_session(&self, session: &mut SessionRuntime) -> Result<bool, Error> {
+        self.observe_entry(session)
+            .map(|observation| observation.changed)
+    }
+    /// Only for the initial Read call on its owning session thread. After a
+    /// REST observation, a later checkpoint cannot pass Prepare until this
+    /// session observes it. Do not observe again before completing the initial
+    /// attempt or registering its suspended version.
+    pub(super) fn observe_read_entry(&self, session: &mut SessionRuntime) -> Result<bool, Error> {
+        self.observe_entry(session)
+            .map(|observation| observation.rest)
+    }
+    fn observe_entry(&self, session: &mut SessionRuntime) -> Result<EntryObservation, Error> {
         let _timer = self.metrics.timer(false);
         let mut changed = false;
         // Each observation has a fixed upper limit;When concurrent actions continue to change, let the caller continue in the next round.
@@ -18,7 +35,10 @@ impl<S: Schema> Engine<S> {
                 .session_state(&session.registration, session.id)?;
             if self.failed.load(Ordering::SeqCst) {
                 if state.id.is_none() {
-                    return Ok(changed);
+                    return Ok(EntryObservation {
+                        changed,
+                        rest: false,
+                    });
                 }
                 if let Some(id) = state.id
                     && state.phase != Phase::Failed
@@ -34,7 +54,12 @@ impl<S: Schema> Engine<S> {
             }
             let result = self.observe_at(session, state, &mut changed);
             match result {
-                Ok(()) => return Ok(changed),
+                Ok(()) => {
+                    return Ok(EntryObservation {
+                        changed,
+                        rest: state.phase == Phase::Rest,
+                    });
+                }
                 Err(error) => {
                     if self
                         .coordinator
@@ -44,13 +69,19 @@ impl<S: Schema> Engine<S> {
                         continue;
                     }
                     if matches!(error, Error::Busy) {
-                        return Ok(changed);
+                        return Ok(EntryObservation {
+                            changed,
+                            rest: false,
+                        });
                     }
                     return Err(error);
                 }
             }
         }
-        Ok(changed)
+        Ok(EntryObservation {
+            changed,
+            rest: false,
+        })
     }
     fn observe_at(
         &self,

@@ -74,7 +74,8 @@ impl Shard {
         }
         let result = use_state(&mut guard);
         // Publish while still holding the registry lock. A submitting operation
-        // also holds its hash stripe until any suspended registration is visible.
+        // holds its hash stripe, or is a REST Read whose session has not yet
+        // acknowledged the next Prepare, until suspended registration is visible.
         self.has_registrations
             .store(!guard.is_empty(), Ordering::Release);
         result
@@ -106,10 +107,12 @@ impl VersionPermits {
     fn shard(&self, hash: KeyHash) -> &Arc<Shard> {
         &self.shards[hash.0 as usize % SHARD_COUNT]
     }
-    /// Only for an initial operation attempt under its hash stripe. Another
-    /// initial attempt for this hash cannot publish a suspended registration
-    /// until that stripe is released. Compaction copies keep eager registration;
-    /// the action barrier prevents a newer copy version overtaking this attempt.
+    /// Only for an initial attempt under its hash stripe, or a Read whose owning
+    /// session observed REST and will not observe again before this attempt ends.
+    /// The stripe excludes competing initial registration; the REST participant
+    /// barrier instead prevents a newer version until Pending is registered or
+    /// this call returns. Same-version registration cannot overtake an older one.
+    /// Compaction copies retain eager registration and the action barrier.
     pub fn reserve_initial(
         &self,
         hash: KeyHash,
@@ -143,7 +146,8 @@ impl VersionPermits {
         }
     }
     /// Must run before the first I/O submission or before storing a pending task,
-    /// with the initial hash stripe still held. An existing permit is retained.
+    /// with the initial hash stripe held, or before a REST Read can acknowledge
+    /// the next Prepare on its owning thread. An existing permit is retained.
     pub fn activate(
         &self,
         hash: KeyHash,

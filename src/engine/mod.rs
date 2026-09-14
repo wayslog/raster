@@ -17,6 +17,8 @@ mod pending;
 mod progress;
 mod read;
 #[cfg(test)]
+mod read_admission_tests;
+#[cfg(test)]
 mod read_ownership_tests;
 mod rmw;
 pub(crate) mod scan;
@@ -26,8 +28,6 @@ mod storage_progress;
 mod task;
 pub(crate) mod thread_sessions;
 mod upsert;
-#[cfg(test)]
-mod upsert_ownership_tests;
 mod version_permit;
 
 use crate::schema::encoded_key::EncodedKey;
