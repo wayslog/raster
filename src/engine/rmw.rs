@@ -15,7 +15,7 @@ use crate::{
         ValueAccess,
         lookup::{LogLookup, LookupStep},
     },
-    schema::{Schema, ValueLayout, ValueRead, ValueUpdate},
+    schema::{OwnedValueOf, Schema, ValueLayout, ValueRead, ValueUpdate},
     types::*,
 };
 use std::{
@@ -54,13 +54,17 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         }
         Ok(awaiting_route)
     }
-    fn run_initial(&mut self, budget: PollBudget) -> TaskStep {
-        if matches!(self.run_locked(budget), TaskStep::Complete) {
+    fn run_initial(
+        &mut self,
+        budget: PollBudget,
+        hint: &mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
+    ) -> TaskStep {
+        if matches!(self.run_locked(budget, Some(hint)), TaskStep::Complete) {
             return TaskStep::Complete;
         }
         match self.prepare_pending() {
             // Resume only a lookup stopped before its first device submission.
-            Ok(true) => self.run_locked(budget),
+            Ok(true) => self.run_locked(budget, None),
             Ok(false) => TaskStep::Retry,
             Err(cause) => {
                 self.finish(Err(OperationError {
@@ -71,10 +75,65 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
         }
     }
-    fn advance(&mut self, budget: PollBudget) -> Result<Option<Outcome<O::Output>>, Error> {
+    fn advance(
+        &mut self,
+        budget: PollBudget,
+        hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+    ) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = &self.engine;
         if self.lookup.is_none() {
-            let mut resolved = engine.resolve_index(self.hash, &self.key)?;
+            let mut resolved = match hint.as_ref() {
+                Some(hint) => engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?,
+                None => engine.resolve_index(self.hash, &self.key)?,
+            };
+            if resolved.entry.present
+                && !self.skip_in_place
+                && let Some(hint) = hint
+            {
+                let guard = hint.guard;
+                if let Some(record) =
+                    engine
+                        .log
+                        .mutable_head_borrowed(&self.key, resolved.head, hint)?
+                    && !record.is_tombstone()
+                {
+                    // Preserve the head check before running user code. The
+                    // borrowed record remains inside this initial epoch scope.
+                    if engine.index.prepare_guarded(self.hash, guard)? != resolved.entry {
+                        return Ok(None);
+                    }
+                    self.effect = Effect::Unknown;
+                    let request = self.request.as_mut().expect("Request not completed");
+                    match record.update_at_version(self.version, |view| {
+                        request.update_in_place(ValueUpdate { view })
+                    })? {
+                        ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
+                            self.effect = Effect::Applied;
+                            return Ok(Some(Outcome::Success(output)));
+                        }
+                        ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
+                            self.effect = Effect::NotApplied;
+                            // The owning fallback may copy or wait, but must
+                            // not invoke the in-place callback a second time.
+                            self.skip_in_place = true;
+                        }
+                        ValueAccess::Contended => {
+                            self.effect = Effect::NotApplied;
+                            return Ok(None);
+                        }
+                    }
+                    // Copy under the same record protection instead of
+                    // rebuilding an owning lookup after an Append decision.
+                    // A contended read still resumes through the owning path.
+                    let (value, output) = match record
+                        .try_read_live(|view| request.copy_update(ValueRead { view }))?
+                    {
+                        ValueAccess::Ready(Some(value)) => value?,
+                        ValueAccess::Ready(None) | ValueAccess::Contended => return Ok(None),
+                    };
+                    return self.append_record(value, output, resolved.entry);
+                }
+            }
             if !resolved.entry.present {
                 if matches!(
                     engine.index.reserve_empty(resolved.entry)?,
@@ -151,6 +210,15 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
             LookupStep::AwaitingIo | LookupStep::Continue => unreachable!("Wait has returned"),
         };
+        self.append_record(value, output, entry)
+    }
+    fn append_record(
+        &mut self,
+        value: OwnedValueOf<S>,
+        output: O::Output,
+        entry: crate::index::EntrySnapshot,
+    ) -> Result<Option<Outcome<O::Output>>, Error> {
+        let engine = &self.engine;
         let plan = engine.schema.value_layout().plan(&value)?.validate()?;
         engine.log.record_fits(self.key.len(), plan)?;
         let allocation = match engine.log.allocate_record(
@@ -199,7 +267,11 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
         }
     }
-    fn run_locked(&mut self, budget: PollBudget) -> TaskStep {
+    fn run_locked(
+        &mut self,
+        budget: PollBudget,
+        hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+    ) -> TaskStep {
         if self.request.is_none() {
             return TaskStep::Complete;
         }
@@ -225,7 +297,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                 return TaskStep::Complete;
             }
         }
-        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(budget))) {
+        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(budget, hint))) {
             Ok(result) => result,
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
@@ -281,7 +353,7 @@ impl<S: Schema, O: RmwOperation<S>> PendingTask for RmwTask<S, O> {
                     return TaskStep::Complete;
                 }
             };
-        self.run_locked(budget)
+        self.run_locked(budget, None)
     }
     fn abandon(&mut self, error: OperationError) {
         self.finish(Err(error));
@@ -305,6 +377,7 @@ impl<S: Schema> Engine<S> {
         serial: Serial,
         request: O,
         options: RmwOptions,
+        mut hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
         if let Err(reason) = self.observe_session(session) {
             return Err(Rejected { request, reason });
@@ -370,7 +443,10 @@ impl<S: Schema> Engine<S> {
             version: session.current.version,
             permit,
         };
-        if matches!(task.run_initial(PollBudget::default()), TaskStep::Complete) {
+        if matches!(
+            task.run_initial(PollBudget::default(), &mut hint),
+            TaskStep::Complete
+        ) {
             self.retain_operation(session, &mut task.mailbox);
             Ok(Submission::Ready(
                 task.ready
