@@ -1,0 +1,38 @@
+{
+  "commit": "58838fd31828a5ae545f4cf6324b84ec8c5ae9c4",
+  "run": 34832169118,
+  "status": "success",
+  "tests_by_job": {
+    "p0-ubuntu-24.04-default": 544,
+    "p0-ubuntu-24.04-config-toml": 550,
+    "p0-ubuntu-24.04-all": 550,
+    "p0-macos-14-default": 544,
+    "p0-macos-14-config-toml": 550,
+    "p0-macos-14-all": 550
+  },
+  "scope": "Engineering checks only; performance acceptance remains separate.",
+  "validator_correction": "A broad error: substring check matched a types::error:: doctest path; compiler diagnostics are checked at the start of a line.",
+  "archive": "cpp-parity-58838fd-ci.tar.gz",
+  "sha256": "d7bf3072912b2eb227b6eae323a6f747a39956ce20c5fabe43c43cc6849988b3",
+  "archive_bytes": 125222,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "ci/p0-macos-14-all/checks.txt": "5d35879ffc6891d16cbc6093ed665cbb9ad20a4aaf1a2ae5bac9f843475fbbf1",
+    "ci/p0-macos-14-all/environment.txt": "ca787f6ccb96ad6a9ab828442089b6e89c4b78c37f00e03813b855cdd6a08586",
+    "ci/p0-macos-14-config-toml/checks.txt": "64f50bf5fea2df52c929b4e210d6698f3af3870f745ca5df902114e9a1ba8482",
+    "ci/p0-macos-14-config-toml/environment.txt": "f162dc7ba1b2ed67d9a7b3f056d0ad9fba3f6d01968304183b55d09aba293b38",
+    "ci/p0-macos-14-default/checks.txt": "e048bee3d020a6759f44dbad4149f115ce3ca88b0235c0e639c06b77e55ddac9",
+    "ci/p0-macos-14-default/environment.txt": "35ad93097d91816d41c2409e28e398214d7d7d55134320a55b6ff9460764198d",
+    "ci/p0-ubuntu-24.04-all/checks.txt": "ca4257b7c776b2960a4aef88c0ce48189335c7c9de3c54e0cb138a843dcee95e",
+    "ci/p0-ubuntu-24.04-all/environment.txt": "536f64dee2bdb6b81b64cf9ebe6a6edf36739b65fbf59d9045ee7f8705eff228",
+    "ci/p0-ubuntu-24.04-config-toml/checks.txt": "c56f8781e6ba5d322ddbfb84b97e2ef6428ce6694534edbff375331afa86815b",
+    "ci/p0-ubuntu-24.04-config-toml/environment.txt": "c7c72f16dc6612c34678d200f837a800712a86dd903297639ffbcc023db531b9",
+    "ci/p0-ubuntu-24.04-default/checks.txt": "09fd25873fa6f1c154d19af611af5bcb36309c7b57042a1b4ef0e51e542144dc",
+    "ci/p0-ubuntu-24.04-default/environment.txt": "6f67408941537429c2f80a31a4cd9a24973ae2d72d30d103f64d33b947edef69",
+    "ci/run.json": "f22a2bdd4e748dfdc364141f538b253166bd9c0fdeaab9f70f6fcb0e6a566ea7",
+    "ci/summary.json": "0a17151e0a1f11bf418de075afd1686f051ab184e90dfe7f387ea90f55acc570",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}

@@ -117,30 +117,23 @@ impl SessionRuntime {
         })
     }
     pub fn reserve_result(&mut self, limit: usize) -> Result<std::rc::Rc<()>, Error> {
-        // A historical allocation does not authorize exceeding a lower limit.
-        if self.results.len() > limit
-            && self
-                .results
-                .iter()
-                .filter(|credit| std::rc::Rc::strong_count(credit) > 1)
-                .count()
-                >= limit
+        if let Some(credit) = self
+            .results
+            .iter()
+            .find(|credit| std::rc::Rc::strong_count(credit) == 1)
         {
-            return Err(Error::Busy);
-        }
-        if let Some((first, tail)) = self.results.split_first_mut() {
-            if std::rc::Rc::strong_count(first) == 1 {
-                return Ok(std::rc::Rc::clone(first));
-            }
-            if let Some(credit) = tail
-                .iter_mut()
-                .find(|credit| std::rc::Rc::strong_count(credit) == 1)
+            // When the historical capacity is greater than the current limit,A free slot does not mean that a request can still be accepted.
+            if self.results.len() > limit
+                && self
+                    .results
+                    .iter()
+                    .filter(|credit| std::rc::Rc::strong_count(credit) > 1)
+                    .count()
+                    >= limit
             {
-                // Retained tickets may occupy a long prefix. Reuse the free
-                // control block first next time without moving user results.
-                std::mem::swap(first, credit);
-                return Ok(std::rc::Rc::clone(first));
+                return Err(Error::Busy);
             }
+            return Ok(std::rc::Rc::clone(credit));
         }
         if self.results.len() >= limit {
             return Err(Error::Busy);

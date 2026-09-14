@@ -1,0 +1,44 @@
+{
+  "same_binary_samples": 6,
+  "validated_operations": 120000000,
+  "business_max_min_ratio": 1.2073436606945485,
+  "cpu_time_max_min_ratio": 1.0304679002239336,
+  "cpu_to_wall_range": [
+    0.828232670456995,
+    0.96439032150445
+  ],
+  "fastest_business_sample": 2,
+  "slowest_business_sample": 3,
+  "between_fastest_and_slowest": {
+    "business_delta_ns": 684594625,
+    "process_wall_delta_ns": 626609125,
+    "process_cpu_delta_ns": 99634999.9999997,
+    "wall_minus_cpu_delta_ns": 526974125.0
+  },
+  "interpretation": "Whole-process CPU varies less than business wall time in these identical-binary samples. The unaccounted wall-time component is material; this supports scheduling or waiting as a source of local control drift but does not identify its exact cause, explain the C++ gap, or invalidate all source regressions.",
+  "archive": "cpp-parity-58838fd-scheduling-control.tar.gz",
+  "sha256": "f4a185d2eeae9dcb907bc3051783d3bdb36b9b5728166000802a39f3983c3069",
+  "archive_bytes": 2623,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "diagnostic/environment.json": "f08c0bd0326c57b2a127867019578577ed1e8ef71a95c4fd344bf6adad9954b4",
+    "diagnostic/results.json": "98ddaaf0bbaf0d488eacc0cd80c80f929dcb0733953916cae9c3ffbe130330f6",
+    "diagnostic/run.py": "0e900a475fc6256a6a6d9e8b80a539499b020cf86af3f01be138474b06222651",
+    "diagnostic/sample-0.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic/sample-0.stdout": "c9be07d470efdcedf703258595899ba95f741c0406fa5e9d2eda43a8023967da",
+    "diagnostic/sample-1.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic/sample-1.stdout": "4d6fee7cd4a9c6cdb573cc40509d53dc8f9ccbbc1459aec11af23b50ff465731",
+    "diagnostic/sample-2.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic/sample-2.stdout": "c538284c4f5334411fe1baeb5700ace091bf7ba658b0819fc536181f5a870bb0",
+    "diagnostic/sample-3.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic/sample-3.stdout": "f03ea49b3135bb6aacc64e28e1ed8c19e8b1eca8e8b8da3f4d8a50f93c608a00",
+    "diagnostic/sample-4.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic/sample-4.stdout": "82ae3d47409753ce75e89d1ab202e1af636f81923329003c67697990735ddc3a",
+    "diagnostic/sample-5.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diagnostic/sample-5.stdout": "4b4c4e2148c0ff3f972e972c5ad8e7c79f59978eb705a456475dde4eefd1996a",
+    "diagnostic/summary.json": "3a1b04f26fa4c4af305c9c3d396ab724785c9e69d7a8af77a4c0ce497274562b",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}

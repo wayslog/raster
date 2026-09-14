@@ -1,0 +1,24 @@
+{
+  "status": "Restored original74 runtime after native588 regression and three rejected local corrections. 550 tests, Clippy, strict docs, fmt, build and 756 document links passed. Full C++ parity unresolved.",
+  "runtime": "74d4d4dc5093337173ddf7c318681a8a87a725d3",
+  "previous_commit": "58838fd31828a5ae545f4cf6324b84ec8c5ae9c4",
+  "archive": "cpp-parity-result-budget-withdrawal.tar.gz",
+  "sha256": "108e43ae3e71b46eb909b24f3b1eff97a575a5a98da1bc2269f36742d9409f70",
+  "archive_bytes": 22559,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "verification/binary-identity.json": "bc3b246afc230176648ffd09b0ed8ede48a871b3a7504d340cddd4ff4c175f43",
+    "verification/build.log": "151c1d1de37133726c74e5c8549634fdaefa0b0d793fe0f0838704747e8e6956",
+    "verification/checks.json": "41f14ad1b85b7bd410cb272afcbb03bd4810a392179c29501702e164dfc803c7",
+    "verification/clippy.log": "a10f31c05d227c0c5511c0b0ac0da93f764749cd3216a8bce5ee2324f18f1806",
+    "verification/document-check.json": "70e20ba77eeb0428870390decf24cccddd13f8fddde713b3ec61293e8ed2aaf7",
+    "verification/prototype-validation.json": "7cdab65f15c4ec43dde152e6a7a8803be4ded45473236a543b638697219c0433",
+    "verification/runtime-diff-from74.patch": "e6a611595a83027cd768abdf78d6b628a0c14ea37ad02aa93828a1892cacf26e",
+    "verification/rustdoc.log": "d6a10161b932987b61e5b3dd47fafd290865428fce9dcdb316cd0627fcd7d2e5",
+    "verification/source-identity.json": "b63cb22ebd1f214818f780d9fb8202ebbc960410faa165fba9eb3425fec573c0",
+    "verification/tests.log": "b1cf45069a92a9ab8aafea4541b1f7de6b7a632e407ec93916774258e0d9a660"
+  }
+}
