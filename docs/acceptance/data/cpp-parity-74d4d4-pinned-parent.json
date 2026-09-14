@@ -1,0 +1,190 @@
+{
+  "head": "89f0c3290052edaa52ec5b4e930809f66129ac47",
+  "runtime": "74d4d4dc5093337173ddf7c318681a8a87a725d3",
+  "baseline": "525e130d2fce63c52fd1d1a333c665d71ea36b91",
+  "analysis": {
+    "run": 34826630969,
+    "verified_outputs": 21,
+    "verified_operations": 420000000,
+    "source_and_binary_match": true,
+    "cpu_affinity": [
+      0
+    ],
+    "comparisons": {
+      "candidate": {
+        "throughput_ratio": 1.0448222133682803,
+        "p99_ratio": 1.026685393258427,
+        "passed": true
+      },
+      "control": {
+        "throughput_ratio": 1.0746526056154437,
+        "p99_ratio": 0.9845505617977528,
+        "passed": false
+      }
+    },
+    "ratios_by_round": [
+      {
+        "round": 0,
+        "candidate": {
+          "throughput_ratio": 0.9328871257539612,
+          "p99_ratio": 1.1205882352941177
+        },
+        "control": {
+          "throughput_ratio": 0.909917638468265,
+          "p99_ratio": 1.0588235294117647
+        }
+      },
+      {
+        "round": 1,
+        "candidate": {
+          "throughput_ratio": 1.1175631127817849,
+          "p99_ratio": 0.9473684210526315
+        },
+        "control": {
+          "throughput_ratio": 1.1421492898282142,
+          "p99_ratio": 0.8973684210526316
+        }
+      },
+      {
+        "round": 2,
+        "candidate": {
+          "throughput_ratio": 1.0611259114639484,
+          "p99_ratio": 1.0
+        },
+        "control": {
+          "throughput_ratio": 0.9969778866086957,
+          "p99_ratio": 1.0284900284900285
+        }
+      },
+      {
+        "round": 3,
+        "candidate": {
+          "throughput_ratio": 1.0177355510363582,
+          "p99_ratio": 1.0027027027027027
+        },
+        "control": {
+          "throughput_ratio": 1.1008257597827587,
+          "p99_ratio": 0.9216216216216216
+        }
+      },
+      {
+        "round": 4,
+        "candidate": {
+          "throughput_ratio": 1.0214862797879862,
+          "p99_ratio": 1.0554016620498614
+        },
+        "control": {
+          "throughput_ratio": 1.0970029919151894,
+          "p99_ratio": 0.9445983379501385
+        }
+      },
+      {
+        "round": 5,
+        "candidate": {
+          "throughput_ratio": 0.9742373999792743,
+          "p99_ratio": 1.0323529411764707
+        },
+        "control": {
+          "throughput_ratio": 0.9637874999522634,
+          "p99_ratio": 1.061764705882353
+        }
+      }
+    ],
+    "conclusion": "Control remains unstable despite fixed CPU and long windows; do not attribute the parent delta to source or accept the candidate."
+  },
+  "status": "Identical control is unstable; candidate remains unaccepted. Full C++ parity remains incomplete.",
+  "archive": "cpp-parity-74d4d4-pinned-parent.tar.gz",
+  "sha256": "df871df8b7556cb435bd6776f1fdbf75718a8f51c5390635ddc8efd48e02505a",
+  "archive_bytes": 16406943,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "native/analysis.json": "d99a41961d38f628f72779988fd1d237430905b5341dd6d7871db73b4562beab",
+    "native/environment.txt": "6b14065373778a1ba630fbd8adb69480d69a567e140678bd6bddbd42d6a8d2e0",
+    "native/focused-checks.txt": "eee544bb0ab6a406866f37be93e81eda141d8b9e3e349f99849d3276c803e7c9",
+    "native/focused/comparison.json": "703bdfa49da3b55b46ac6c4d2e59ce4ef140e873a57e5545398822843e5c7fb0",
+    "native/focused/environment.json": "304026db34a34fff2ed3fcc4b5fe000ded1af1c0c6bed9a60207b6254c2d3a62",
+    "native/focused/results.json": "3e7a0d216eb41685eba640b936fa5780f5e21b34ee1732b451e95101d42322a2",
+    "native/focused/round--1-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round--1-baseline.stdout": "b8aa4931bd7d029582731066dab695a28c61107200a26c11989f0db35e2673e0",
+    "native/focused/round--1-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round--1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round--1-candidate.stdout": "8f92534cc8a18514f4c6dae4e64d940b7b0c073644d93f406434e3af025ad5fa",
+    "native/focused/round--1-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round--1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round--1-control.stdout": "b2256b5c78bf55742613b16276f167587360a7097bbd0415df2e27d309ce47ff",
+    "native/focused/round-0-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-0-baseline.stdout": "7b0c8600313fa37c43a9919c4dc06d7557d9a54dc5f0d458bba5289a0de5dc38",
+    "native/focused/round-0-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round-0-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-0-candidate.stdout": "a4823d47a01030c9ba8db1a5a7f6b0bb927b8eac2784c25f80b436fd12b886b0",
+    "native/focused/round-0-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-0-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-0-control.stdout": "938d3774802089e7cb2c1dc47f0c45623248586c0ce8d403787c734913ee629a",
+    "native/focused/round-1-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-1-baseline.stdout": "aea32817b5a3b496d60c5b32762dbdc87138af8fa32a54cc3caa7236793822ed",
+    "native/focused/round-1-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round-1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-1-candidate.stdout": "0a2765a9696f08ddb4ab117cddcc5fe6453a1799f4a52d7d61e72192c36dc38c",
+    "native/focused/round-1-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-1-control.stdout": "f07c0744e74eb1bb0b8bbfbae83261360e3f90d129010b7524f87bccb26fe59d",
+    "native/focused/round-2-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-2-baseline.stdout": "c7487fac5549828c6fd8ccbf9a33ca68ef42d0e1930d6b7d63f69c708f8e878c",
+    "native/focused/round-2-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round-2-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-2-candidate.stdout": "838446d7b27430ed4a35325cdd8cad438f7c52cb92f8abeb1d3ef65b2a674f20",
+    "native/focused/round-2-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-2-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-2-control.stdout": "f12fbe59885113e74d5b29ecef5989e520c9cb17588e733ac39e49b2f1ccbd25",
+    "native/focused/round-3-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-3-baseline.stdout": "8a4718af5ebf340ce1e9c563449b7ffc78880689cde7d0497f90f75adbb58d32",
+    "native/focused/round-3-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round-3-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-3-candidate.stdout": "144ce2cfa750bc947b1aa8793a66ec8ed23130745294e8d6bbb1a877ed4ae4f2",
+    "native/focused/round-3-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-3-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-3-control.stdout": "70b76aff07853cf94105c7fac17ea7ee6bc04248d883a990bff6d76b8297f1a1",
+    "native/focused/round-4-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-4-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-4-baseline.stdout": "080820960f44a7d8a0fb9904b208e319bf9c51fac4be2da45a3fa0cceb3f529e",
+    "native/focused/round-4-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round-4-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-4-candidate.stdout": "9f174d66dc1015eb98443e25ebb8987f6eeb1599938c3b7aaf170064f95bf553",
+    "native/focused/round-4-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-4-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-4-control.stdout": "3a204af5ed7e4a71c8517ef3d71e934a2c591670c7befc8e1bcf90e5322638d5",
+    "native/focused/round-5-baseline.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-5-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-5-baseline.stdout": "1b0841526fe1bab3ee9cf3747c6f14ee24cfe02b3c183d71685205ebbcb973ce",
+    "native/focused/round-5-candidate.command.json": "0f4f7535fc6926a8d520e5c311695320b11e5ebafc8b073a64bcb8022f448303",
+    "native/focused/round-5-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-5-candidate.stdout": "df42790875cbc73416c1a2f7bd8725ba71160a9fc6a9874cc4b025630355aeb0",
+    "native/focused/round-5-control.command.json": "f4a6767833275e6d197521a8eaf232d188118107dae9cf47059afd2d94ecb418",
+    "native/focused/round-5-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native/focused/round-5-control.stdout": "cdc198f5224457898f20fc4b5a86c67c2e11e7b86da20aa721d23eb1a99469e3",
+    "native/native-code/baseline-parity.asm": "740c9df7f8cb4bf5a19105a6ca3e3433a99a126bba6775012a187cd88fce7df6",
+    "native/native-code/baseline-parity.contents": "41f3c799dd89e43fa9c191f782a4f08d08bd9a0abab61d0212e80aed075aa310",
+    "native/native-code/baseline-parity.sections": "2b8f8cbbd5cc6c2ffd14dd41fb3631bd8aa2b01b6cfc04c9628f46fbd06eb4b9",
+    "native/native-code/baseline-parity_scan.asm": "60b55a04fe44bc569f5662d45874e3fa900f2a8cbf1ed099cc2fee044a3999fe",
+    "native/native-code/baseline-parity_scan.contents": "44d40180f6c566f065a42a7750fa41a28c7df440f5889d22972957b66f2726c4",
+    "native/native-code/baseline-parity_scan.sections": "ebb38615c614eb770346f6275f3e994806cdc53ecca7c53181b2df0b73bb61d0",
+    "native/native-code/baseline-source.sha256": "716e86eaf47d902be8987620dc2c237793c73cae2aa3c04afae9ce4cfccccabc",
+    "native/native-code/binaries.sha256": "f6f0ebd734267fc7852b1cb632f3cb3d9e4d8a5d5417f29dff22e4752589048f",
+    "native/native-code/candidate-parity.asm": "83fdc4a0aafd0f840f0f3fea341a229afc79d54515317407118e85c4e9a044b5",
+    "native/native-code/candidate-parity.contents": "0200b5f5b29fc3155773a10009a490410e43293d6f91b3a992aa465c1f8b213a",
+    "native/native-code/candidate-parity.sections": "94876430def8bd929994bb95da4b1052a4a7c2469e67c410692101aa9d9e2b49",
+    "native/native-code/candidate-parity_scan.asm": "935f3006a4229e5b333b8788c1c3067507e1f0cb196d6e3f345a812a303b1085",
+    "native/native-code/candidate-parity_scan.contents": "c58f847ff0380925030b9d391788006b2c51689c4d96341925d9c73c5adb826e",
+    "native/native-code/candidate-parity_scan.sections": "1c1ba0c5e1830412f4317a0d1b47c17425e2ef64946c5903a9d7162b1c341641",
+    "native/native-code/candidate-source.sha256": "d91c007e660f74fe97fd71809b62423c9000e5caf24d9e47ee882c7f6c7bee20",
+    "native/run.json": "63b982c2afca0f642b923917afab606875a7ccaaab198c27f099ef1498ff5ad0",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
