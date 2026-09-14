@@ -1,0 +1,60 @@
+{
+  "commit": "2eeacd0619fd293cd4ac57180064037dbb8fd6ec",
+  "run": 34814396116,
+  "status": "All six native engineering checks passed. This does not establish performance parity.",
+  "checks": [
+    {
+      "artifact": "p0-macos-14-all",
+      "passed_tests": 545,
+      "test_summaries": 34
+    },
+    {
+      "artifact": "p0-macos-14-config-toml",
+      "passed_tests": 545,
+      "test_summaries": 34
+    },
+    {
+      "artifact": "p0-macos-14-default",
+      "passed_tests": 539,
+      "test_summaries": 34
+    },
+    {
+      "artifact": "p0-ubuntu-24.04-all",
+      "passed_tests": 545,
+      "test_summaries": 34
+    },
+    {
+      "artifact": "p0-ubuntu-24.04-config-toml",
+      "passed_tests": 545,
+      "test_summaries": 34
+    },
+    {
+      "artifact": "p0-ubuntu-24.04-default",
+      "passed_tests": 539,
+      "test_summaries": 34
+    }
+  ],
+  "archive": "cpp-parity-2eeacd0-ci.tar.gz",
+  "sha256": "ad219b0643d28c5263de2c29e15ffeb54e05b79de65f66f6edd6fe5810d3e66e",
+  "archive_bytes": 124588,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "ci/p0-macos-14-all/checks.txt": "d15a6f8378b353e90f7df9bc14a3e53b69a5379e15ac18cad84ee52b594143d0",
+    "ci/p0-macos-14-all/environment.txt": "4001a8cd3125c3eca6afad8071cbda06add9b4631912b34963fb7ef76389eee3",
+    "ci/p0-macos-14-config-toml/checks.txt": "be29ee37a7773dcdaecc41808abb04ebf440861b604fa2a6f9bf611bfcd3d0b1",
+    "ci/p0-macos-14-config-toml/environment.txt": "48cb9059ed7c10a25f2a69da95256287326084c362fb0de12d0685d74d0b4b34",
+    "ci/p0-macos-14-default/checks.txt": "f783c9c523a90621bb1152a9815ea29e9840d702d0d6eecd2699f856a3e92340",
+    "ci/p0-macos-14-default/environment.txt": "73458fb56d39f23ae98f63fdba7b7bde5bd2063766beb6254c816748f144ad3b",
+    "ci/p0-ubuntu-24.04-all/checks.txt": "3a6da609de9e3712452891e9e6799664dd6bb48f735853c527fc68dda7bf9d64",
+    "ci/p0-ubuntu-24.04-all/environment.txt": "8903acde10169a9c359f0083112aa2dfc798edcd5f21dacc99ccda6a341297c1",
+    "ci/p0-ubuntu-24.04-config-toml/checks.txt": "d4c5d427329d01bc0192087f435c20e298ac8b0c0d28ac9894dfd948b7ae7f05",
+    "ci/p0-ubuntu-24.04-config-toml/environment.txt": "6653e80a6699a2027d54c61d75a9726ed13fb1984872d9f2cbcf30216b7335f9",
+    "ci/p0-ubuntu-24.04-default/checks.txt": "2fadfd0c9a6d0dc9e281e81bde541f39447e82d18722e71e5955492166632f4b",
+    "ci/p0-ubuntu-24.04-default/environment.txt": "3f06f5576bbbc925b3d704f09df9fe215f80c80c8ee28559dd9e25206de084b5",
+    "ci/run.json": "c78e64ee9ed99c9ee089d8d147d8d42e4f5b47fa72f6d3d469de76751eb235c0",
+    "ci/summary.json": "f0581471bab836ae29a04e7407813eaf549029c11e111a613181fe12ce84fad7",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
