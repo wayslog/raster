@@ -26,6 +26,8 @@ mod storage_progress;
 mod task;
 pub(crate) mod thread_sessions;
 mod upsert;
+#[cfg(test)]
+mod upsert_ownership_tests;
 mod version_permit;
 
 use crate::schema::encoded_key::EncodedKey;
