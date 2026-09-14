@@ -43,6 +43,7 @@ fn hash_descriptor() -> HashDescriptor {
 }
 
 // press FNV-1a 64 Bit definition calculated byte by byte;Do not use platform default Hasher.
+#[inline]
 fn stable_hash(bytes: &[u8]) -> KeyHash {
     KeyHash(bytes.iter().fold(OFFSET_BASIS, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
@@ -57,6 +58,7 @@ fn checked_length(length: usize) -> Result<u32, Error> {
     u32::try_from(length).map_err(|_| Error::CapacityExceeded)
 }
 
+#[inline]
 fn encode_exact(bytes: &[u8], output: &mut [u8]) -> Result<(), Error> {
     if bytes.len() != output.len() {
         return Err(Error::Codec("Key encoding buffer length mismatch"));
@@ -109,12 +111,14 @@ impl KeyCodec for U64Key {
     fn hash_descriptor(&self) -> HashDescriptor {
         hash_descriptor()
     }
+    #[inline]
     fn hash(&self, key: &u64) -> KeyHash {
         stable_hash(&key.to_le_bytes())
     }
     fn encoded_len(&self, _key: &u64) -> Result<u32, Error> {
         Ok(8)
     }
+    #[inline]
     fn encode(&self, key: &u64, output: &mut [u8]) -> Result<(), Error> {
         encode_exact(&key.to_le_bytes(), output)
     }
