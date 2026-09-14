@@ -1247,3 +1247,6 @@ pub(crate) mod resident;
 
 #[cfg(test)]
 mod resident_tests;
+
+#[cfg(test)]
+mod resident_upsert_tests;

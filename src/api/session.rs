@@ -86,12 +86,20 @@ impl<S: Schema> Session<S> {
             .participant
             .as_ref()
             .ok_or(Error::InvalidState("session_closed"))
-            .and_then(|participant| engine.epoch.enter(participant))
+            .and_then(|participant| engine.epoch.enter_records(participant))
         {
             Ok(guard) => guard,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        engine.upsert(&mut self.runtime, serial, request)
+        engine.upsert(
+            &mut self.runtime,
+            serial,
+            request,
+            crate::log::resident::ReadHint {
+                guard: &_guard,
+                cache: &mut self.resident_hints,
+            },
+        )
     }
     pub fn rmw<M: RmwOperation<S>>(
         &mut self,
