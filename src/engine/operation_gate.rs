@@ -7,12 +7,10 @@ pub(super) fn try_lock(gate: &Mutex<()>) -> TryLockResult<MutexGuard<'_, ()>> {
         Err(TryLockError::WouldBlock) => {}
         result => return result,
     }
-    // Six retries and 63 processor hints at most. Long-running callbacks still
+    // Six retries and six processor hints at most. Long-running callbacks still
     // produce a rejection; never park a submitting thread behind an owner.
-    for step in 0..6 {
-        for _ in 0..(1 << step) {
-            std::hint::spin_loop();
-        }
+    for _ in 0..6 {
+        std::hint::spin_loop();
         match gate.try_lock() {
             Err(TryLockError::WouldBlock) => {}
             result => return result,
