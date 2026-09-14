@@ -43,20 +43,31 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
-    fn advance(&mut self) -> Result<Option<Outcome<O::Output>>, Error> {
+    fn advance(
+        &mut self,
+        hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+    ) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = &self.engine;
         let resolved = engine.resolve_index(self.hash, &self.key)?;
         let entry = resolved.entry;
         let head = resolved.head;
         if self.prepared.is_none() {
             let request = self.request.as_mut().expect("Request not completed");
-            if let Some(lease) = engine
-                .log
-                .find_mutable(&self.key, head)?
-                .filter(|lease| !lease.is_tombstone())
-            {
+            let borrowed = match hint {
+                Some(hint) => engine.log.mutable_head_borrowed(&self.key, head, hint)?,
+                None => None,
+            };
+            // A miss preserves the full collision-chain and Pending paths.
+            // The borrowed view remains inside the initial record epoch scope.
+            let lease = if borrowed.is_none() {
+                engine.log.find_mutable(&self.key, head)?
+            } else {
+                None
+            };
+            let record = borrowed.or_else(|| lease.as_ref().map(|lease| lease.borrow()));
+            if let Some(record) = record.filter(|record| !record.is_tombstone()) {
                 self.effect = Effect::Unknown;
-                match lease.update_at_version(self.version, |view| {
+                match record.update_at_version(self.version, |view| {
                     request.update_in_place(ValueUpdate { view })
                 })? {
                     ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
@@ -144,7 +155,10 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             }
         }
     }
-    fn run_locked(&mut self) -> UpsertStep<O::Output> {
+    fn run_locked(
+        &mut self,
+        hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+    ) -> UpsertStep<O::Output> {
         if self.engine.failed.load(Ordering::SeqCst) {
             return UpsertStep::Ready(Err(OperationError {
                 cause: Error::InvalidState("engine_failed_closed"),
@@ -165,7 +179,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 }));
             }
         }
-        let result = match catch_unwind(AssertUnwindSafe(|| self.advance())) {
+        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(hint))) {
             Ok(result) => result,
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
@@ -218,7 +232,7 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
                     return TaskStep::Complete;
                 }
             };
-        match self.run_locked() {
+        match self.run_locked(None) {
             UpsertStep::Retry => TaskStep::Retry,
             UpsertStep::Ready(result) => {
                 self.finish(result);
@@ -247,6 +261,7 @@ impl<S: Schema> Engine<S> {
         session: &mut SessionRuntime,
         serial: Serial,
         request: O,
+        mut hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
         if let Err(reason) = self.observe_session(session) {
             return Err(Rejected { request, reason });
@@ -309,7 +324,7 @@ impl<S: Schema> Engine<S> {
             version: session.current.version,
             permit,
         };
-        match task.run_locked() {
+        match task.run_locked(Some(&mut hint)) {
             UpsertStep::Ready(result) => {
                 let result = task
                     .finalize(result)

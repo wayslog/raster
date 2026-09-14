@@ -50,6 +50,13 @@ impl<V: ValueLayout> BorrowedRecord<'_, V> {
     pub fn is_tombstone(&self) -> bool {
         self.value.is_tombstone()
     }
+    pub fn update_at_version<R>(
+        &self,
+        version: CheckpointVersion,
+        update: impl for<'a> FnOnce(V::Update<'a>) -> Result<R, Error>,
+    ) -> Result<ValueAccess<Option<R>>, Error> {
+        self.value.update_at_version(version, update)
+    }
     pub fn try_read_live<R>(
         &self,
         read: impl for<'a> FnOnce(V::Read<'a>) -> R,
@@ -66,6 +73,25 @@ impl<V: ValueLayout> RecordLease<V> {
     }
 }
 impl<V: ValueLayout> HybridLog<V> {
+    /// Borrow only a mutable matching head. Colliding or nonresident heads use
+    /// the existing owning chain lookup. The requested mutable frontier is
+    /// stricter than residency; the record's value gate still checks sealing.
+    pub fn mutable_head_borrowed<'a>(
+        &'a self,
+        key: &[u8],
+        head: Option<LogAddress>,
+        hint: &'a mut ReadHint<'_, '_, V>,
+    ) -> Result<Option<BorrowedRecord<'a, V>>, Error> {
+        let Some(address) = head else { return Ok(None) };
+        if self.state.is_poisoned() {
+            return Err(Error::InvalidState("Log boundary lock poisoning"));
+        }
+        self.pool.ensure_healthy()?;
+        if address < LogAddress(self.state.mutable_floor.load(crate::sync::PUBLISH_ORDER)) {
+            return Ok(None);
+        }
+        self.resident_head_borrowed(key, head, hint)
+    }
     pub fn resident_head_borrowed<'a>(
         &'a self,
         key: &[u8],
