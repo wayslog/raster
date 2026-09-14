@@ -23,6 +23,10 @@ on:
         description: Optional full Rust commit SHA for an additional memory regression baseline
         type: string
         default: ''
+      result_baseline_ref:
+        description: Optional full Rust commit SHA for retained-result diagnosis (supports concurrent REST Reads)
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -118,6 +122,7 @@ jobs:
           BASELINE_REF: ${{ inputs.baseline_ref }}
           SCAN_BASELINE_REF: ${{ inputs.scan_baseline_ref }}
           MEMORY_BASELINE_REF: ${{ inputs.memory_baseline_ref }}
+          RESULT_BASELINE_REF: ${{ inputs.result_baseline_ref }}
         run: |
           if { [ "$BENCHMARK_MODE" = launch-control ] || [ "$BENCHMARK_MODE" = cpp-focused ]; } && [ -z "$BASELINE_REF" ]; then
             echo 'The selected diagnostic requires baseline_ref'
@@ -134,7 +139,7 @@ jobs:
             stat -f -c 'file_system:%T' .
           } > target/parity-evidence/environment.txt
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
-          cargo build --locked --release --example parity --example parity_scan
+          cargo build --locked --release --example parity --example parity_scan --example result_budget
           cargo build --locked --release --all-features --example benchmark --example benchmark_probe
           sh tools/performance/build.sh target/upstream-source target/parity-build
           if [ -n "$BASELINE_REF" ]; then
@@ -144,8 +149,9 @@ jobs:
             # Use identical drivers, including when a baseline predates an example.
             cp examples/parity.rs target/parity-baseline/examples/parity.rs
             cp examples/parity_scan.rs target/parity-baseline/examples/parity_scan.rs
+            cp examples/result_budget.rs target/parity-baseline/examples/result_budget.rs
             cargo build --manifest-path target/parity-baseline/Cargo.toml \
-              --target-dir target/parity-baseline-build --locked --release --example parity --example parity_scan
+              --target-dir target/parity-baseline-build --locked --release --example parity --example parity_scan --example result_budget
             mkdir -p target/parity-baseline/examples/benchmark target/parity-baseline/tests/support
             cp -R examples/benchmark/. target/parity-baseline/examples/benchmark/
             cp examples/benchmark_probe.rs target/parity-baseline/examples/benchmark_probe.rs
@@ -173,9 +179,18 @@ jobs:
               --target-dir target/parity-memory-baseline-build --locked --release --example parity
             echo "rust_memory_baseline:$MEMORY_BASELINE_REF" >> target/parity-evidence/environment.txt
           fi
+          if [ -n "$RESULT_BASELINE_REF" ]; then
+            [[ "$RESULT_BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$RESULT_BASELINE_REF"
+            git worktree add --detach target/parity-result-baseline "$RESULT_BASELINE_REF"
+            cp examples/result_budget.rs target/parity-result-baseline/examples/result_budget.rs
+            cargo build --manifest-path target/parity-result-baseline/Cargo.toml \
+              --target-dir target/parity-result-baseline-build --locked --release --example result_budget
+            echo "rust_result_baseline:$RESULT_BASELINE_REF" >> target/parity-evidence/environment.txt
+          fi
           # Keep native code evidence to distinguish source changes from build or run variation.
           mkdir -p target/parity-evidence/native-code
-          for variant in candidate baseline scan-baseline memory-baseline; do
+          for variant in candidate baseline scan-baseline memory-baseline result-baseline; do
             if [ "$variant" = candidate ]; then
               build_root=target
               source_root=.
@@ -190,7 +205,7 @@ jobs:
               cd "$source_root"
               git ls-files -z src | xargs -0 sha256sum
             ) > "target/parity-evidence/native-code/$variant-source.sha256"
-            for program in parity parity_scan; do
+            for program in parity parity_scan result_budget; do
               executable="$build_root/release/examples/$program"
               if [ -f "$executable" ]; then
                 sha256sum "$executable" >> target/parity-evidence/native-code/binaries.sha256
@@ -294,6 +309,23 @@ jobs:
           assert not failures, failures
           assert not controls, controls
           PY
+      - name: Compare retained completed results with interleaved controls
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
+        shell: bash
+        env:
+          RESULT_BASELINE_REF: ${{ inputs.result_baseline_ref }}
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/performance -p test_result_budget.py
+          result_build=target/parity-baseline-build
+          if [ -n "$RESULT_BASELINE_REF" ]; then
+            result_build=target/parity-result-baseline-build
+          fi
+          python3 -u tools/performance/compare_result_budget.py \
+            --rust target/release/examples/result_budget \
+            --baseline-rust "$result_build/release/examples/result_budget" \
+            --output target/parity-evidence/result-budget \
+            2>&1 | tee target/parity-evidence/result-budget-checks.txt
       - name: Compare long single-thread samples with an interleaved control
         if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-focused' }}
         shell: bash
