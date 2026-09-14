@@ -1,0 +1,37 @@
+{
+  "commit": "74d4d4dc5093337173ddf7c318681a8a87a725d3",
+  "run": 34822579133,
+  "status": "success",
+  "tests_by_job": {
+    "p0-macos-14-all": 549,
+    "p0-macos-14-config-toml": 549,
+    "p0-macos-14-default": 543,
+    "p0-ubuntu-24.04-all": 549,
+    "p0-ubuntu-24.04-config-toml": 549,
+    "p0-ubuntu-24.04-default": 543
+  },
+  "scope": "Engineering checks only; performance acceptance remains separate.",
+  "archive": "cpp-parity-74d4d4-ci.tar.gz",
+  "sha256": "7daca95d1be94267e41cbb5133a0bf62af2dab1a1a45c051992e5f897c910b7a",
+  "archive_bytes": 124922,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "ci/p0-macos-14-all/checks.txt": "f0d26d23852b9d30f8068c2d5fc8d98991fbfebdb01343aa90352a195426e33d",
+    "ci/p0-macos-14-all/environment.txt": "fdebe78e66959fb85f236f4730554c8b089bd3b13ca2caf0fe163ea6eab8018d",
+    "ci/p0-macos-14-config-toml/checks.txt": "8da8d09c1b4f2d093d9d01f893dcbe926d5b071a67680df12872e9e9c446c74c",
+    "ci/p0-macos-14-config-toml/environment.txt": "5670269ccd683449c8dbb4fb9ab77db667c0d07c6e52800f3e784dde9cf111fe",
+    "ci/p0-macos-14-default/checks.txt": "81b11bb518d64a0fb56e1ec288e29c1e7ad5b1aeb15c2ac0af1bf2617ffd87f3",
+    "ci/p0-macos-14-default/environment.txt": "1c14328a7323aaa09f6950f3b1948a5c9243e98daa6d0f1f0c49b328222f72b7",
+    "ci/p0-ubuntu-24.04-all/checks.txt": "59413fdeb306f611bb7ea3cd8848e76eec05dcbe8b061c1325f1515f5a691fc7",
+    "ci/p0-ubuntu-24.04-all/environment.txt": "6e5588b3b8c90e6691dbd53962a4aa1127de9ce115eb0a055c6d94991aaadf1e",
+    "ci/p0-ubuntu-24.04-config-toml/checks.txt": "abc54ee0516932922d98dbaef4460a4f8e613bf0879f8df49d6c39d34d972914",
+    "ci/p0-ubuntu-24.04-config-toml/environment.txt": "4fb06a5ec21fe52e9342118ff959d85985da12e45df849af82fa31db298bb35b",
+    "ci/p0-ubuntu-24.04-default/checks.txt": "43228b6c4aea1d6f7e389eac00bf1b9e1d485a4cfc06fe922f1f71bc2d7836bd",
+    "ci/p0-ubuntu-24.04-default/environment.txt": "3e0286ca7a7074f2db8fda325508c7c8b47ff0dfb588649988974d80f8586c71",
+    "ci/run.json": "2e340cd696cc947f9658d501687ecd325717ea6a752c7de0fffa3d45bc095842",
+    "ci/summary.json": "f737b851aea1501a2f4b9299dfba840473cab7b4dc4d3cf5e89ed386e10b76a9",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
