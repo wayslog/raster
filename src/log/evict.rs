@@ -46,6 +46,7 @@ impl<V: ValueLayout> HybridLog<V> {
                 }
                 state.reclaim = Some((page, generation));
                 self.publish_mutable_floor(end);
+                self.publish_resident_floor(end);
                 state.frontiers.head = end;
             }
             retired

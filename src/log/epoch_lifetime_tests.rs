@@ -213,3 +213,51 @@ fn closing_a_retained_session_releases_its_hint_owner() {
     assert_eq!(Arc::weak_count(&store.inner.log.state), 0);
     assert!(session.participant.is_none());
 }
+
+#[test]
+fn warmed_public_read_does_not_wait_for_the_log_boundary_lock() {
+    let mut config = Config::default();
+    config.index.buckets = 1;
+    let store = RasterKV::builder(SchemaPair::new(U64Key, AtomicU64Value))
+        .config(config)
+        .device(Box::new(crate::device::null::NullDeviceFactory))
+        .create()
+        .unwrap();
+    let mut preload = store.start_session(Default::default()).unwrap();
+    assert!(matches!(
+        preload.upsert(Serial(0), Put),
+        Ok(Submission::Ready(Ok(Outcome::Success(()))))
+    ));
+    drop(preload);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel();
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let store = &store;
+        let worker = scope.spawn(move || {
+            let mut session = store.start_session(Default::default()).unwrap();
+            assert!(matches!(
+                session.read(Serial(0), Put, ReadOptions::default()),
+                Ok(Submission::Ready(Ok(Outcome::Success(42))))
+            ));
+            started_tx.send(()).unwrap();
+            go_rx.recv().unwrap();
+            let value = match session.read(Serial(1), Put, ReadOptions::default()) {
+                Ok(Submission::Ready(Ok(Outcome::Success(value)))) => value,
+                _ => panic!("Expected a completed resident read"),
+            };
+            result_tx.send(value).unwrap();
+        });
+        started_rx.recv().unwrap();
+        let state = store.inner.log.state.write().unwrap();
+        go_tx.send(()).unwrap();
+        let while_locked = result_rx.recv_timeout(std::time::Duration::from_secs(5));
+        drop(state);
+        worker.join().unwrap();
+        assert_eq!(
+            while_locked,
+            Ok(42),
+            "A warmed Read waited for the log boundary lock"
+        );
+    });
+}
