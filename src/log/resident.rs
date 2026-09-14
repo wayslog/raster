@@ -74,8 +74,14 @@ impl<V: ValueLayout> HybridLog<V> {
     ) -> Result<Option<BorrowedRecord<'a, V>>, Error> {
         let Some(address) = head else { return Ok(None) };
         address.validate()?;
-        if !self.resident_range_contains(address)? {
+        let frontiers = self.frontiers()?;
+        if address < frontiers.begin || address < frontiers.head {
             return Ok(None);
+        }
+        if address >= frontiers.tail {
+            return Err(Error::InvalidFormat(
+                "The query address exceeds the end of the log",
+            ));
         }
         let manager = self
             .state

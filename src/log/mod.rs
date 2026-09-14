@@ -31,8 +31,6 @@ struct LogControl {
     // Keep the derived restriction with the control allocation instead of
     // shifting the page pool, record table, and enclosing engine fields.
     mutable_floor: crate::sync::AtomicU64,
-    // Resident reads exclude addresses before begin and head, but include read-only records.
-    resident_floor: crate::sync::AtomicU64,
     epoch: std::sync::OnceLock<Arc<crate::epoch::EpochManager>>,
 }
 impl LogControl {
@@ -42,11 +40,9 @@ impl LogControl {
             .begin
             .max(state.frontiers.read_only)
             .max(state.frontiers.head);
-        let resident_floor = state.frontiers.begin.max(state.frontiers.head);
         Self {
             state: std::sync::RwLock::new(state),
             mutable_floor: crate::sync::AtomicU64::new(floor.0),
-            resident_floor: crate::sync::AtomicU64::new(resident_floor.0),
             epoch: std::sync::OnceLock::new(),
         }
     }
@@ -272,7 +268,6 @@ impl<V: ValueLayout> HybridLog<V> {
             return Err(Error::Busy);
         }
         self.publish_mutable_floor(begin);
-        self.publish_resident_floor(begin);
         state.frontiers.begin = begin;
         Ok(())
     }
@@ -303,31 +298,8 @@ impl<V: ValueLayout> HybridLog<V> {
         result.tail = self.pool.tail()?;
         Ok(result)
     }
-    /// Publish after validation while holding the control write lock.
-    /// This only restricts the candidate range; it does not grant record access.
-    fn publish_resident_floor(&self, frontier: LogAddress) {
-        self.state
-            .resident_floor
-            .fetch_max(frontier.0, crate::sync::PUBLISH_ORDER);
-    }
-    fn resident_range_contains(&self, address: LogAddress) -> Result<bool, Error> {
-        if self.state.is_poisoned() {
-            return Err(Error::InvalidState("Log boundary lock poisoning"));
-        }
-        let floor = LogAddress(self.state.resident_floor.load(crate::sync::PUBLISH_ORDER));
-        let tail = self.pool.tail()?;
-        if address < floor {
-            return Ok(false);
-        }
-        if address >= tail {
-            return Err(Error::InvalidFormat(
-                "The query address exceeds the end of the log",
-            ));
-        }
-        Ok(true)
-    }
-    /// Publish the mutable range restriction while holding the control write lock.
-    /// Preserve the published read-only target even if freezing fails.
+    /// Called under the control write lock after validating the transition.
+    /// Failed freezes keep their target restriction, just like read_only.
     fn publish_mutable_floor(&self, frontier: LogAddress) {
         self.state
             .mutable_floor

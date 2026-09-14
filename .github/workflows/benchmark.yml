@@ -216,6 +216,18 @@ jobs:
             --baseline-rust target/parity-baseline-build/release/examples/parity \
             --output target/parity-evidence/rust-baseline --min-throughput 0.98 --max-p99 1.10 \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-checks.txt
+      - name: Compare identical Rust baseline controls on the same runner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        shell: bash
+        env:
+          CASE_FILTER: ${{ inputs.case }}
+        run: |
+          set -o pipefail
+          python3 -u tools/performance/compare.py \
+            --rust target/parity-baseline-build/release/examples/parity \
+            --baseline-rust target/parity-baseline-build/release/examples/parity \
+            --output target/parity-evidence/rust-baseline-control --min-throughput 0.98 --max-p99 1.10 \
+            --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-control-checks.txt
       - name: Compare the additional preserved memory baseline on the same runner
         if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.memory_baseline_ref != '' }}
         shell: bash
