@@ -14,6 +14,7 @@ pub(crate) enum EncodedKey {
 }
 
 impl EncodedKey {
+    #[inline]
     pub fn zeroed(length: usize) -> Result<Self, Error> {
         if length <= INLINE_CAPACITY {
             return Ok(Self::Inline {
@@ -56,6 +57,7 @@ impl Deref for EncodedKey {
 }
 
 impl DerefMut for EncodedKey {
+    #[inline]
     fn deref_mut(&mut self) -> &mut [u8] {
         match self {
             Self::Inline { bytes, length } => &mut bytes[..usize::from(*length)],

@@ -1,0 +1,1012 @@
+{
+  "base_commit": "5393117ffcf2034b91adefa48f775e7627a66c88",
+  "runtime_base": "811c79b10da2eca99c9292acef6a3534280cf864",
+  "change": "Six inline hints expose fixed-size integer key preparation without changing behavior.",
+  "validation": {
+    "ordinary_outputs": 110,
+    "result_budget_outputs": 63,
+    "variable_processes": 18,
+    "variable_trajectories": 576,
+    "tests_passed": 550,
+    "clippy": "passed",
+    "strict_rustdoc": "passed",
+    "fmt": "passed in fresh follow-up check",
+    "source_and_binary_identity": "verified",
+    "status": "Measurements verified; failed and invalid-control gates retained. Full parity not established."
+  },
+  "outcome": {
+    "base": "5393117ffcf2034b91adefa48f775e7627a66c88",
+    "runtime_base": "811c79b10da2eca99c9292acef6a3534280cf864",
+    "hypotheses": [
+      {
+        "rank": 1,
+        "cause": "Concrete helper calls hide the fixed8-byte key preparation from the generic engine. ELF relocations identify hash, zeroed, deref_mut and encode calls.",
+        "prediction": "Inline metadata exposes these helpers and allows the integer prepare path to eliminate helper calls and impossible heap/length branches."
+      },
+      {
+        "rank": 2,
+        "cause": "Those helper ABIs transfer nested error-capable results between stack slots.",
+        "prediction": "Fewer cross-function result transfers improve uniform single-thread Read and Upsert, with a target5percent gain; all existingregression thresholds retained."
+      },
+      {
+        "rank": 3,
+        "cause": "Dynamic key lengths and other operation protocols retain independent costs.",
+        "prediction": "Variable-key, lifecycle and non-target operation checks may expose regressions; no algorithm/format/failure changes are permitted."
+      }
+    ],
+    "scope": "Six inline hints covering U64 hash/encode, their small byte helpers, EncodedKey creation and mutable slice access. encoded_len already folds and is unchanged.",
+    "status": "Experimental; broad local gains with remaining failures and invalid controls. Full validation and native gates pending.",
+    "schema_tests_passed": 8,
+    "assembly": {
+      "baseline": {
+        "prepare": {
+          "outlined": true,
+          "instruction_lines": 132,
+          "key_preparation_calls": [
+            "100004dcc: 9401fa50    \tbl\t0x10008370c <<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::hash>",
+            "100004ddc: 9401ffb0    \tbl\t0x100084c9c <<raster::schema::encoded_key::EncodedKey>::zeroed>",
+            "100004e6c: 94020d4b    \tbl\t0x100088398 <<raster::schema::encoded_key::EncodedKey as core::ops::deref::DerefMut>::deref_mut>",
+            "100004e84: 9401fa41    \tbl\t0x100083788 <<raster::schema::builtin::U64Key as raster::schema::key::KeyCodec>::encode>"
+          ]
+        },
+        "read": {
+          "outlined": true,
+          "instruction_lines": 559,
+          "key_preparation_calls": [
+            "10000500c: 97ffff4d    \tbl\t0x100004d40 <<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>>"
+          ]
+        },
+        "upsert": {
+          "outlined": true,
+          "instruction_lines": 708,
+          "key_preparation_calls": [
+            "10000602c: 97fffb45    \tbl\t0x100004d40 <<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>>"
+          ]
+        },
+        "rmw": {
+          "outlined": true,
+          "instruction_lines": 479,
+          "key_preparation_calls": [
+            "1000058b0: 97fffd24    \tbl\t0x100004d40 <<raster::engine::Engine<raster::schema::builtin::SchemaPair<raster::schema::builtin::U64Key, raster::schema::builtin::AtomicU64Value>>>::prepare::<parity::Request>>"
+          ]
+        }
+      },
+      "candidate": {
+        "prepare": {
+          "outlined": false
+        },
+        "read": {
+          "outlined": true,
+          "instruction_lines": 583,
+          "key_preparation_calls": []
+        },
+        "upsert": {
+          "outlined": true,
+          "instruction_lines": 689,
+          "key_preparation_calls": []
+        },
+        "rmw": {
+          "outlined": true,
+          "instruction_lines": 504,
+          "key_preparation_calls": []
+        }
+      }
+    },
+    "ordinary": [
+      {
+        "case": "read/uniform/1",
+        "throughput_ratio": 1.0398319757657026,
+        "p99_ratio": 0.9106753812636166,
+        "passed": true,
+        "name": "read-uniform"
+      },
+      {
+        "case": "upsert/uniform/1",
+        "throughput_ratio": 1.0688426529792958,
+        "p99_ratio": 0.8468634686346863,
+        "passed": true,
+        "name": "upsert-uniform"
+      },
+      {
+        "case": "rmw/uniform/1",
+        "throughput_ratio": 1.0315860902093492,
+        "p99_ratio": 1.0014992503748126,
+        "passed": true,
+        "name": "rmw-uniform"
+      },
+      {
+        "case": "upsert/shared-hot/1",
+        "throughput_ratio": 1.0493406177121365,
+        "p99_ratio": 0.9106753812636166,
+        "passed": true,
+        "name": "upsert-shared"
+      },
+      {
+        "case": "read/uniform/4",
+        "throughput_ratio": 1.0665280508196462,
+        "p99_ratio": 1.0432968179447053,
+        "passed": true,
+        "name": "read-four"
+      },
+      {
+        "case": "upsert/worker-hot/4",
+        "throughput_ratio": 1.0773362527132189,
+        "p99_ratio": 1.049193231011413,
+        "passed": true,
+        "name": "upsert-four"
+      },
+      {
+        "case": "rmw/shared-hot/4",
+        "throughput_ratio": 0.9852792577185697,
+        "p99_ratio": 1.5011697355021605,
+        "passed": false,
+        "name": "rmw-shared-four"
+      },
+      {
+        "case": "read/shared-hot/4",
+        "throughput_ratio": 1.1103877611479676,
+        "p99_ratio": 1.0091296741745026,
+        "passed": true,
+        "name": "read-shared-four"
+      },
+      {
+        "case": "read/uniform/1",
+        "throughput_ratio": 1.0045973976088731,
+        "p99_ratio": 1.0,
+        "passed": true,
+        "name": "control-read",
+        "reciprocal_control_valid": true
+      },
+      {
+        "case": "upsert/shared-hot/1",
+        "throughput_ratio": 0.9991067863022203,
+        "p99_ratio": 1.0,
+        "passed": true,
+        "name": "control-upsert",
+        "reciprocal_control_valid": true
+      },
+      {
+        "case": "read/shared-hot/4",
+        "throughput_ratio": 0.9603866098319086,
+        "p99_ratio": 1.0299354333789865,
+        "passed": false,
+        "name": "control-shared-four",
+        "reciprocal_control_valid": false
+      }
+    ],
+    "retained": [
+      {
+        "comparisons": {
+          "candidate": {
+            "throughput_ratio": 1.1340526469674008,
+            "p99_ratio": 0.918,
+            "passed": true
+          },
+          "control": {
+            "throughput_ratio": 1.0224775061225915,
+            "p99_ratio": 1.0,
+            "passed": false
+          }
+        },
+        "ratios_by_round": [
+          {
+            "round": 0,
+            "candidate": {
+              "throughput_ratio": 1.1055977667454604,
+              "p99_ratio": 0.9952153110047847
+            },
+            "control": {
+              "throughput_ratio": 0.9856784361131011,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 1,
+            "candidate": {
+              "throughput_ratio": 1.1073503027094007,
+              "p99_ratio": 0.9952153110047847
+            },
+            "control": {
+              "throughput_ratio": 0.9840128770492573,
+              "p99_ratio": 1.1961722488038278
+            }
+          },
+          {
+            "round": 2,
+            "candidate": {
+              "throughput_ratio": 1.1274673044726142,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 1.0172201551669546,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 3,
+            "candidate": {
+              "throughput_ratio": 1.199555543870274,
+              "p99_ratio": 0.7157534246575342
+            },
+            "control": {
+              "throughput_ratio": 1.087148264017416,
+              "p99_ratio": 0.7157534246575342
+            }
+          },
+          {
+            "round": 4,
+            "candidate": {
+              "throughput_ratio": 1.180640057201666,
+              "p99_ratio": 0.8561643835616438
+            },
+            "control": {
+              "throughput_ratio": 1.0663278406713612,
+              "p99_ratio": 0.8561643835616438
+            }
+          },
+          {
+            "round": 5,
+            "candidate": {
+              "throughput_ratio": 1.094963672976563,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 0.9776094353823019,
+              "p99_ratio": 1.164
+            }
+          }
+        ],
+        "passed": false,
+        "control_valid": false,
+        "scope": "Retained-result Rust diagnostic, not complete C++ acceptance",
+        "retained": 0
+      },
+      {
+        "comparisons": {
+          "candidate": {
+            "throughput_ratio": 1.0335479193527684,
+            "p99_ratio": 1.0,
+            "passed": true
+          },
+          "control": {
+            "throughput_ratio": 0.9964075850040971,
+            "p99_ratio": 1.0980861244019138,
+            "passed": true
+          }
+        },
+        "ratios_by_round": [
+          {
+            "round": 0,
+            "candidate": {
+              "throughput_ratio": 1.0289813881715637,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 0.989614131823856,
+              "p99_ratio": 1.1961722488038278
+            }
+          },
+          {
+            "round": 1,
+            "candidate": {
+              "throughput_ratio": 1.0463007836087206,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 0.9276408398990458,
+              "p99_ratio": 1.3923444976076556
+            }
+          },
+          {
+            "round": 2,
+            "candidate": {
+              "throughput_ratio": 1.005847463792866,
+              "p99_ratio": 1.3923444976076556
+            },
+            "control": {
+              "throughput_ratio": 1.0088621686641692,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 3,
+            "candidate": {
+              "throughput_ratio": 1.039354586582647,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 1.0013310170285994,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 4,
+            "candidate": {
+              "throughput_ratio": 1.0328410693171028,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 1.0036915928816352,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 5,
+            "candidate": {
+              "throughput_ratio": 1.034442818485705,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 0.9878954944032444,
+              "p99_ratio": 1.1961722488038278
+            }
+          }
+        ],
+        "passed": true,
+        "control_valid": true,
+        "scope": "Retained-result Rust diagnostic, not complete C++ acceptance",
+        "retained": 32
+      },
+      {
+        "comparisons": {
+          "candidate": {
+            "throughput_ratio": 1.0467464950033865,
+            "p99_ratio": 0.9305210918114144,
+            "passed": true
+          },
+          "control": {
+            "throughput_ratio": 1.020475884344988,
+            "p99_ratio": 0.9644334160463193,
+            "passed": false
+          }
+        },
+        "ratios_by_round": [
+          {
+            "round": 0,
+            "candidate": {
+              "throughput_ratio": 1.0617699038626895,
+              "p99_ratio": 0.9328
+            },
+            "control": {
+              "throughput_ratio": 1.0385674853129658,
+              "p99_ratio": 0.9328
+            }
+          },
+          {
+            "round": 1,
+            "candidate": {
+              "throughput_ratio": 1.018519202103233,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 0.9948192195184267,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 2,
+            "candidate": {
+              "throughput_ratio": 1.0222625347163155,
+              "p99_ratio": 1.0
+            },
+            "control": {
+              "throughput_ratio": 1.0012084559834467,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 3,
+            "candidate": {
+              "throughput_ratio": 1.0602530631492022,
+              "p99_ratio": 0.8672
+            },
+            "control": {
+              "throughput_ratio": 1.011346384310989,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 4,
+            "candidate": {
+              "throughput_ratio": 1.0341880879573153,
+              "p99_ratio": 0.928082191780822
+            },
+            "control": {
+              "throughput_ratio": 0.9845493908972822,
+              "p99_ratio": 1.0
+            }
+          },
+          {
+            "round": 5,
+            "candidate": {
+              "throughput_ratio": 1.054520596332988,
+              "p99_ratio": 0.8672
+            },
+            "control": {
+              "throughput_ratio": 1.0238763179806116,
+              "p99_ratio": 0.9328
+            }
+          }
+        ],
+        "passed": false,
+        "control_valid": false,
+        "scope": "Retained-result Rust diagnostic, not complete C++ acceptance",
+        "retained": 960
+      }
+    ],
+    "variable": {
+      "candidate": {
+        "throughput_ratio": 1.019360301331428,
+        "p99_ratio": 1.0195712954333644,
+        "passed": true,
+        "operation_time_ratios": {
+          "read": 0.9780451972236164,
+          "upsert": 0.9813666094722389,
+          "rmw": 0.9897888527472379,
+          "delete": 0.9962101280602005
+        }
+      },
+      "control": {
+        "throughput_ratio": 1.0006738328377176,
+        "p99_ratio": 1.0291239515377446,
+        "passed": true,
+        "operation_time_ratios": {
+          "read": 1.0005262056133275,
+          "upsert": 0.9900321233660461,
+          "rmw": 1.0054974801946404,
+          "delete": 0.9853255197772345
+        }
+      }
+    }
+  },
+  "status": "Experimental local improvement; shared-hot four-thread RMW P99 failed and some controls invalid. Full native and local comparisons pending.",
+  "archive": "cpp-parity-key-preparation-inline.tar.gz",
+  "sha256": "c52506d2c982ba81067539d92ea63b65c566ad586b51a8c3c7cdad0702f36cbd",
+  "archive_bytes": 4386996,
+  "input_references": 18,
+  "unique_inputs": 1,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "focused/assembly-summary.json": "5acb9c0843337dd733151f3e1574cda4fd99ce794953d911ba3576ab4b000f80",
+    "focused/baseline-builtin.rs": "635595af5de81f2386ae63bbc6b09ca5658fc1d381d46ebe0bfc6339a273dd4f",
+    "focused/baseline-call-targets.json": "5acf38388d3ade2d2079fa58e8eb0ac4d6c5590c36c9a345a1bffbad9896ff94",
+    "focused/baseline-encoded_key.rs": "db60e8071a0f3f35626718cb5b0dfe265a32378f6ee4fd051a88f396f49dcc40",
+    "focused/baseline-native-prepare.asm": "5409605da194c64ed9d5aef38b4b3a0e1eb2a98e8d1ec4a5c5b07f60f44a63f9",
+    "focused/baseline-prepare.asm": "f4a8d300da684ea159e11c66384856c904acda47ad9f85e7a837af95a2d4f1a5",
+    "focused/baseline-read.asm": "9bc9ab459efc717472f6e6b3df1c4ef59ab4f43059e407d1c31f7cb053cae1b7",
+    "focused/baseline-rmw.asm": "39c3b328f5639920523a459fbfafa13b2cc6e2117e415df7a27ad868e13bbe44",
+    "focused/baseline-upsert.asm": "2c8e53973d03ff01c3695f0e938dcb2c30a615f9415af10ab0a42db859f33e0e",
+    "focused/baseline.asm": "70a8d0b90a17dbc405362a7001a059e7591f2cdf8c21fee9bab9cea333aa6dbd",
+    "focused/binary-sha256.json": "f3b96a74c002a27d5ba221a6a4f8d17266ee2e8dd162dafbd267d9d0e345925b",
+    "focused/build.log": "cc493093fd54dfe634db1d646233139dc1560c08bc44ba59e111c2c731957e7f",
+    "focused/candidate-builtin.rs": "3c6f2f076cb5667ab333f313f2452729799c4c61a42eaadd69ba1d2b4c913420",
+    "focused/candidate-encoded_key.rs": "b3b0ba7c36f84b5d0e9d92d153b683ca916958d976b8480e438e3a700626c88c",
+    "focused/candidate-read.asm": "1225147e9021c28ba814962b5d032e0b8d9f9fc2f8aff750501376dbcef120ff",
+    "focused/candidate-rmw.asm": "58d50ed9d3ac9d01860bca76c397a39cb9fae60f8dc0aaafa351b119412e849e",
+    "focused/candidate-upsert.asm": "72d8e27be0e8a3488d1b32023ebe6381afefcd34c10e545f5c5d622995088099",
+    "focused/candidate.asm": "a369ad2667098febb284717199729d5cb299bd1be6c4400c72807e52d7a1d62a",
+    "focused/clippy.log": "3e00ac05f5aba0a6a932e0738bd56bbcf80e9c58d3fa4b126b920bd113a8fb98",
+    "focused/control-read.log": "493ab5b29cddf0f204d6fd8574abff30e64c3932da02c93bef3cfcf3cad71619",
+    "focused/control-read/comparison.json": "a37eeda73dc48a901df457c13a710a767fbff371dae71c0fdb61cf667eb419f1",
+    "focused/control-read/environment.json": "9dbcfa1d3d549304817564eff07e318df907f45dfa3d9447b1267a5b0b0b255a",
+    "focused/control-read/read-uniform-1--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1--1-baseline.stdout": "896752823398563f315fb98d9778c2191a4a243ed0eb016392cfb35f62c6bc0d",
+    "focused/control-read/read-uniform-1--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1--1-rust.stdout": "d30f91e97979cb14ae928a6306cf1a6e9efbe9947d61a69137178e0b4087a2c3",
+    "focused/control-read/read-uniform-1-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-0-baseline.stdout": "38ee09633686c41bcf01eb722ec1496d4ba2fff9abb36873abd3e3a40307db84",
+    "focused/control-read/read-uniform-1-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-0-rust.stdout": "1c3037395ea2871d61b5d893a321df43f9e56512bc2327f4ddbcc7b789f19bda",
+    "focused/control-read/read-uniform-1-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-1-baseline.stdout": "0cb74f01725d496d968ec470d1fdc0d6010368e5c69ea5d7ad9f16a778ad1f32",
+    "focused/control-read/read-uniform-1-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-1-rust.stdout": "0dc6db355393aea1582338b79484085cf5b5137d530da1eddbbcf9cc6d44536c",
+    "focused/control-read/read-uniform-1-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-2-baseline.stdout": "fe23b805f689330a191a6ff8e22bac2b192d6cfd38e0c7959697d43d5b9e72a9",
+    "focused/control-read/read-uniform-1-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-2-rust.stdout": "50d0162f7d36ec8fe7c1155ded1356bba245afb538e036086f6db6976a9a66c0",
+    "focused/control-read/read-uniform-1-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-3-baseline.stdout": "ad4d4c756a69109e34f1e4ffc43d5553dbc89a0a32f7fc67bded58cdce33063e",
+    "focused/control-read/read-uniform-1-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-read/read-uniform-1-3-rust.stdout": "f4b534b1fcbbea7c3b18583f96b61e6dd732f5776c3e29db6da5ee16f695cdf2",
+    "focused/control-shared-four.log": "a8b890a8e91f2eca00f1166c8c480daad14a2ec99f3b89a8ea09a5ab4ca537cc",
+    "focused/control-shared-four/comparison.json": "4a574d3b5083f397ae7348454345a7331ea1a9d7bd355cd11c7e8e0f9202ebb0",
+    "focused/control-shared-four/environment.json": "fce27e8a58abc48e22cca645bc5f2e77aefd866739c49162f20f0ec7efc0fe76",
+    "focused/control-shared-four/read-shared-hot-4--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4--1-baseline.stdout": "024ecf87396ca39759b0518ddf73448d70858921dd7c64682493a8540c0f1f8f",
+    "focused/control-shared-four/read-shared-hot-4--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4--1-rust.stdout": "23815c11a689d29b8f3dd50d00dac44d9ef239d132d4460008b4934864cc060f",
+    "focused/control-shared-four/read-shared-hot-4-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-0-baseline.stdout": "6c8fd781bea044c88a137e82bd411809d7a3ea15449681349e52327b25e3ba33",
+    "focused/control-shared-four/read-shared-hot-4-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-0-rust.stdout": "a2fdf90c48d0a2fa117a01ac0f8ec4b46020eca5d376ef0cab19bd8286375178",
+    "focused/control-shared-four/read-shared-hot-4-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-1-baseline.stdout": "7fd04f344a58892a2ed15cb3d32d1dec7a54dfbb56f1d3b8cd82789002417d05",
+    "focused/control-shared-four/read-shared-hot-4-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-1-rust.stdout": "94d14b287a469553359f6eaedeaeef43ee01f239416e3dc896e98a6881c3f182",
+    "focused/control-shared-four/read-shared-hot-4-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-2-baseline.stdout": "98ee452bdd113ba2e5934f7acec5c56a47ccebb63b0333404781f47cbebe6ae3",
+    "focused/control-shared-four/read-shared-hot-4-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-2-rust.stdout": "13cca3904b73ba970cf36041353cc8aca7bccd2db7d923fd4493d4d9d702d4a4",
+    "focused/control-shared-four/read-shared-hot-4-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-3-baseline.stdout": "2ee984a791f4b2917ee4d9959e22f9f5813b42be58b4bce5e89817c000e4907b",
+    "focused/control-shared-four/read-shared-hot-4-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-shared-four/read-shared-hot-4-3-rust.stdout": "c960345b3316b09fcd6a34aa0104101c7bd16f4cc26945cbae3c009caf8eb41f",
+    "focused/control-upsert.log": "0f9e131960106ca613f532b60f4f1a77864808e4d5e55f93777c5c5f7ee3d398",
+    "focused/control-upsert/comparison.json": "28591d69c2bc565d030efbdb0c5a8bdb3f9198d52510349dc5c50a487716b1fb",
+    "focused/control-upsert/environment.json": "ebada00cef6a5a7db07824616c47fc8be042d777383fddb6290e63a49490c253",
+    "focused/control-upsert/upsert-shared-hot-1--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1--1-baseline.stdout": "f1b7b7ccd05a7b13928e6889fcd397b308475cf86f5c29bf2acc124b226a2711",
+    "focused/control-upsert/upsert-shared-hot-1--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1--1-rust.stdout": "54cf596083e327170003a361d8039cf7b2d268934bcbe37e4344919233e7df72",
+    "focused/control-upsert/upsert-shared-hot-1-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-0-baseline.stdout": "9192196338ff479a6b406c36684a2cd01c09c5e602ace46d0e6faa22817a3cff",
+    "focused/control-upsert/upsert-shared-hot-1-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-0-rust.stdout": "0c43763ed3ef8faa8b02b077d00b705650837d8c973d6e1ea0a3a4414599e3bf",
+    "focused/control-upsert/upsert-shared-hot-1-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-1-baseline.stdout": "34a35c2ce3e156d3401a20f836654e5811630c588fe18fd0aff21d71b4a8056d",
+    "focused/control-upsert/upsert-shared-hot-1-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-1-rust.stdout": "6d28e38ff40c8657c844b1bc418bd4f3ae26dabe428f997cbd14bbb8136651f3",
+    "focused/control-upsert/upsert-shared-hot-1-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-2-baseline.stdout": "a2caa6892e3755a3e4a333fd827586ee2895f2220d8dee5b686c8b26129a8660",
+    "focused/control-upsert/upsert-shared-hot-1-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-2-rust.stdout": "e375768ad58ed05c092160457a79182a7bae9ada26e6f110b4d269468dbcb20d",
+    "focused/control-upsert/upsert-shared-hot-1-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-3-baseline.stdout": "1e1d61d9307094fba1d464a5156fd014d6343622573d3e03789bae95fadf6b61",
+    "focused/control-upsert/upsert-shared-hot-1-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/control-upsert/upsert-shared-hot-1-3-rust.stdout": "3ef401ec3a0d122b5756c554c0851dfa63a939b2aae387766a5ec7a209dce627",
+    "focused/driver.log": "50da2c175b8acd3dfcd996fc750c426cbcc622e954d0a7277ee8aa44557367e9",
+    "focused/hypothesis.json": "6c1a4fb82787fce3843dae669bf61734e2f041b15bb85c2152489cf2d4db25c4",
+    "focused/outcome.json": "d63b4caa57821416b7bc9f65d3fc10bba5ec8d49fc2e3c1d5011240720a37715",
+    "focused/read-four.log": "e28821e092567e2ad51e91748eba211a8fcc274a5def74932cf71b532f8d5d96",
+    "focused/read-four/comparison.json": "b42fe5a33e08de54913b0a1119b657886f41e704b3b02bfe1f0cde27a67e2772",
+    "focused/read-four/environment.json": "3fd8c2932e930c084ecb0a76bf56f909ff2058b665033b85040a7621acd1b05e",
+    "focused/read-four/read-uniform-4--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4--1-baseline.stdout": "c329c442f14be5134cbce5e9228494254baff308ba8d885fff16c2228ff04e7d",
+    "focused/read-four/read-uniform-4--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4--1-rust.stdout": "489a4df7e4f17788e86ace527d84bb39011c80b474371256629dbf49023bebb2",
+    "focused/read-four/read-uniform-4-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-0-baseline.stdout": "e9ddefea7667b7f3423e4a83e81300a458ea314a9b00e4e35fa230b93298e021",
+    "focused/read-four/read-uniform-4-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-0-rust.stdout": "4c2be9705bba1973f21b3cbff820f647bbbd69b023d1661b5e245ab809bf98d5",
+    "focused/read-four/read-uniform-4-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-1-baseline.stdout": "cac9ca3b27f02186de8991f1df35149e253d9c8cab1c0996d509baf4b12a72dc",
+    "focused/read-four/read-uniform-4-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-1-rust.stdout": "1b3598b3c3f4d40a563e68c75e44a9c840562aefd5e73f1ab6e0d4e537a8c696",
+    "focused/read-four/read-uniform-4-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-2-baseline.stdout": "39a1e328ab1815881caf956cb068c953c0eca7252ceb25f2b1233b334d353970",
+    "focused/read-four/read-uniform-4-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-2-rust.stdout": "06088b2353e6b10a11b6b89090fa184c79a6463cadd46df812068d4e84f4a3fe",
+    "focused/read-four/read-uniform-4-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-3-baseline.stdout": "fedff2efe34e124887117bf0e7dbb7d0664f35b63f4a51e8705ab0d100456b92",
+    "focused/read-four/read-uniform-4-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-four/read-uniform-4-3-rust.stdout": "a97ce1b2eba1480f489f240c604134172d3a79ce0480237e9b171026f794ca89",
+    "focused/read-shared-four.log": "61639f822dc1b2b86a45d199bb6a10d24ace858e387d55be3b3098879a176c18",
+    "focused/read-shared-four/comparison.json": "d2cb83deab0d98a6de083a83c4c21faecac1c238eb6125e6aa14c3070dbec517",
+    "focused/read-shared-four/environment.json": "d00e342fa5f503068c4be50b63d3ca463bfcbc4244b7ab5f79d47207a53a8de1",
+    "focused/read-shared-four/read-shared-hot-4--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4--1-baseline.stdout": "ceacf8cbf3d86cc5a120996158095132bb7f6176bc4b9d2d217293485ab4e7e6",
+    "focused/read-shared-four/read-shared-hot-4--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4--1-rust.stdout": "d3fc1a74c4eb6b0c5a89c01e22e3a49b7f46ecaf593119103e575061dfa58896",
+    "focused/read-shared-four/read-shared-hot-4-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-0-baseline.stdout": "eea406611a82a9693e819f83e669528e6beee6549ed91bee3aed2e3c1b8d7864",
+    "focused/read-shared-four/read-shared-hot-4-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-0-rust.stdout": "3b5ec972a78e84a5780c8f627c9c2a07c907aff468b6d48964bb5f3a093231ec",
+    "focused/read-shared-four/read-shared-hot-4-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-1-baseline.stdout": "64e19e17d935096825af54dff5651f7dcbabd5e19519ffb8307ae252fed8012b",
+    "focused/read-shared-four/read-shared-hot-4-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-1-rust.stdout": "834b6d4b9a94e4c1a57efbfe486ff975eb874e9a16dbf3ed27f9b54fba75d9fd",
+    "focused/read-shared-four/read-shared-hot-4-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-2-baseline.stdout": "066a2e1556b4dd9db06afe8fe8a6fd7b7d13b6099e7aea8047c9bd6f810c681f",
+    "focused/read-shared-four/read-shared-hot-4-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-2-rust.stdout": "bfe08081e885d92bf438902b6a00b2a7c3b9cdd091de90d03b77ff8c937f94fa",
+    "focused/read-shared-four/read-shared-hot-4-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-3-baseline.stdout": "e3953f128cdc00e45906d015dea9d1cedae9ab780db0550d16d6d7ca04f2b78c",
+    "focused/read-shared-four/read-shared-hot-4-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-shared-four/read-shared-hot-4-3-rust.stdout": "941bb1cf19cec07a932ffe3d20301609396b3eec725426adece07af18cc3be66",
+    "focused/read-uniform.log": "3092003f4205bc179ed4747bdc4549b37e66b35b92d1178c0e5e6f5fe0eefb96",
+    "focused/read-uniform/comparison.json": "1c094a4333863874e0f50bc30d6d6efafe93a971308212222093d4a5788a0566",
+    "focused/read-uniform/environment.json": "f6cc9c3b1f8e3f5e3f26056966ae6122ba61c3e63e795894904ecb1a9ac62b28",
+    "focused/read-uniform/read-uniform-1--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1--1-baseline.stdout": "8370848ca063f8d1e507d0a5aaa46ac7b92f0b06ef8dd8a3472be5bb5f2322cf",
+    "focused/read-uniform/read-uniform-1--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1--1-rust.stdout": "818495f2c483290ab6da549d9fa77fd946c237b863fdd9e16312f1d9ff231779",
+    "focused/read-uniform/read-uniform-1-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-0-baseline.stdout": "eb940e3a824f79129cba992850947c997492e07c422878cb2e4a6104b281127c",
+    "focused/read-uniform/read-uniform-1-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-0-rust.stdout": "cb77331a736424825c784bdd209402f4da57297fdbf9e6c4c5ffd539a3d71de7",
+    "focused/read-uniform/read-uniform-1-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-1-baseline.stdout": "5dbcb732b76583c30ac66d0f93744c6c4c13e6dea9254eb1d0b9e569dc409dc5",
+    "focused/read-uniform/read-uniform-1-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-1-rust.stdout": "1ef6b2214f39863a52fec61d96e9b820718868d17d0d0dd2de2e489f4d3f281d",
+    "focused/read-uniform/read-uniform-1-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-2-baseline.stdout": "44d6767243b51dc08acc9108b9fe67c2dc94406895476d8536a07a7c08aef504",
+    "focused/read-uniform/read-uniform-1-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-2-rust.stdout": "eba5f0209b5392f8e3a2a852a073815e30eaed6d5f5ccd0ffae2514983ce05a2",
+    "focused/read-uniform/read-uniform-1-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-3-baseline.stdout": "b82d0dfbaee170db7f36f3c524b86bf036b1504e18c6a59ce7406c4f8f2ead68",
+    "focused/read-uniform/read-uniform-1-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/read-uniform/read-uniform-1-3-rust.stdout": "0f54e000c8e9a437f1233be7025867ce470c54998b7ca5552233f4fad2e8959a",
+    "focused/result-budget.log": "ec9baac84dbe226263fcb4b03f869772f14351a957af079e64a7d63f8e143195",
+    "focused/result-budget/comparison.json": "319ccab3676a4a5028413069735a0b7e842aa7c4c22c59cd592c2a35921c1577",
+    "focused/result-budget/environment.json": "1563a0ac92cfaffbc58b622578d5c89c6798f9b6291d6eb2f91b674d3db90853",
+    "focused/result-budget/retained-0/comparison.json": "2be7036e8f317435e0dac4fb8ddfd65cc8b0045d774bd0d0351bad6a18a9b0bb",
+    "focused/result-budget/retained-0/results.json": "25acf84fda44f95e8a22dac6b2f829b98da5e1f06b0c2f66157bc60531916e11",
+    "focused/result-budget/retained-0/round--1-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round--1-baseline.stdout": "99cc88ee417a947809b5e1b59cf1fdb660de14ecd21cfecec59f21b9bd40af70",
+    "focused/result-budget/retained-0/round--1-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round--1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round--1-candidate.stdout": "fe2b6631af4cd213eb4603e079ed0dd98a3e20b861b42570d565f0e4738de6d0",
+    "focused/result-budget/retained-0/round--1-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round--1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round--1-control.stdout": "e16e90ac9e7c70ee0bc9ff0f0c6a4c0f9684587f9940039e3f8f66b01722e894",
+    "focused/result-budget/retained-0/round-0-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-0-baseline.stdout": "ff32de644855ea1ec6a981188ee2f6f9a5d5d46f3841ada2173250602d9f9086",
+    "focused/result-budget/retained-0/round-0-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round-0-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-0-candidate.stdout": "b20abb967375c13fb2039b48291dce345d900250c6a4a9b8064c56ac722d46a8",
+    "focused/result-budget/retained-0/round-0-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-0-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-0-control.stdout": "687ebfefa35dc3fc8138c8cadab0f184154886b64fcd1fd429f979ba1c178198",
+    "focused/result-budget/retained-0/round-1-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-1-baseline.stdout": "61610f5a4259e9b512c870de5178b68f8eaf3c809b1b7dd313b026bfda03961a",
+    "focused/result-budget/retained-0/round-1-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round-1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-1-candidate.stdout": "5561e49ddb19f032055f093dc33dfc1ed3660485069e7d6d7d0bea0afe06e3ed",
+    "focused/result-budget/retained-0/round-1-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-1-control.stdout": "244ae0ee754dcedfa7c8affe82700acc27fce50573d063c759360083f04da30e",
+    "focused/result-budget/retained-0/round-2-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-2-baseline.stdout": "e46c9a9c536c5d819e9c836530415fdb48836f947f9f268575e52da782a7f8ff",
+    "focused/result-budget/retained-0/round-2-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round-2-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-2-candidate.stdout": "e1e2cf43c4fefc5a6d6e75642fcd27373fd7091bff1a77389f64ca2094041ea4",
+    "focused/result-budget/retained-0/round-2-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-2-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-2-control.stdout": "b03b9e8e34c933fe9a9b65d887be8d2d9e77f2eb7048568aab67a3863c88f624",
+    "focused/result-budget/retained-0/round-3-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-3-baseline.stdout": "62c0d3c55769478fe3ed8eda9e53fffd1099dbae0b3e976ebe28a0152ae40749",
+    "focused/result-budget/retained-0/round-3-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round-3-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-3-candidate.stdout": "135d1a968e590657e01f0d6e65ff7c102831d98e9a8c788a21a9afed026dd0a7",
+    "focused/result-budget/retained-0/round-3-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-3-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-3-control.stdout": "e6bb61a56fb69fafa4fd1b6cfd4f55f2a36e283fa33066f95c64c90d130e728a",
+    "focused/result-budget/retained-0/round-4-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-4-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-4-baseline.stdout": "800638c8db678a93a6e7934c50cabc93289c1166dae36af38fc1cc77f857b31c",
+    "focused/result-budget/retained-0/round-4-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round-4-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-4-candidate.stdout": "de9baeaef554e557daef8caec6b796fdf577e61e0209f324836495c1f9c48cca",
+    "focused/result-budget/retained-0/round-4-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-4-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-4-control.stdout": "464920d3ebb2b3213ffcf382b2da5384d344160d62f5797bbbd62f4a67f55857",
+    "focused/result-budget/retained-0/round-5-baseline.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-5-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-5-baseline.stdout": "508da4e55b48cbd4c57e7d20b20c8eb54a60061ce51ac7bd44f4c9e01e166eb3",
+    "focused/result-budget/retained-0/round-5-candidate.command.json": "16d408d5d9635171afecb28228b87bfd3266e3316de109e280ca6fc534338b4a",
+    "focused/result-budget/retained-0/round-5-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-5-candidate.stdout": "c6a054f7e38903050654ec9a77473017f0bbffc9b82eb4dd91d039eb2e0b2260",
+    "focused/result-budget/retained-0/round-5-control.command.json": "f5f7719dbc63524edb97f5984aa60c85a854516b886438ccf12a98fe7da8ad2d",
+    "focused/result-budget/retained-0/round-5-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-0/round-5-control.stdout": "06861330bcb6cde2978ab19dca0136efb4ddfa1bcc9e3e0ebe38612ea8208e1c",
+    "focused/result-budget/retained-32/comparison.json": "8fc8c744930047419f1a8fb38ee7724571c272f64d33fa080b493c3f57924596",
+    "focused/result-budget/retained-32/results.json": "7b7567d8b2df13b520f44c910587d52c9511c49abea4a2a6c296afdd597387c4",
+    "focused/result-budget/retained-32/round--1-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round--1-baseline.stdout": "9ed793bcbc636382de3decf76fa66121675377da6f34447aaf4f210ef35ef281",
+    "focused/result-budget/retained-32/round--1-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round--1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round--1-candidate.stdout": "ef249137eaa96204868dbd662d74c858139abf821ce347b1bf0817f76e15037c",
+    "focused/result-budget/retained-32/round--1-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round--1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round--1-control.stdout": "e19058cf903c727b71ed0783f94da8037fe8ac2db2d5d43cfc0a8a5b404a0b34",
+    "focused/result-budget/retained-32/round-0-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-0-baseline.stdout": "a0479cacd537f929e83fedd988c812339d5bb05d2028ac96c7d4be0722806e48",
+    "focused/result-budget/retained-32/round-0-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round-0-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-0-candidate.stdout": "a48c8bfc0435183562e84dc26212923eff674d4560d8e6a00d37372cba77351d",
+    "focused/result-budget/retained-32/round-0-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-0-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-0-control.stdout": "df160915d364cec8013b7e6763dd6d5ad0e04da323addddcdb8bfcb1938b8eb2",
+    "focused/result-budget/retained-32/round-1-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-1-baseline.stdout": "fc940795019ebfeb8ae6dfc90bb663754f1097befb773f7b9549d6970f447aa1",
+    "focused/result-budget/retained-32/round-1-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round-1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-1-candidate.stdout": "aeeaa090fb78da59e0c88168c34f73921108eae945c9bb72039ca79585a5da3b",
+    "focused/result-budget/retained-32/round-1-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-1-control.stdout": "4af6b52329f4e1696b49da85ddc2d823dd27d8d89475f1d26713b2ab6d6f7933",
+    "focused/result-budget/retained-32/round-2-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-2-baseline.stdout": "b4f6dfb1170a63dde46d0e83df7b39f8092f42ef1b19f78a269e483ab2ae3ca5",
+    "focused/result-budget/retained-32/round-2-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round-2-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-2-candidate.stdout": "ae25f620b6274ce166bce62c08d39f2fe037685252109a12b438d7cc82ed110e",
+    "focused/result-budget/retained-32/round-2-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-2-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-2-control.stdout": "45b9c1a17181e95cfd78e5640a3ef5181e4a53f767ef95df4c0e4fe63c89e7fa",
+    "focused/result-budget/retained-32/round-3-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-3-baseline.stdout": "2e4d596d6b68ba5539b934102b59b8ee154ff5b1c5e73741933c437496585dff",
+    "focused/result-budget/retained-32/round-3-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round-3-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-3-candidate.stdout": "0aeeaf06ba64b72a33ec63d3a1c5b064751d3a382609bc013fef9f1074ade3bb",
+    "focused/result-budget/retained-32/round-3-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-3-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-3-control.stdout": "67cfcc13739b4c493ec977878abe19f32aa5ebe3242ea2fa838eaa12666bb2e7",
+    "focused/result-budget/retained-32/round-4-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-4-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-4-baseline.stdout": "b7aa0f856a200ed75116c94db32e926704142aaeeb245d25638f449b289a1951",
+    "focused/result-budget/retained-32/round-4-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round-4-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-4-candidate.stdout": "f4970ff51457a970c70e9b112dc6e38a913b0a201504e1c5071c3a37b1aa0c84",
+    "focused/result-budget/retained-32/round-4-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-4-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-4-control.stdout": "5afc97f24658d803b318866aba5943695674e4f8b39710a857cb112e3c7c8edd",
+    "focused/result-budget/retained-32/round-5-baseline.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-5-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-5-baseline.stdout": "e8bdb90360071ceeb70ff9785edfc835ec421ccac774f5446c2198f4bda14489",
+    "focused/result-budget/retained-32/round-5-candidate.command.json": "bf7541c4492ed6d5c8d29b876b97a00f1a90d36d21af37d0d051c60a05338681",
+    "focused/result-budget/retained-32/round-5-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-5-candidate.stdout": "35d8dc6cc28e78ce44783978dc81a4f3bf4ee2f7809744a3b90562f8caee8aff",
+    "focused/result-budget/retained-32/round-5-control.command.json": "de9e9f34964ab3aeeecca16db33861390627542b4476f0b09630ed694cf8312b",
+    "focused/result-budget/retained-32/round-5-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-32/round-5-control.stdout": "93030c5084a60f13333764a767861a5ec0ba7d3db921fc840f7002c19061da60",
+    "focused/result-budget/retained-960/comparison.json": "53468c8c263e1933ddf554a6bbab6a1e64a0c706525e4f00ceef90e96f6114b7",
+    "focused/result-budget/retained-960/results.json": "54fd94e9ce7788cd5722a846a32c2bafceee08d73a825416dea7a647dfad033f",
+    "focused/result-budget/retained-960/round--1-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round--1-baseline.stdout": "07f81e371093af571fd71ee120d266303843c4384d017513eabb3601156de88f",
+    "focused/result-budget/retained-960/round--1-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round--1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round--1-candidate.stdout": "cb37207829a312212acaefb043b5d74bd2a3507762dbe3f2f191849ab8fb7690",
+    "focused/result-budget/retained-960/round--1-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round--1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round--1-control.stdout": "cce977fdeaa1e0ef63a336ad367d188fe875db022d9f7fede105919dfb84ea7e",
+    "focused/result-budget/retained-960/round-0-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-0-baseline.stdout": "68410c52a02ed4732c11cbd76f60b3d564b627fcb4e34033fe8ffdf985a2980a",
+    "focused/result-budget/retained-960/round-0-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round-0-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-0-candidate.stdout": "204de57f85aa97b930dd774f4baba18a2daafe7c448fca644d5e0a36d9b84295",
+    "focused/result-budget/retained-960/round-0-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-0-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-0-control.stdout": "4ec25ed31ac55f097308f1e4c771b20ff4820d89e7ef72e9743d0cfe2f8b1d25",
+    "focused/result-budget/retained-960/round-1-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-1-baseline.stdout": "c63a276f77db053d35eeb53eeae6c1953c16dc6b8e1c90b8852ab4e1b514ccd3",
+    "focused/result-budget/retained-960/round-1-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round-1-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-1-candidate.stdout": "e3860b9a43f001f8d7d4fefa2e3aff9f367719592a6b0ed05c2ccc5df27742e1",
+    "focused/result-budget/retained-960/round-1-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-1-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-1-control.stdout": "7dfc6772a16479e08f7db86b096fe4cf23bdf83910658710f12d6392035be036",
+    "focused/result-budget/retained-960/round-2-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-2-baseline.stdout": "d04f3281a80b70559a6393c96551828893b6796fd458e6c283962e3e930c3e6d",
+    "focused/result-budget/retained-960/round-2-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round-2-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-2-candidate.stdout": "1636d856861be15df89cdf5a18db56905f71ad3d530cfc848ff1c397649708c1",
+    "focused/result-budget/retained-960/round-2-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-2-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-2-control.stdout": "cef1616c171ea6dfaa55eda58ef447aa3ea934aafb5da74c24eaa01ecb6262b7",
+    "focused/result-budget/retained-960/round-3-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-3-baseline.stdout": "abe9d42da260d1c732e7c59fcc75485663029aed109202d0ead24c464c44e59c",
+    "focused/result-budget/retained-960/round-3-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round-3-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-3-candidate.stdout": "0d168464d451eb6618e98c130629601fa094ae1d417b355a0924fa48655fc99d",
+    "focused/result-budget/retained-960/round-3-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-3-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-3-control.stdout": "51cf4782ce394f5764ca55dd72c5140c3693159ecea5f3af575072649a57cab5",
+    "focused/result-budget/retained-960/round-4-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-4-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-4-baseline.stdout": "a04000c6f21ab521eb168a3e4700f612ff0477bc92cb13dea6fe525a79ab29fa",
+    "focused/result-budget/retained-960/round-4-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round-4-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-4-candidate.stdout": "541664de4b660fcd1188bdb544270d81473d49ef5511f28dcd46912ff4690c1f",
+    "focused/result-budget/retained-960/round-4-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-4-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-4-control.stdout": "0bf01e814a30750d4e53b590b51ac277cd9e900b4de42cce77ca6d912b1ac7c3",
+    "focused/result-budget/retained-960/round-5-baseline.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-5-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-5-baseline.stdout": "a72249da506e3db7639c63abf633e1b11cc92f420de7c48c254a0c85f904d9e2",
+    "focused/result-budget/retained-960/round-5-candidate.command.json": "61e64c3867900be997c4771508c70d103d8bcebd863a112c43ce1625b3ef57ca",
+    "focused/result-budget/retained-960/round-5-candidate.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-5-candidate.stdout": "4f3c3aff2f9340b497a051d897fe31b6265ee5cff7d34d055e1c5d32c5a407ce",
+    "focused/result-budget/retained-960/round-5-control.command.json": "41f43fc8a011737d6358773c6cdeb8dce1db4be5f12818f8dec6a2efd336b7e6",
+    "focused/result-budget/retained-960/round-5-control.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/result-budget/retained-960/round-5-control.stdout": "21fe8362af8ff13989307a6d7aa9c0aab5d3150835a66b8e23a7dfb5a76d6d89",
+    "focused/rmw-shared-four.log": "d68815405c9975f4f9d24aef5a73b030990c5e5745e26521be20ea726c3d5fc5",
+    "focused/rmw-shared-four/comparison.json": "5aa01271645cef01e717f8d498a1215f3c368c70b2cb649dd365d522b86253b7",
+    "focused/rmw-shared-four/environment.json": "3d018f0e27262fd6f8bbc47a26982a2de3fde8424859f38c6556766a13ba7871",
+    "focused/rmw-shared-four/rmw-shared-hot-4--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4--1-baseline.stdout": "d2da2f62f624818c401241af2afec5fec6b421a44e4f5e722f09575ac591fdbd",
+    "focused/rmw-shared-four/rmw-shared-hot-4--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4--1-rust.stdout": "124eb33c8431641e99eb6cf16205cd3d354f83556a9f777c5b3d981e3a0c1b36",
+    "focused/rmw-shared-four/rmw-shared-hot-4-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-0-baseline.stdout": "e72db38e620d7396c93bcb51d90283747967e7827f77f7529d4eb855ae0c8b11",
+    "focused/rmw-shared-four/rmw-shared-hot-4-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-0-rust.stdout": "b3a1d7b376584609ec19501b2041f5566d09c07b451a12e781d671b04f39e289",
+    "focused/rmw-shared-four/rmw-shared-hot-4-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-1-baseline.stdout": "1bb33682194bff53f313cfb5ab4a6ee792cc8cff2059d0a9c496950f7c129bdb",
+    "focused/rmw-shared-four/rmw-shared-hot-4-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-1-rust.stdout": "2949941f8aa354f22e19ba15009ad37eba5d833c17c26275d340bece92386e8b",
+    "focused/rmw-shared-four/rmw-shared-hot-4-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-2-baseline.stdout": "76e30fc0a02cef48ae927884b0704997bc6c2ffb4a17476c5c4ac1ca79f7cb14",
+    "focused/rmw-shared-four/rmw-shared-hot-4-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-2-rust.stdout": "0bf67833650095f3c4d48202fa9530c55de68a0f0c086964819c009f82d61f8e",
+    "focused/rmw-shared-four/rmw-shared-hot-4-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-3-baseline.stdout": "7d0612e5e1edd30d6523b2913abb0355f9f39bb7309a29e6bcde271520cf8083",
+    "focused/rmw-shared-four/rmw-shared-hot-4-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-shared-four/rmw-shared-hot-4-3-rust.stdout": "f766e38a5d30f11d126db684cf6247604c518a709b6be687de1a352d39e34b50",
+    "focused/rmw-uniform.log": "7a0f3f4cfdbca4de054a2699d01526b919285cb708cf9b6d053165fa4659d94a",
+    "focused/rmw-uniform/comparison.json": "ec058e55c213d88aa4a624e8aca0bb71ad60252bd9203b947ed2ac71abcbf21f",
+    "focused/rmw-uniform/environment.json": "7eea1200a4687fd02939cb1c2548e92e2669b5fd0447161b215df1967e5b35b2",
+    "focused/rmw-uniform/rmw-uniform-1--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1--1-baseline.stdout": "9053a3b62726e8aba9e7454a5d25c40a62651c1df684dcce084fc1c0b33afe0c",
+    "focused/rmw-uniform/rmw-uniform-1--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1--1-rust.stdout": "b52d6aef9604cd967bed82874b07a96ff6844d13d531d4b0a0803b115e7ee577",
+    "focused/rmw-uniform/rmw-uniform-1-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-0-baseline.stdout": "2bea9cd3d0d41f44e8f2f51e8fbdbb719c709a0b366f39fec29471e38642579b",
+    "focused/rmw-uniform/rmw-uniform-1-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-0-rust.stdout": "bb1b494c7ea6e655d098b43a876bde98dac0346ec28107191ce5bb3f0727bbb8",
+    "focused/rmw-uniform/rmw-uniform-1-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-1-baseline.stdout": "503cd67d39af73481b05e2b8045692eaa542c0ef64b8a469c98311f37b5150c7",
+    "focused/rmw-uniform/rmw-uniform-1-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-1-rust.stdout": "51fa9e67fa3d2c95907f5bebea67ef57a38b3815201366608aff93aa1fb72ef0",
+    "focused/rmw-uniform/rmw-uniform-1-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-2-baseline.stdout": "de363eddc5eca555ea7851092dd27f68ef6ea423973ef2270321f200532ff21a",
+    "focused/rmw-uniform/rmw-uniform-1-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-2-rust.stdout": "3033362212c2c0443d481d398ef82ced110d0bce6d3cf1b1d8d414ae3de8c34e",
+    "focused/rmw-uniform/rmw-uniform-1-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-3-baseline.stdout": "955afab04173e06d542bd379a6b8c3c2e8f4c8cd4324964959bb6acb0191d67e",
+    "focused/rmw-uniform/rmw-uniform-1-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/rmw-uniform/rmw-uniform-1-3-rust.stdout": "3bcfc872dcf21c3f22c833942312bb7486a491f7556c81d7700a85cc3a1b1e73",
+    "focused/run.py": "9c25c4af48d02a7a01255abc7eee5188c2f3229f883bc8ea010e40dde8e8cf4e",
+    "focused/runs.json": "440adaa40f7bfed828b1cb1526b5bb01c6d3348af224fff3b2df3f5acc527064",
+    "focused/rustdoc.log": "f2ef1b2c89cb3776d668893163702438c80540f637adc069ca11807ee5c84cd5",
+    "focused/schema-tests.log": "394a24189b483d0d1914a7ec4998ad61bbf885ee94da5be3adca67940509abb2",
+    "focused/source.patch": "e83970163a63779ad043c82c48f1b7a308db33ae02700e58ea74ad1c64b2aaee",
+    "focused/tests.log": "52010f1e01667b652bd5810a9151cc42e18da031e4d9f69667c03b5c8ecb7d4c",
+    "focused/upsert-four.log": "14373310605153634bd30d79629a21c5f790a9402e891de3d1e7f3f7a7e63ae8",
+    "focused/upsert-four/comparison.json": "9a26b5c69dc11a54ba228f7d0707c9eba8c7fb8204c72895ad4d85e39d85954a",
+    "focused/upsert-four/environment.json": "3ee285dad9dabbac5eea3a6050a7a83401eccb4dd8898310f56e7bd14f1676c9",
+    "focused/upsert-four/upsert-worker-hot-4--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4--1-baseline.stdout": "d21eb5f9d2f568e7354e8047bf61ca9060fc6509ee1671d44c16df7b64eee44a",
+    "focused/upsert-four/upsert-worker-hot-4--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4--1-rust.stdout": "7d9d2fd65e36e9157bc932de0900a59609741ad2e98d31794611c21ba02d69d3",
+    "focused/upsert-four/upsert-worker-hot-4-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-0-baseline.stdout": "d25b1a9a103e9736d86aa8ea9c6e94c8d1bfaa1650a6e913f0534606c32ea737",
+    "focused/upsert-four/upsert-worker-hot-4-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-0-rust.stdout": "360da33b2c731b4ca905b16238d0c935dc006bb45c1774d85930c5c6bf074ede",
+    "focused/upsert-four/upsert-worker-hot-4-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-1-baseline.stdout": "5fb5672a851d1846cce4b5c8ec86fbc937d0c66790d60ffb4bc95917a1dcd4c9",
+    "focused/upsert-four/upsert-worker-hot-4-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-1-rust.stdout": "35e6e45ed02267ddea4ae2d1bb052567c321d9227f3dffe8878c9c90fd0a6f30",
+    "focused/upsert-four/upsert-worker-hot-4-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-2-baseline.stdout": "71f783b57ea95b03c7d3e3b7fa1c4244612834d64be06f49346c4cd499d8c6c4",
+    "focused/upsert-four/upsert-worker-hot-4-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-2-rust.stdout": "096e3f11dc131debfa17c116a9ddadd245379b4b7b017d9d80b4e6c8eff5cdde",
+    "focused/upsert-four/upsert-worker-hot-4-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-3-baseline.stdout": "a759b5adecd14ccbb1cb48d7d8fb30880a23a81291f7c7f9f2514045b64716d8",
+    "focused/upsert-four/upsert-worker-hot-4-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-four/upsert-worker-hot-4-3-rust.stdout": "df81ce5b368f995a4c7ebb86784dad65ab936cbb94da4eb12ef582e28d8559ba",
+    "focused/upsert-shared.log": "18b06c9454314fec68e8b0b5c87104c35dcd60e5ebc1e8f342787aa7465099cf",
+    "focused/upsert-shared/comparison.json": "b99373b705ce257d6f13d8a6ac3334bf64203b2a81840018cddff7768f285700",
+    "focused/upsert-shared/environment.json": "14619552fc392ba623d16a544b93aec9c6cb7b2a17b3f63cd0758df0afa07177",
+    "focused/upsert-shared/upsert-shared-hot-1--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1--1-baseline.stdout": "f4dce733f9b17a273990a0bb4aabe7ff71c33796ddbb77ea68b9464fe44f1738",
+    "focused/upsert-shared/upsert-shared-hot-1--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1--1-rust.stdout": "a6f8e39f1c96fad8a2eea4e9b1be493a452d71096204702cbcf71e35bf540e9c",
+    "focused/upsert-shared/upsert-shared-hot-1-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-0-baseline.stdout": "a14fb7eac2974d227f915c2ae83fa5b20694ed0d310428a74f1dd6bde1497153",
+    "focused/upsert-shared/upsert-shared-hot-1-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-0-rust.stdout": "ec5482a750537f62b6fde8fcfee04aba1734c1fa2dc67d5663373d34b29ac1b0",
+    "focused/upsert-shared/upsert-shared-hot-1-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-1-baseline.stdout": "4dc5396fe0248b31d5fd978a2031256aa55d2fc31fbfcb46528af92745444daa",
+    "focused/upsert-shared/upsert-shared-hot-1-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-1-rust.stdout": "77ac8caa267e699f68e14a12c9b0522cf1c534bb88b6bf603965811fef37c63d",
+    "focused/upsert-shared/upsert-shared-hot-1-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-2-baseline.stdout": "9d5adc13bdccb3fdcbe9ba09d55e1174cdd97dfec108f4a22ac4e9896c3f9081",
+    "focused/upsert-shared/upsert-shared-hot-1-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-2-rust.stdout": "f608d34a3ab1e75c23ba7b2417d637c29839d112417414bd7bab2f3f49865862",
+    "focused/upsert-shared/upsert-shared-hot-1-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-3-baseline.stdout": "11410ae81e3abbcdd2c922b5a6b3e4bb77c84eccc639f9b2f580dc106f69345f",
+    "focused/upsert-shared/upsert-shared-hot-1-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-shared/upsert-shared-hot-1-3-rust.stdout": "3a991df3b1a54ce794c27849b648acc77b0afbe431e04c1ff9d6efa90bdcba32",
+    "focused/upsert-uniform.log": "82752814f0cdf02058bc5e39057f37794d03696efa0a0d173012364c5d312ba6",
+    "focused/upsert-uniform/comparison.json": "b3568953cc846da6cbc4edda89b44c8a06821bf64eebe0dad2e06de602129408",
+    "focused/upsert-uniform/environment.json": "b7754f9fc114e326e2ec72d2ffc096f28cf8910ad5085057d3c4f4aa1cd767ec",
+    "focused/upsert-uniform/upsert-uniform-1--1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1--1-baseline.stdout": "7cb12a66d22a5512f513f530206b0c984854401f3e983664915411ed7f531c31",
+    "focused/upsert-uniform/upsert-uniform-1--1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1--1-rust.stdout": "31a61a25a412daca20f89a406ec69838de4f9ab3c11c93e0c202fd4b29a4dcc1",
+    "focused/upsert-uniform/upsert-uniform-1-0-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-0-baseline.stdout": "4a401c342356b2641fe81299bef6d01c1bb25980e2b3bda104631da01b89c91f",
+    "focused/upsert-uniform/upsert-uniform-1-0-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-0-rust.stdout": "424ffb55e3c9b126e7e7d42868e5fcff77ccc839174004a4bbca3c408ede4b96",
+    "focused/upsert-uniform/upsert-uniform-1-1-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-1-baseline.stdout": "c12c2d7923ab49e2818eb7d1e9fbe6ba11d36bf1ffeffb12459e47ba1e045931",
+    "focused/upsert-uniform/upsert-uniform-1-1-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-1-rust.stdout": "b4d4f1ebad7946c39c198d517e6c039c9abff3a7d86c40560b9249b12d68570b",
+    "focused/upsert-uniform/upsert-uniform-1-2-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-2-baseline.stdout": "fe677c0751281a6ecd01f406f5aa1e4df1996beb18fe7230a328c51c1ae4708b",
+    "focused/upsert-uniform/upsert-uniform-1-2-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-2-rust.stdout": "b2367e4b688b1fea746ae17ee10433288d2a7c97d3ea67f71684cb17d93a1561",
+    "focused/upsert-uniform/upsert-uniform-1-3-baseline.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-3-baseline.stdout": "3d43c803b855493ce813d45581755d08942f7b0138c4b1c9a1ad7085d1cdab27",
+    "focused/upsert-uniform/upsert-uniform-1-3-rust.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused/upsert-uniform/upsert-uniform-1-3-rust.stdout": "efb7fe6fc482aadb4f154992ba29b731a016bf1fbea3d9e25290d915ef102e52",
+    "focused/validate-focused.py": "9a487eb62f4c2cdff700a28d5219bd073f3f4315a458a3d76e3d6081545bdeae",
+    "focused/validation.json": "7b83929dfa0e471e45d407556208550313579a7e4216b74a5156bf4b2dfdf0d3",
+    "focused/variable.log": "a4c91c23c451748b3ea35c823d1be3183e88293d363d1677fbe1f305ec091294",
+    "focused/variable/comparison.json": "1fb4027e8d3f3137a86a8048cea8ead7a3048c7976684d503c28a0c392b83a95",
+    "focused/variable/environment.json": "ba29fc9a4fa42d495e06594e1aff55e4fc9ec323a5ffb716cb6382d57c13922f",
+    "focused/variable/pair0-baseline.log": "c646efc18d97e58d9c11f31647a8ffe99ca59a10365fdee0a4d6546896beeb88",
+    "focused/variable/pair0-baseline/repetitions.csv": "16cf92519d4d4e0b98f8f550710c8311449bca158fc7b3bc78213464a3653f22",
+    "focused/variable/pair0-baseline/summary.json": "c646efc18d97e58d9c11f31647a8ffe99ca59a10365fdee0a4d6546896beeb88",
+    "focused/variable/pair0-candidate.log": "18adf14063757b79b4facc540acefedc736994e0ca0a241959f290c1f2848927",
+    "focused/variable/pair0-candidate/repetitions.csv": "ffea4d102184652cfec00284e9a4361288bfa6109dbe2d75f0142043f0776b10",
+    "focused/variable/pair0-candidate/summary.json": "18adf14063757b79b4facc540acefedc736994e0ca0a241959f290c1f2848927",
+    "focused/variable/pair0-control.log": "7142f931ff6d0caf0a861264f9c58875c08cc91d00fe1c5d1d2df40187d41264",
+    "focused/variable/pair0-control/repetitions.csv": "21a0ca1a38417d9106d65caa9501b275c854d210ccc2f7241cce4cdc46802d74",
+    "focused/variable/pair0-control/summary.json": "7142f931ff6d0caf0a861264f9c58875c08cc91d00fe1c5d1d2df40187d41264",
+    "focused/variable/pair1-baseline.log": "b2454c24145c0d86f716652470c30bef66d3197747cf10975fca5fe516750ec9",
+    "focused/variable/pair1-baseline/repetitions.csv": "ec11245313f4e00db226fb89ec8b0c31d0fdf0a1e7b8387529780ad5cae60ec8",
+    "focused/variable/pair1-baseline/summary.json": "b2454c24145c0d86f716652470c30bef66d3197747cf10975fca5fe516750ec9",
+    "focused/variable/pair1-candidate.log": "b73cb93a171a62eabc59cf3a637d0dfa444c7e1e1383b41462f94335fa1277c9",
+    "focused/variable/pair1-candidate/repetitions.csv": "7e72c48e08ac45a59bab37a8e2f0f0ddd6d48ab4f6ad07bc3cb204882fd04b6e",
+    "focused/variable/pair1-candidate/summary.json": "b73cb93a171a62eabc59cf3a637d0dfa444c7e1e1383b41462f94335fa1277c9",
+    "focused/variable/pair1-control.log": "8f57391d848d78cb22febeb2e54a815eaddbb9dc0af59562547e3daa5b0caff9",
+    "focused/variable/pair1-control/repetitions.csv": "87a4e9e94f37b5be794caa6d2e7ca19adcd2e84410064e3df22d81a5c8b9c0a7",
+    "focused/variable/pair1-control/summary.json": "8f57391d848d78cb22febeb2e54a815eaddbb9dc0af59562547e3daa5b0caff9",
+    "focused/variable/pair2-baseline.log": "68c6b85b8678dfedefcefc385a87366f3ae614f085b9ff2760d0dab2ee2558c6",
+    "focused/variable/pair2-baseline/repetitions.csv": "5532e7c70f2d7189599ee4875f4077878faaaebbacb00088e1e6fb0274c960c0",
+    "focused/variable/pair2-baseline/summary.json": "68c6b85b8678dfedefcefc385a87366f3ae614f085b9ff2760d0dab2ee2558c6",
+    "focused/variable/pair2-candidate.log": "61b6c08ea7f007e359556472f15325519331271753632358805adc08da565455",
+    "focused/variable/pair2-candidate/repetitions.csv": "d7859385f96d514872680ca17c413f8b12f18a138f6884f9d1c106d92f09ccfa",
+    "focused/variable/pair2-candidate/summary.json": "61b6c08ea7f007e359556472f15325519331271753632358805adc08da565455",
+    "focused/variable/pair2-control.log": "d058156591aeb19dd6f3c5cf82346110f788449706c2190624acd80875f6265d",
+    "focused/variable/pair2-control/repetitions.csv": "a0bfd9a9a8d111e796828d1040b083c1fef66ddf43367b0db126bfb9e5c3a07f",
+    "focused/variable/pair2-control/summary.json": "d058156591aeb19dd6f3c5cf82346110f788449706c2190624acd80875f6265d",
+    "focused/variable/pair3-baseline.log": "e712f02cc41bfbf081f8f8a9e948f1d89e59238f3c0542d0cd73f43bd4fd5368",
+    "focused/variable/pair3-baseline/repetitions.csv": "7d0631e3daf87cc14654e5290c64e7c01b46fd06f66ad294217a2f30c9374bd0",
+    "focused/variable/pair3-baseline/summary.json": "e712f02cc41bfbf081f8f8a9e948f1d89e59238f3c0542d0cd73f43bd4fd5368",
+    "focused/variable/pair3-candidate.log": "73f7a955bf68eff4c4895422eea6608e8efd034187641c1c4af1e69304a9cc1f",
+    "focused/variable/pair3-candidate/repetitions.csv": "272aa95835461d397b04add64b99c0db4e9e048e971994d96f2db35f316314de",
+    "focused/variable/pair3-candidate/summary.json": "73f7a955bf68eff4c4895422eea6608e8efd034187641c1c4af1e69304a9cc1f",
+    "focused/variable/pair3-control.log": "893bb59f1160273c8eb17ef72d9503f97e0e7b5fbd02546b4f6ae52e68255faa",
+    "focused/variable/pair3-control/repetitions.csv": "d910da69eee78232b23bd2d95f07168f4fe7ca518e466cf67df17921a2262a76",
+    "focused/variable/pair3-control/summary.json": "893bb59f1160273c8eb17ef72d9503f97e0e7b5fbd02546b4f6ae52e68255faa",
+    "focused/variable/pair4-baseline.log": "ae4057f8e8fef3e40c2de79117213aaab7befa7431e3736f2f9b76945e62d5d9",
+    "focused/variable/pair4-baseline/repetitions.csv": "ba8ad8eb6606f0703705193d2cb8bae4910e22367678dace21d842e853aa9552",
+    "focused/variable/pair4-baseline/summary.json": "ae4057f8e8fef3e40c2de79117213aaab7befa7431e3736f2f9b76945e62d5d9",
+    "focused/variable/pair4-candidate.log": "1fcb301253420701a5f25ec19db0abec41d3a10030e0b2739bfb53921406b8fe",
+    "focused/variable/pair4-candidate/repetitions.csv": "c832f35cc7b1f10b31337c794a8d28bfd659fca79c293e84ef0d13257426a6fa",
+    "focused/variable/pair4-candidate/summary.json": "1fcb301253420701a5f25ec19db0abec41d3a10030e0b2739bfb53921406b8fe",
+    "focused/variable/pair4-control.log": "46fecf3bc0c91b6a1bbe91ebbc60795a65ff68254682e40971defb80d999b52e",
+    "focused/variable/pair4-control/repetitions.csv": "bbb1c10b01b754003ab4cee65769d236cd9f52f354b35095241c3fd7b9510e79",
+    "focused/variable/pair4-control/summary.json": "46fecf3bc0c91b6a1bbe91ebbc60795a65ff68254682e40971defb80d999b52e",
+    "focused/variable/pair5-baseline.log": "7ca5f735f6cdf268c9ad9ed8f938457b118f262fb4b5466b9a7a7d9994762e48",
+    "focused/variable/pair5-baseline/repetitions.csv": "861121f1fd846d4095f53f70254d3532b1d17cd3c3c94c026caf15204b97df0f",
+    "focused/variable/pair5-baseline/summary.json": "7ca5f735f6cdf268c9ad9ed8f938457b118f262fb4b5466b9a7a7d9994762e48",
+    "focused/variable/pair5-candidate.log": "1cef65ed6f18bbf611c77a1e7bf23d864a243c1c95c186cdc213214f8b0977b9",
+    "focused/variable/pair5-candidate/repetitions.csv": "621ed3fd01e6db6b91c37d91f5f264ee99791420fbf47ae69e5d9fdbe3d365f1",
+    "focused/variable/pair5-candidate/summary.json": "1cef65ed6f18bbf611c77a1e7bf23d864a243c1c95c186cdc213214f8b0977b9",
+    "focused/variable/pair5-control.log": "7832c4b39bb6d601ba155bc6e2d11fb292862cae322958870d5aeb09318840c9",
+    "focused/variable/pair5-control/repetitions.csv": "37c10899cbd7d2d903121074d7937a45a315bd190b1e0fc6cf0ebd1d2b47efe8",
+    "focused/variable/pair5-control/summary.json": "7832c4b39bb6d601ba155bc6e2d11fb292862cae322958870d5aeb09318840c9",
+    "focused/variable/pairs.json": "5f87368fa9f6c5722b774eefa4c11577faef84be9ee74485ecaa30877fbd265c",
+    "trace-references.json": "6195ca051b3d7406cc7cf430a4c742ee1961a2a7db894afdbf019c9f586196ab",
+    "traces/ab0f3428395ebbd29c7f40c479b885b37e3387b473f928dc7636d198f94ce7ec.trace": "ab0f3428395ebbd29c7f40c479b885b37e3387b473f928dc7636d198f94ce7ec"
+  }
+}
