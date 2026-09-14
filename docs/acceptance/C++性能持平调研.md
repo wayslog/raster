@@ -2118,3 +2118,14 @@ Rust 主要叶子样本为：Engine::rmw **1,500**、RmwTask::run_locked **1,499
 已核验共 **104** 份整数输出及全部计划采样、576 条变长轨迹、源码和二进制身份，并撤回三个文件；恢复后所有 src/ 哈希与已验证的 57637a1 完全一致。[原型补丁、普通 release ABI、全部结果及撤回验证](data/cpp-parity-task-step-progress-withdrawn.tar.gz) 与 [清单](data/cpp-parity-task-step-progress-withdrawn.json) 保存证据。现用代码继续保留 RMW 私有窄返回，不包含此次通用状态原型。
 
 [采样 34858029282](https://github.com/wayslog/raster/actions/runs/34858029282) 对生产实现相同的 efdb89b 执行四线程共享热点 RMW，目标是区分操作仲裁、值许可计数和挂起推进成本。该采样不包含已撤回原型；C++ 持平及既有本地回归目标继续保留。
+
+
+### 实验 84：共享热点 RMW 的主要成本是接受前仲裁
+
+[采样 34858029282](https://github.com/wayslog/raster/actions/runs/34858029282) 在 efdb89b（生产源码与 57637a1 相同）完成。C++ / Rust 各运行 40,000,000 次 rmw/shared-hot/4，业务结果、perf.data 哈希、完整 src/ 身份及实际反汇编已核验。C++ 为 **2,142** 个 CPU 样本，Rust **28,540**；Rust 有 **24,554** 个单帧事件、**2,853** 个含未知调用者，仅按叶子 PC 分析。
+
+operation_gate::try_lock 独占 **17,761 个样本，占 62.23%**。最高频 PC 的精确反汇编集中在 pause 与 lock cmpxchg，支持接受前仲裁是该场景当前的主要成本。Engine::rmw **1,316**、RmwTask::run_locked **1,014**、Table::prepare **615**、会话状态查询 **536**、Epoch 进入 **483** 个样本。样本比例不直接等于可获得的吞吐收益。
+
+同一生产版本的完整原生测量中，四线程共享热点 RMW 每轮 2,000,000 个业务操作，Rust 拒绝重试中位数 **1,322,071.5**、Pending 为零；四线程独立热点 RMW 的两项计数均为零。C++ 该驱动没有记录这些内部计数，未假定其值。[完整 CPU 证据、热点指令和下一项假设](data/cpp-parity-efdb89b-shared-rmw-cpu.tar.gz) 与 [清单](data/cpp-parity-efdb89b-shared-rmw-cpu.json) 保存结果。
+
+现有策略保留首次立即尝试，失败后六次重试共最多 63 个 processor hint。下一项只将每次重试的提示缩为一次，即最多六次提示，保持尝试次数、锁中毒分支、持续持锁时有界返回、拒绝不消费序号及不执行回调。必须同时观察吞吐和外层重入次数，防止更频繁拒绝抵消节省，并分别核验 Linux/macOS。此次不解除任何互斥或阶段保护，也不以调整 benchmark 的等待方式替代引擎修复。
