@@ -94,6 +94,13 @@ disassembly under `native-code/`. Use a baseline with identical runtime source t
 check build and timing variation before attributing unexplained changes to an
 engine optimization. Preserve all failed measurements alongside those controls.
 
+Build both timed programs with the same Cargo command, features, profile, and
+compiler options. Obtain assembly by disassembling the exact frozen executables.
+Do not substitute a program rebuilt with `cargo rustc -- --emit=asm,link` for one
+built with ordinary `cargo build`: the extra compiler options can change the
+generated program. If the build recipe changes, rebuild both sides and repeat
+the comparison; record their hashes before interpreting the result.
+
 ## Repeated variable-memory diagnosis
 
 `benchmark_probe` repeats the unchanged 16,384-operation variable-value hotspot
