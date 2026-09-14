@@ -16,11 +16,14 @@ mod operation_gate;
 mod pending;
 mod progress;
 mod read;
+#[cfg(test)]
+mod read_ownership_tests;
 mod rmw;
 pub(crate) mod scan;
 #[cfg(test)]
 pub(crate) mod session_actor;
 mod storage_progress;
+mod task;
 pub(crate) mod thread_sessions;
 mod upsert;
 mod version_permit;
