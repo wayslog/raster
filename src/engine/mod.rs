@@ -35,6 +35,10 @@ use crate::{
 };
 pub(crate) use pending::SessionRuntime;
 
+// Arc keeps its counters before this allocation's data. Keep them on a separate
+// cache line from the index and other fields read by every operation. A 128-byte
+// boundary also covers the wider cache lines on supported Apple hardware.
+#[repr(align(128))]
 pub(crate) struct Engine<S: Schema> {
     pub id: StoreId,
     pub metrics: std::sync::Arc<metrics::Metrics>,

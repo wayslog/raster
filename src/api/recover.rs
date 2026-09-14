@@ -403,6 +403,7 @@ fn build<S: Schema>(
     cache.preallocate()?;
     let epoch = Arc::new(crate::epoch::EpochManager::new()?);
     log.bind_epoch(epoch.clone())?;
+    index.bind_epoch(&epoch)?;
     let engine = Engine {
         thread_sessions: Arc::new(crate::engine::thread_sessions::ThreadSessions::new(
             config.session.max_sessions,

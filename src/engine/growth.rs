@@ -77,7 +77,11 @@ impl Job {
                         DeferredAction::ReleaseIndex(generation)
                             if generation.0 + 1 == progress.generation.0 =>
                         {
-                            engine.index.release_retired(generation)?;
+                            engine.index.validate_epoch(&engine.epoch)?;
+                            // SAFETY: This exact bound manager collected the retirement
+                            // registered after migration unpublished the old table.
+                            // Its preexisting readers have left their epoch scopes.
+                            unsafe { engine.index.release_retired(generation) }?;
                             self.reclaimed = true;
                         }
                         _ => {
