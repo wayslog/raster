@@ -48,7 +48,10 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
     ) -> Result<Option<Outcome<O::Output>>, Error> {
         let engine = &self.engine;
-        let resolved = engine.resolve_index(self.hash, &self.key)?;
+        let resolved = match hint.as_ref() {
+            Some(hint) => engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?,
+            None => engine.resolve_index(self.hash, &self.key)?,
+        };
         let entry = resolved.entry;
         let head = resolved.head;
         if self.prepared.is_none() {
