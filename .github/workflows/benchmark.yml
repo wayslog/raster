@@ -5,7 +5,7 @@ on:
       mode:
         description: Benchmark suite
         type: choice
-        options: [matrix, cpp-parity]
+        options: [matrix, cpp-parity, cpp-profile]
         default: matrix
       case:
         description: Optional direct benchmark filter (operation/distribution/threads)
@@ -30,7 +30,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   benchmark:
-    if: inputs.mode != 'cpp-parity'
+    if: inputs.mode == 'matrix'
     name: Fixed matrix and recovery (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -90,7 +90,7 @@ jobs:
           path: target/p9-benchmark-evidence
           if-no-files-found: error
   cpp-parity:
-    if: inputs.mode == 'cpp-parity'
+    if: inputs.mode == 'cpp-parity' || inputs.mode == 'cpp-profile'
     name: Direct C++ and Rust engine comparison
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -197,6 +197,7 @@ jobs:
             done
           done
       - name: Compare alternating native engine samples
+        if: inputs.mode == 'cpp-parity'
         shell: bash
         env:
           CASE_FILTER: ${{ inputs.case }}
@@ -206,7 +207,7 @@ jobs:
             --cpp target/parity-build/faster-memory --output target/parity-evidence/memory \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/checks.txt
       - name: Compare the preserved Rust baseline on the same runner
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
         shell: bash
         env:
           CASE_FILTER: ${{ inputs.case }}
@@ -217,7 +218,7 @@ jobs:
             --output target/parity-evidence/rust-baseline --min-throughput 0.98 --max-p99 1.10 \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-checks.txt
       - name: Compare identical Rust baseline controls on the same runner
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
         shell: bash
         env:
           CASE_FILTER: ${{ inputs.case }}
@@ -229,7 +230,7 @@ jobs:
             --output target/parity-evidence/rust-baseline-control --min-throughput 0.98 --max-p99 1.10 \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-control-checks.txt
       - name: Compare the additional preserved memory baseline on the same runner
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.memory_baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.memory_baseline_ref != '' }}
         shell: bash
         env:
           CASE_FILTER: ${{ inputs.case }}
@@ -240,7 +241,7 @@ jobs:
             --output target/parity-evidence/rust-baseline-anchor --min-throughput 0.98 --max-p99 1.10 \
             --case "$CASE_FILTER" 2>&1 | tee target/parity-evidence/baseline-anchor-checks.txt
       - name: Compare resident append and scans against the Rust baseline
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
         shell: bash
         run: |
           set -o pipefail
@@ -249,7 +250,7 @@ jobs:
             --candidate target/release/examples/parity_scan \
             --output target/parity-evidence/resident-scans 2>&1 | tee target/parity-evidence/scan-checks.txt
       - name: Compare resident scans against the additional preserved baseline
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.scan_baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.scan_baseline_ref != '' }}
         shell: bash
         run: |
           set -o pipefail
@@ -258,7 +259,7 @@ jobs:
             --candidate target/release/examples/parity_scan \
             --output target/parity-evidence/resident-scans-anchor 2>&1 | tee target/parity-evidence/scan-anchor-checks.txt
       - name: Compare repeated variable-memory operations with an identical baseline control
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
         shell: bash
         run: |
           set -o pipefail
@@ -267,7 +268,7 @@ jobs:
             --candidate target/release/examples/benchmark_probe --repetitions 32 \
             --output target/parity-evidence/variable-repeat 2>&1 | tee target/parity-evidence/repeat-checks.txt
       - name: Compare complete lifecycles against the Rust baseline
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.baseline_ref != '' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-parity' && inputs.baseline_ref != '' }}
         shell: bash
         run: |
           set -o pipefail
@@ -288,6 +289,21 @@ jobs:
           assert not failures, failures
           assert not controls, controls
           PY
+      - name: Collect native CPU profiles outside acceptance timing
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'cpp-profile' }}
+        shell: bash
+        env:
+          CASE_FILTER: ${{ inputs.case }}
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/performance -p test_cpu_profile.py
+          sudo apt-get install -y --no-install-recommends linux-tools-generic
+          perf_binary=$(find -L /usr/lib/linux-tools -type f -name perf | sort -V | tail -1)
+          test -x "$perf_binary"
+          python3 -u tools/performance/cpu_profile.py --sudo --perf "$perf_binary" \
+            --rust target/release/examples/parity --cpp target/parity-build/faster-memory \
+            --case "$CASE_FILTER" --output target/parity-evidence/cpu-profile \
+            2>&1 | tee target/parity-evidence/profile-checks.txt
       - name: Preserve results even when parity fails
         if: always()
         uses: actions/upload-artifact@v4
