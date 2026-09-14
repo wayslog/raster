@@ -1,0 +1,78 @@
+{
+  "run": 34848785116,
+  "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+  "status": "completed",
+  "conclusion": "success",
+  "results": [
+    {
+      "artifact": "p0-macos-14-all",
+      "tests_passed": 551,
+      "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+      "toolchain": "1.98.1",
+      "examples": "verified",
+      "status": "passed"
+    },
+    {
+      "artifact": "p0-macos-14-config-toml",
+      "tests_passed": 551,
+      "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+      "toolchain": "1.98.1",
+      "examples": "verified",
+      "status": "passed"
+    },
+    {
+      "artifact": "p0-macos-14-default",
+      "tests_passed": 545,
+      "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+      "toolchain": "1.98.1",
+      "examples": "verified",
+      "status": "passed"
+    },
+    {
+      "artifact": "p0-ubuntu-24.04-all",
+      "tests_passed": 551,
+      "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+      "toolchain": "1.98.1",
+      "examples": "verified",
+      "status": "passed"
+    },
+    {
+      "artifact": "p0-ubuntu-24.04-config-toml",
+      "tests_passed": 551,
+      "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+      "toolchain": "1.98.1",
+      "examples": "verified",
+      "status": "passed"
+    },
+    {
+      "artifact": "p0-ubuntu-24.04-default",
+      "tests_passed": 545,
+      "head": "b354699a1a53cf32afe788a5ed6f6495c181d223",
+      "toolchain": "1.98.1",
+      "examples": "verified",
+      "status": "passed"
+    }
+  ],
+  "archive": "cpp-parity-b354699-ci.tar.gz",
+  "sha256": "58fee44c94b9f750be752a128bc1aed84eaa5ea6a699377dbadb8428d1fb406b",
+  "archive_bytes": 124667,
+  "input_references": 0,
+  "unique_inputs": 0,
+  "fileSHA256": {
+    "README.txt": "dd4dd30a8e8a9588d6c6a1b7db44a0d9ae4cc986ce497f59014f4dc5864f6327",
+    "ci/p0-macos-14-all/checks.txt": "9e7a14608263ba417e68b25de3179f6d45b6ab55c71d4ccf203a715361963314",
+    "ci/p0-macos-14-all/environment.txt": "3b97ff44f73f4fdc8d4db6c2881cb1c79c3ba32a5536385e1d4a1e3d179dbc55",
+    "ci/p0-macos-14-config-toml/checks.txt": "83ca99bd1a1c70b0f38b23fb4d0ba0cd8384871cab7321e207ef0e93812d282b",
+    "ci/p0-macos-14-config-toml/environment.txt": "49ad9f784a42fb820dd79afdac30111e9a814e9de9fd9ac7cfdbfb6803a48df7",
+    "ci/p0-macos-14-default/checks.txt": "67c1d185a139936494c65a52472ce6c85ef39d7de9d4ec771e4a6d90eb473755",
+    "ci/p0-macos-14-default/environment.txt": "b7cf7921ad3d306d12735ee9521c0b8a51329646d9d922a89fe93f4d9e74855d",
+    "ci/p0-ubuntu-24.04-all/checks.txt": "d6d2446ab5b4211bf1e71bbd9628e71d9c437b5f0034a31aa402f147f921821a",
+    "ci/p0-ubuntu-24.04-all/environment.txt": "b0c642029077c78c50f60c941b40d871ec53b5f6b2c71d598ba88ae5580da098",
+    "ci/p0-ubuntu-24.04-config-toml/checks.txt": "fd0f1ece15bc8c2b964307f238bbafa9d262fcfec820d5a4bf0e65926c924ae7",
+    "ci/p0-ubuntu-24.04-config-toml/environment.txt": "5e05aee39a37c901636030169871c2740e041285307c72b74952b6710d9450dc",
+    "ci/p0-ubuntu-24.04-default/checks.txt": "e227df3c13f881e55c07ccec82d50fe0c8fb3624d17116bd6d2ec2e2ba93e7f5",
+    "ci/p0-ubuntu-24.04-default/environment.txt": "beee87df380acda8e07ea6a1753611421ee5da68171cdac92a6a0dc8ca21e4f0",
+    "ci/validation.json": "c2927352c3f973dfa213291e4a5ada5c6104c5f56dab3517223aac7df6ff175d",
+    "trace-references.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+  }
+}
