@@ -1,7 +1,8 @@
 //! RMW Check the chain head again after disk wait;Release old values and recalculate when there is insufficient space,Cannot override concurrent updates.
 use super::{
     Engine, SessionRuntime,
-    pending::{PendingTask, TaskStep},
+    pending::TaskStep,
+    task::{BorrowedTask, TaskWork},
 };
 use crate::{
     api::{
@@ -22,8 +23,14 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, atomic::Ordering},
 };
+// Operation errors are finalized in the task; this local progress has no error payload.
+enum RmwStep {
+    Complete,
+    Retry,
+}
+
 struct RmwTask<S: Schema, O: RmwOperation<S>> {
-    engine: Arc<Engine<S>>,
+    schema: std::marker::PhantomData<fn() -> S>,
     monitor: super::metrics::Monitor,
     request: Option<O>,
     lookup: Option<(crate::index::EntrySnapshot, LogLookup)>,
@@ -40,15 +47,15 @@ struct RmwTask<S: Schema, O: RmwOperation<S>> {
     permit: Option<super::version_permit::VersionPermit>,
 }
 impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
-    fn prepare_pending(&mut self) -> Result<bool, Error> {
+    fn prepare_pending(&mut self, engine: &Arc<Engine<S>>) -> Result<bool, Error> {
         let awaiting_route = self
             .lookup
             .as_ref()
             .is_some_and(|(_, lookup)| lookup.awaiting_route());
-        self.engine
+        engine
             .version_permits
             .activate(self.hash, self.version, &mut self.permit)?;
-        self.engine.io.activate_operation(&mut self.mailbox)?;
+        engine.io.activate_operation(&mut self.mailbox)?;
         if let Some((_, lookup)) = &mut self.lookup {
             lookup.enable_io();
         }
@@ -56,31 +63,38 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
     }
     fn run_initial(
         &mut self,
+        engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: &mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
-    ) -> TaskStep {
-        if matches!(self.run_locked(budget, Some(hint)), TaskStep::Complete) {
-            return TaskStep::Complete;
+    ) -> RmwStep {
+        if matches!(
+            self.run_locked(engine, budget, Some(hint)),
+            RmwStep::Complete
+        ) {
+            return RmwStep::Complete;
         }
-        match self.prepare_pending() {
+        match self.prepare_pending(engine) {
             // Resume only a lookup stopped before its first device submission.
-            Ok(true) => self.run_locked(budget, None),
-            Ok(false) => TaskStep::Retry,
+            Ok(true) => self.run_locked(engine, budget, None),
+            Ok(false) => RmwStep::Retry,
             Err(cause) => {
-                self.finish(Err(OperationError {
-                    cause,
-                    effect: self.effect,
-                }));
-                TaskStep::Complete
+                self.finish(
+                    engine,
+                    Err(OperationError {
+                        cause,
+                        effect: self.effect,
+                    }),
+                );
+                RmwStep::Complete
             }
         }
     }
     fn advance(
         &mut self,
+        engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
     ) -> Result<Option<Outcome<O::Output>>, Error> {
-        let engine = &self.engine;
         if self.lookup.is_none() {
             let mut resolved = match hint.as_ref() {
                 Some(hint) => engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?,
@@ -131,7 +145,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                         ValueAccess::Ready(Some(value)) => value?,
                         ValueAccess::Ready(None) | ValueAccess::Contended => return Ok(None),
                     };
-                    return self.append_record(value, output, resolved.entry);
+                    return self.append_record(engine, value, output, resolved.entry);
                 }
             }
             if !resolved.entry.present {
@@ -210,15 +224,15 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
             LookupStep::AwaitingIo | LookupStep::Continue => unreachable!("Wait has returned"),
         };
-        self.append_record(value, output, entry)
+        self.append_record(engine, value, output, entry)
     }
     fn append_record(
         &mut self,
+        engine: &Arc<Engine<S>>,
         value: OwnedValueOf<S>,
         output: O::Output,
         entry: crate::index::EntrySnapshot,
     ) -> Result<Option<Outcome<O::Output>>, Error> {
-        let engine = &self.engine;
         let plan = engine.schema.value_layout().plan(&value)?.validate()?;
         engine.log.record_fits(self.key.len(), plan)?;
         let allocation = match engine.log.allocate_record(
@@ -250,67 +264,73 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
         }
     }
-    fn finish(&mut self, result: OperationResult<O::Output>) {
+    fn finish(&mut self, engine: &Arc<Engine<S>>, result: OperationResult<O::Output>) {
         if let Some(request) = self.request.take() {
-            let result = self.engine.finish_request(request, result, self.effect);
+            let result = engine.finish_request(request, result, self.effect);
             if let Some(complete) = &self.complete {
-                self.engine.complete_tracked(
+                engine.complete_tracked(
                     &mut self.monitor,
                     self.mailbox.registered_id(),
                     complete,
                     result,
                 );
             } else {
-                self.engine
-                    .record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
+                engine.record_ready(&mut self.monitor, self.mailbox.registered_id(), &result);
                 self.ready = Some(result);
             }
         }
     }
     fn run_locked(
         &mut self,
+        engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
-    ) -> TaskStep {
+    ) -> RmwStep {
         if self.request.is_none() {
-            return TaskStep::Complete;
+            return RmwStep::Complete;
         }
-        if self.engine.failed.load(Ordering::SeqCst) {
-            self.abandon(OperationError {
-                cause: Error::InvalidState("engine_failed_closed"),
-                effect: self.effect,
-            });
-            return TaskStep::Complete;
+        if engine.failed.load(Ordering::SeqCst) {
+            self.abandon(
+                engine,
+                OperationError {
+                    cause: Error::InvalidState("engine_failed_closed"),
+                    effect: self.effect,
+                },
+            );
+            return RmwStep::Complete;
         }
-        match self
-            .engine
+        match engine
             .version_permits
             .ready_initial(self.hash, self.permit.as_ref())
         {
             Ok(true) => {}
-            Ok(false) => return TaskStep::Retry,
+            Ok(false) => return RmwStep::Retry,
             Err(cause) => {
-                self.abandon(OperationError {
-                    cause,
-                    effect: self.effect,
-                });
-                return TaskStep::Complete;
+                self.abandon(
+                    engine,
+                    OperationError {
+                        cause,
+                        effect: self.effect,
+                    },
+                );
+                return RmwStep::Complete;
             }
         }
-        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(budget, hint))) {
+        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(engine, budget, hint))) {
             Ok(result) => result,
             Err(_) => {
-                self.engine.failed.store(true, Ordering::SeqCst);
+                engine.failed.store(true, Ordering::SeqCst);
                 Err(Error::InvalidState("Write callback panic"))
             }
         };
         if matches!(result, Ok(None)) {
-            return TaskStep::Retry;
+            return RmwStep::Retry;
         }
         if result.is_err() && self.effect == Effect::Unknown {
-            self.engine.failed.store(true, Ordering::SeqCst);
+            engine.failed.store(true, Ordering::SeqCst);
         }
         self.finish(
+            engine,
             result
                 .map(|value| value.expect("Waiting space excluded"))
                 .map_err(|cause| OperationError {
@@ -318,10 +338,10 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                     effect: self.effect,
                 }),
         );
-        TaskStep::Complete
+        RmwStep::Complete
     }
 }
-impl<S: Schema, O: RmwOperation<S>> PendingTask for RmwTask<S, O> {
+impl<S: Schema, O: RmwOperation<S>> TaskWork<S> for RmwTask<S, O> {
     fn id(&self) -> RequestId {
         self.mailbox.id()
     }
@@ -331,43 +351,49 @@ impl<S: Schema, O: RmwOperation<S>> PendingTask for RmwTask<S, O> {
     fn version(&self) -> CheckpointVersion {
         self.version
     }
-    fn on_io(&mut self, completion: IoCompletion) -> Result<(), Error> {
+    fn on_io(&mut self, engine: &Arc<Engine<S>>, completion: IoCompletion) -> Result<(), Error> {
         self.lookup
             .as_mut()
             .ok_or(Error::InvalidState("RMW No waiting for disk queries"))?
             .1
-            .accept(&self.engine.storage, completion)
+            .accept(&engine.storage, completion)
             .map_err(|rejected| rejected.reason)
     }
-    fn step(&mut self, budget: PollBudget) -> TaskStep {
-        let engine = self.engine.clone();
+    fn step(&mut self, engine: &Arc<Engine<S>>, budget: PollBudget) -> TaskStep {
         let _gate =
             match engine.operations[self.hash.0 as usize % engine.operations.len()].try_lock() {
                 Ok(guard) => guard,
                 Err(std::sync::TryLockError::WouldBlock) => return TaskStep::Retry,
                 Err(_) => {
-                    self.abandon(OperationError {
-                        cause: Error::InvalidState("Operation arbitration lock poisoning"),
-                        effect: self.effect,
-                    });
+                    self.abandon(
+                        engine,
+                        OperationError {
+                            cause: Error::InvalidState("Operation arbitration lock poisoning"),
+                            effect: self.effect,
+                        },
+                    );
                     return TaskStep::Complete;
                 }
             };
-        self.run_locked(budget, None)
-    }
-    fn abandon(&mut self, error: OperationError) {
-        self.finish(Err(error));
-    }
-}
-impl<S: Schema, O: RmwOperation<S>> Drop for RmwTask<S, O> {
-    fn drop(&mut self) {
-        if self.request.is_some() {
-            self.abandon(OperationError {
-                cause: Error::SessionAbandoned,
-                effect: self.effect,
-            });
+        match self.run_locked(engine, budget, None) {
+            RmwStep::Complete => TaskStep::Complete,
+            RmwStep::Retry => TaskStep::Retry,
         }
-        let _ = self.engine.io.release_operation(&mut self.mailbox);
+    }
+    fn abandon(&mut self, engine: &Arc<Engine<S>>, error: OperationError) {
+        self.finish(engine, Err(error));
+    }
+    fn cleanup(&mut self, engine: &Arc<Engine<S>>) {
+        if self.request.is_some() {
+            self.abandon(
+                engine,
+                OperationError {
+                    cause: Error::SessionAbandoned,
+                    effect: self.effect,
+                },
+            );
+        }
+        let _ = engine.io.release_operation(&mut self.mailbox);
     }
 }
 impl<S: Schema> Engine<S> {
@@ -426,26 +452,29 @@ impl<S: Schema> Engine<S> {
             let _ = self.io.release_operation(&mut mailbox);
             return Err(Rejected { request, reason });
         }
-        let mut task = RmwTask {
-            monitor: session.tracker.accept(super::metrics::Kind::Rmw),
-            engine: self.clone(),
-            request: Some(request),
-            lookup: None,
-            options,
-            skip_in_place: false,
-            key,
-            hash,
-            effect: Effect::NotApplied,
-            complete: None,
-            ready: None,
-            mailbox,
-            serial,
-            version: session.current.version,
-            permit,
-        };
+        let mut task = BorrowedTask::new(
+            self,
+            RmwTask {
+                monitor: session.tracker.accept(super::metrics::Kind::Rmw),
+                schema: std::marker::PhantomData,
+                request: Some(request),
+                lookup: None,
+                options,
+                skip_in_place: false,
+                key,
+                hash,
+                effect: Effect::NotApplied,
+                complete: None,
+                ready: None,
+                mailbox,
+                serial,
+                version: session.current.version,
+                permit,
+            },
+        );
         if matches!(
-            task.run_initial(PollBudget::default(), &mut hint),
-            TaskStep::Complete
+            task.run_initial(self, PollBudget::default(), &mut hint),
+            RmwStep::Complete
         ) {
             self.retain_operation(session, &mut task.mailbox);
             Ok(Submission::Ready(
@@ -457,7 +486,10 @@ impl<S: Schema> Engine<S> {
             let (ticket, complete) = Ticket::pair_bounded(id, credit);
             task.complete = Some(complete);
             task.monitor.pending();
-            session.current.tasks.insert(id.slot, Box::new(task));
+            session
+                .current
+                .tasks
+                .insert(id.slot, Box::new(task.into_owned()));
             Ok(Submission::Pending(ticket))
         }
     }
