@@ -1,0 +1,621 @@
+{
+  "protocol": 2,
+  "registration_revision": 2,
+  "batch_id": "s0-interleaved-20261010",
+  "created_utc": "2026-10-10T08:06:55.746984+00:00",
+  "status": "Immutable registration before any follow-up native benchmark dispatch",
+  "scope": "Complete W0 short and long measurement validity; no runtime optimization, S1 implementation, or W1-W6 completion",
+  "prior_registration_sha256": "d29e4aa1161725dcf681913a087587a844760b5dfa4e8459c9dad560f26b7040",
+  "prior_report_sha256": "b82a91812c2a4a5cbaec4f0200e4d3c135e438c630346dff9198e0abb8ecfa42",
+  "prior_evidence_policy": "All prior valid, failed, invalid-control and tool-error evidence remains unchanged; this complete new batch never replaces old observations",
+  "baselines": {
+    "R-observed": {
+      "commit": "f0ccb4604220231d2b2edce492b77822d75af2e9",
+      "git_tree": "ccf4ca401aa5f9a1fc7adfc4ecfa570fc3081bf5",
+      "archive_sha256": "69d32c007a0563b84f5f22d87ca977f4cfa838d13219cb4f47ee077ad9785bbe",
+      "file_count": 1480,
+      "manifest_sha256": "8ae3e11fd4b316eb5e8c0c93b004403c128d5605224377751189933da2560383"
+    },
+    "R-reference": {
+      "commit": "57637a12b9751064b6bbbbde7127b27c8af62128",
+      "git_tree": "6e3bb75f172e5fc7b61addb9b7292d1048d77572",
+      "archive_sha256": "53f32b70755ca1cc0b9848b28f719d74bd2830d93403682ce814d5a697cc6600",
+      "file_count": 1468,
+      "manifest_sha256": "308ed83858489683f0b2631ddc8865d8c51592a9e24adeab563ab65adf098399"
+    },
+    "C-reference": {
+      "commit": "321d872eabda6a0345c8bd76419f89723ed864ae",
+      "git_tree": "1366714697f7cf2e938e5b794d5a20b7489377fc",
+      "archive_sha256": "5f007414542ab078f12af8af8c5d2e736100eb776565acda89a7539f05697c7a",
+      "file_count": 698,
+      "manifest_sha256": "4887bebe67ac70a9fab4bfa128aa41b70740ae662d9f8ecb6bac223a47e9163c"
+    }
+  },
+  "tool_sha256": {
+    ".github/workflows/benchmark.yml": "fe039480ed3dd51f65786c95996c20b8ccae58ca8a879c5261b054f7b8c7f0c6",
+    "Cargo.lock": "9c31c5d0c93341aeb3beb854b99f953599f30ef57ed4f7b5290bacd15cab99cf",
+    "Cargo.toml": "57b2543f613390c2ceaa7f29e5a0ac52193e9b3b6d5c6ceb98a687071cea4ff3",
+    "examples/parity.rs": "5d2215505fd94e7717a24abd16cbb1b2af635c7de6a98a0a456e73c489bac4c3",
+    "tools/performance/build.sh": "199f1150336d8e5abf3cde4f965f4c21a1a5ef8451d78c7bf97e3266d4a0e78f",
+    "tools/performance/memory.cc": "c76c684a40303087f5736ec1747f4dc4d0499249423e11d52295797045e26dcb",
+    "tools/s0_measurement/README.md": "9af72342dea0f5eb70b4c571fd5c2346c4efdd757637e9961bd0224298245e99",
+    "tools/s0_measurement/affinity_exec.py": "43aaaaf46f26558a555c6fc8b7b5fa41221a0e80ea781e2bc22e198e5c05c33d",
+    "tools/s0_measurement/baselines/C-reference-files.json": "4887bebe67ac70a9fab4bfa128aa41b70740ae662d9f8ecb6bac223a47e9163c",
+    "tools/s0_measurement/baselines/R-observed-files.json": "8ae3e11fd4b316eb5e8c0c93b004403c128d5605224377751189933da2560383",
+    "tools/s0_measurement/baselines/R-reference-files.json": "308ed83858489683f0b2631ddc8865d8c51592a9e24adeab563ab65adf098399",
+    "tools/s0_measurement/contract_template.py": "636fb83ec007835464011f6cb2393e22e74bcbdf857319488fae82dcec96e14d",
+    "tools/s0_measurement/interleaved_w0.py": "ad6baf0464160d56ac35b18543af1e5a8c2f1fb879d308d0e0777d53caedfd1d",
+    "tools/s0_measurement/overlay_driver.py": "489ec1c6315772349eb058f8a6e7f5264fd911b0f40f5aa018b3fd5031904191",
+    "tools/s0_measurement/package_evidence.py": "3251abf1f4d2d7478028b2facbc846c7027e194dd939afd62a16cbbedb4475df",
+    "tools/s0_measurement/parity.rs": "9f6989096f5105c6dcf6b7643af8dd0b50667a553756ebd0bcc24f73da39af7e",
+    "tools/s0_measurement/prepare.py": "16b4a8ef4fe7602900b5fdb4c4ca68a5266847bd6b1c08f2dbfd546eb3aa5617",
+    "tools/s0_measurement/test_interleaved_w0.py": "a6a60b12791106e099549162e4dbcde4c0f23f69739165fe1935a9fa8ce6cd58"
+  },
+  "driver_contract": {
+    "protocol": 2,
+    "measurement_script_sha256": "ad6baf0464160d56ac35b18543af1e5a8c2f1fb879d308d0e0777d53caedfd1d",
+    "affinity_launcher_sha256": "43aaaaf46f26558a555c6fc8b7b5fa41221a0e80ea781e2bc22e198e5c05c33d",
+    "overlay_script_sha256": "489ec1c6315772349eb058f8a6e7f5264fd911b0f40f5aa018b3fd5031904191",
+    "allowed_cases": [
+      "read/uniform/1",
+      "read/uniform/4",
+      "read/worker-hot/1",
+      "read/worker-hot/4",
+      "read/shared-hot/1",
+      "read/shared-hot/4",
+      "upsert/uniform/1",
+      "upsert/uniform/4",
+      "upsert/worker-hot/1",
+      "upsert/worker-hot/4",
+      "upsert/shared-hot/1",
+      "upsert/shared-hot/4",
+      "rmw/uniform/1",
+      "rmw/uniform/4",
+      "rmw/worker-hot/1",
+      "rmw/worker-hot/4",
+      "rmw/shared-hot/1",
+      "rmw/shared-hot/4"
+    ],
+    "allowed_counts": [
+      2000000,
+      400000000
+    ],
+    "sample_stride": 64,
+    "timeout_seconds": 600,
+    "reap_timeout_seconds": 10,
+    "execution_plan": [
+      {
+        "round": -1,
+        "role": "baseline",
+        "phase": "warmup"
+      },
+      {
+        "round": -1,
+        "role": "candidate",
+        "phase": "warmup"
+      },
+      {
+        "round": -1,
+        "role": "control",
+        "phase": "warmup"
+      },
+      {
+        "round": -1,
+        "role": "cpp",
+        "phase": "warmup"
+      },
+      {
+        "round": 0,
+        "role": "baseline",
+        "phase": "measured"
+      },
+      {
+        "round": 0,
+        "role": "cpp",
+        "phase": "measured"
+      },
+      {
+        "round": 0,
+        "role": "candidate",
+        "phase": "measured"
+      },
+      {
+        "round": 0,
+        "role": "control",
+        "phase": "measured"
+      },
+      {
+        "round": 1,
+        "role": "baseline",
+        "phase": "measured"
+      },
+      {
+        "round": 1,
+        "role": "control",
+        "phase": "measured"
+      },
+      {
+        "round": 1,
+        "role": "candidate",
+        "phase": "measured"
+      },
+      {
+        "round": 1,
+        "role": "cpp",
+        "phase": "measured"
+      },
+      {
+        "round": 2,
+        "role": "cpp",
+        "phase": "measured"
+      },
+      {
+        "round": 2,
+        "role": "candidate",
+        "phase": "measured"
+      },
+      {
+        "round": 2,
+        "role": "baseline",
+        "phase": "measured"
+      },
+      {
+        "round": 2,
+        "role": "control",
+        "phase": "measured"
+      },
+      {
+        "round": 3,
+        "role": "candidate",
+        "phase": "measured"
+      },
+      {
+        "round": 3,
+        "role": "cpp",
+        "phase": "measured"
+      },
+      {
+        "round": 3,
+        "role": "control",
+        "phase": "measured"
+      },
+      {
+        "round": 3,
+        "role": "baseline",
+        "phase": "measured"
+      },
+      {
+        "round": 4,
+        "role": "control",
+        "phase": "measured"
+      },
+      {
+        "round": 4,
+        "role": "baseline",
+        "phase": "measured"
+      },
+      {
+        "round": 4,
+        "role": "cpp",
+        "phase": "measured"
+      },
+      {
+        "round": 4,
+        "role": "candidate",
+        "phase": "measured"
+      },
+      {
+        "round": 5,
+        "role": "control",
+        "phase": "measured"
+      },
+      {
+        "round": 5,
+        "role": "candidate",
+        "phase": "measured"
+      },
+      {
+        "round": 5,
+        "role": "cpp",
+        "phase": "measured"
+      },
+      {
+        "round": 5,
+        "role": "baseline",
+        "phase": "measured"
+      }
+    ],
+    "thresholds": {
+      "candidate_min_throughput": 0.98,
+      "candidate_max_p99": 1.1,
+      "control_throughput_interval": [
+        0.98,
+        1.0204081632653061
+      ],
+      "control_p99_interval": [
+        0.9090909090909091,
+        1.1
+      ],
+      "cpp_min_throughput": 0.9,
+      "cpp_max_p99": 1.1
+    },
+    "trace_spec_sha256": {
+      "read/uniform/1@2000000": "e648c4a6a13d72d8fb5c3078baddbfe55a5ccfa5a66991dc8438e195487ff057",
+      "read/uniform/1@400000000": "67fa8698b0108e6122e15eab0119214b28587b11dbc4380cafff5aa27bdafc32",
+      "read/uniform/4@2000000": "2598e6be1639d759ca1353d6a4c97ac63915fed38ccc2eaec76babfe004a2cd4",
+      "read/uniform/4@400000000": "a4ecbc0b6d679439f74749d7418959c201e7fe2ab055ed5e3bece684e0413eb8",
+      "read/worker-hot/1@2000000": "4b9c8f70d4cd57f90a4cc35f00ebe1b37179c4234d4ef366fcfc6c36953a713d",
+      "read/worker-hot/1@400000000": "eb7be1e2935a5c25c8f1e6d8381f8726fba6d310e6da50d29379743bb192785e",
+      "read/worker-hot/4@2000000": "502442be96fa14ee1b04d4f1557024efcbcfb2ccc248a090214ce8136e0cf842",
+      "read/worker-hot/4@400000000": "201b20aa99be3a757f5cf2e44320ceb8217fd28b6f6124936a2fdf12aec7195b",
+      "read/shared-hot/1@2000000": "5bb81d685dde33a70bc4026e0dd86f6212cc20932685a97a619cfa3decc7f964",
+      "read/shared-hot/1@400000000": "03fa890930eb50ca703c265d522bec1ab7b911ecfcf5af80ad81613d19b9dec5",
+      "read/shared-hot/4@2000000": "0caed651f57768396d3cb892e39e97aefc4ad43c61f5d37db1b6975938a0d6b8",
+      "read/shared-hot/4@400000000": "d3a3fa87af6f0cdda83a10deeadc80479d4b1ed4fa5a6d6096d404d4025bcd92",
+      "upsert/uniform/1@2000000": "ea695678e146a79b61ae0ae480d2255d0fd282b206741a372fa5a569c100e52c",
+      "upsert/uniform/1@400000000": "83fa0eb4b7b418db4925077b0d2decd45cc22f0cd8e8b056d067b766df923ce1",
+      "upsert/uniform/4@2000000": "8fad1464737482745b3de46f38a4c3c7a9ebe4bf9e3d074a3dfe26a3f5243781",
+      "upsert/uniform/4@400000000": "5906e7bd3ae9c60f52e78074bfae22b2d688f825673d562ad45ca02a94203dd3",
+      "upsert/worker-hot/1@2000000": "a59284994240753ec4ffda9be4c8089a0dbc0c5e3341c9c12e696d9fcc519c13",
+      "upsert/worker-hot/1@400000000": "32a658e9db4232889c1afb65cc24cac892e9c45420c9f80d86b28cb9100b0778",
+      "upsert/worker-hot/4@2000000": "ab6edd8d72733931ff7b28f33e75b5fe7984db893ade1144fa1999f35089353d",
+      "upsert/worker-hot/4@400000000": "067ed45571917eed6570802d1558512b3130255324f84435f42a088428b9ed2a",
+      "upsert/shared-hot/1@2000000": "9d2b70c3bebd00c89dc862847ce1c2375fcfdfcdcdefb4f58e9d8bf70b94f6b2",
+      "upsert/shared-hot/1@400000000": "608ea7c36472a691178428118dafcf37505e108a63330f8f4853c8a76798d2d5",
+      "upsert/shared-hot/4@2000000": "470940761b8bc9afc0be891f512b4ebf42639da9fe19c475b0182bb8ed7fbd27",
+      "upsert/shared-hot/4@400000000": "cfd35077f8563c1938f811895febb3624581d3c2b654150832e8a91615d9d2ac",
+      "rmw/uniform/1@2000000": "7c84ea0ef3ca3b83f455078e3211c1fd4f8b0d2855c80a3799f386bd10bb0b3e",
+      "rmw/uniform/1@400000000": "05f760de2fd04154deadf1ba9cea5caf71de2a788afd7b2e65f11fbfd6f1384b",
+      "rmw/uniform/4@2000000": "e289855ea60c1392e477337457be6bc74a314471018f79c1a516060c1d1830f2",
+      "rmw/uniform/4@400000000": "91c1e9c890d2ce787104485567fde9d3e68b9dc8582e8b3ded69d90769b8bf1e",
+      "rmw/worker-hot/1@2000000": "17f1f524e4b5abd4bc6adf5ac5564f76cec8f6fe31bf7a0b5ede97f803f6768e",
+      "rmw/worker-hot/1@400000000": "46cb00cd1bc08983491021ce828dd45411a3e642f8e285cb016479504e20df0a",
+      "rmw/worker-hot/4@2000000": "d52ad8e3b3fbba7bdd83555c25b2d32be8c755627f87659fb0383e7bd1e6c73e",
+      "rmw/worker-hot/4@400000000": "eab03f3b7c72a142e1777fcfdd2f757f645bba452e0c8a34b3e566e893892825",
+      "rmw/shared-hot/1@2000000": "9ceefde32f2876c68ae29f5535371df3204e6da1781098e4d5e80725e40d14e2",
+      "rmw/shared-hot/1@400000000": "95aede714b20982de0c8cfaf2e3b3c014d0611f00a02db6cdf78fbecea58af99",
+      "rmw/shared-hot/4@2000000": "00759dd096b8ba1e1deff63593fcc43c56ad379c7ee543912d250114fd70d25e",
+      "rmw/shared-hot/4@400000000": "9e50df0772fc9eb766caf866bcdfe87982192f13d214024a3c3d1013c0452f72"
+    },
+    "driver_overlay": {
+      "original_driver_sha256": "5d2215505fd94e7717a24abd16cbb1b2af635c7de6a98a0a456e73c489bac4c3",
+      "overlaid_driver_sha256": "9f6989096f5105c6dcf6b7643af8dd0b50667a553756ebd0bcc24f73da39af7e",
+      "business_deadline_seconds": 600,
+      "replacement_count": 1
+    },
+    "affinity_policy": "Exactly one allowed logical CPU per requested worker; same mask for all four roles; child records the actual inherited mask before same-PID exec.",
+    "control_policy": "Control aliases the exact baseline executable path and SHA256.",
+    "failure_policy": "Keep and execute the complete planned grid after isolated failures; never rerun, select a subset, or compute ratios if any scheduled process is invalid."
+  },
+  "rust_driver_overlay": {
+    "original_sha256": "5d2215505fd94e7717a24abd16cbb1b2af635c7de6a98a0a456e73c489bac4c3",
+    "overlay_sha256": "9f6989096f5105c6dcf6b7643af8dd0b50667a553756ebd0bcc24f73da39af7e",
+    "only_change": "One benchmark worker business Deadline from 120 to 600 seconds, identical for both Rust versions and both counts",
+    "runtime_changes": []
+  },
+  "thresholds": {
+    "candidate_vs_parent": {
+      "min_throughput": 0.98,
+      "max_p99": 1.1
+    },
+    "candidate_vs_R_reference": {
+      "min_throughput": 0.98,
+      "max_p99": 1.1
+    },
+    "identical_program_control": {
+      "throughput_closed_interval": [
+        0.98,
+        1.0204081632653061
+      ],
+      "p99_closed_interval": [
+        0.9090909090909091,
+        1.1
+      ]
+    },
+    "rust_vs_cpp": {
+      "min_throughput": 0.9,
+      "max_p99": 1.1
+    },
+    "stage_screening": {
+      "S2_read_uniform_1_and_absent_read_vs_S1": {
+        "min_throughput": 1.2
+      },
+      "S3_shared_hot_4_rmw_and_upsert_vs_S2": {
+        "min_throughput": 1.5
+      },
+      "S3_shared_hot_4_read_vs_S2": {
+        "min_throughput": 1.2
+      },
+      "S4_random_read_4096_and_16384_keys_per_session_vs_S3": {
+        "min_throughput": 1.25
+      },
+      "S4_total_and_peak_RSS_vs_S3": {
+        "max_ratio": 1.0
+      },
+      "S5_read_shared_hot_4_vs_S4": {
+        "min_throughput": 1.25
+      }
+    },
+    "screening_note": "20/25/50 percent targets are now preregistered experimental filters, not predictions. No post-result lowering. Correctness and regression gates remain independent."
+  },
+  "workload": {
+    "status": "Complete new short and long W0 batch with six interleaved Rust permutations",
+    "operations": [
+      "read",
+      "upsert",
+      "rmw"
+    ],
+    "distributions": [
+      "uniform",
+      "worker-hot",
+      "shared-hot"
+    ],
+    "threads": [
+      1,
+      4
+    ],
+    "keys_per_session": 256,
+    "key_bytes": 8,
+    "value_bytes": 8,
+    "key_mapping": {
+      "uniform": "worker * 256 + (index * 17) % 256",
+      "worker-hot": "worker * 256",
+      "shared-hot": "0"
+    },
+    "initial_value": 7,
+    "upsert_value": 42,
+    "rmw_delta": 1,
+    "atomic_order": "SeqCst",
+    "sample_rule": "(i & 63) == ((i / 64) & 63)",
+    "refresh_stride": 256,
+    "short_count": 2000000,
+    "short_rounds": 6,
+    "warmup_processes_per_role": 1,
+    "oracle": "Independently recompute every key, wrapping u64 checksum, FNV digest, key count and exact latency sample count for every warmup and measured process.",
+    "timing_scope": "Maximum worker business duration including Busy retries, yield and Pending wait; excludes initialization, thread creation and final verification.",
+    "configuration": {
+      "index_buckets": 1024,
+      "log_memory_bytes": 268435456,
+      "page_bytes": 33554432,
+      "mutable_fraction": 0.9,
+      "device": "NullDevice",
+      "cache": false,
+      "statistics": false,
+      "automatic_compaction": false
+    },
+    "long_rounds": 6
+  },
+  "superseded_before_dispatch": {
+    "registration_sha256": "7d098035033fd5cb77944b23b63ce90803f5e57255a374f288d47123d1b33a89",
+    "reason": "Independent preflight review rejected inherited short_rounds=4 conflicting with the new six-permutation plan; zero benchmarks dispatched under that registration"
+  },
+  "counts": [
+    2000000,
+    400000000
+  ],
+  "cases": [
+    "read/uniform/1",
+    "read/uniform/4",
+    "read/worker-hot/1",
+    "read/worker-hot/4",
+    "read/shared-hot/1",
+    "read/shared-hot/4",
+    "upsert/uniform/1",
+    "upsert/uniform/4",
+    "upsert/worker-hot/1",
+    "upsert/worker-hot/4",
+    "upsert/shared-hot/1",
+    "upsert/shared-hot/4",
+    "rmw/uniform/1",
+    "rmw/uniform/4",
+    "rmw/worker-hot/1",
+    "rmw/worker-hot/4",
+    "rmw/shared-hot/1",
+    "rmw/shared-hot/4"
+  ],
+  "execution_plan_per_case_count": [
+    {
+      "round": -1,
+      "role": "baseline",
+      "phase": "warmup"
+    },
+    {
+      "round": -1,
+      "role": "candidate",
+      "phase": "warmup"
+    },
+    {
+      "round": -1,
+      "role": "control",
+      "phase": "warmup"
+    },
+    {
+      "round": -1,
+      "role": "cpp",
+      "phase": "warmup"
+    },
+    {
+      "round": 0,
+      "role": "baseline",
+      "phase": "measured"
+    },
+    {
+      "round": 0,
+      "role": "cpp",
+      "phase": "measured"
+    },
+    {
+      "round": 0,
+      "role": "candidate",
+      "phase": "measured"
+    },
+    {
+      "round": 0,
+      "role": "control",
+      "phase": "measured"
+    },
+    {
+      "round": 1,
+      "role": "baseline",
+      "phase": "measured"
+    },
+    {
+      "round": 1,
+      "role": "control",
+      "phase": "measured"
+    },
+    {
+      "round": 1,
+      "role": "candidate",
+      "phase": "measured"
+    },
+    {
+      "round": 1,
+      "role": "cpp",
+      "phase": "measured"
+    },
+    {
+      "round": 2,
+      "role": "cpp",
+      "phase": "measured"
+    },
+    {
+      "round": 2,
+      "role": "candidate",
+      "phase": "measured"
+    },
+    {
+      "round": 2,
+      "role": "baseline",
+      "phase": "measured"
+    },
+    {
+      "round": 2,
+      "role": "control",
+      "phase": "measured"
+    },
+    {
+      "round": 3,
+      "role": "candidate",
+      "phase": "measured"
+    },
+    {
+      "round": 3,
+      "role": "cpp",
+      "phase": "measured"
+    },
+    {
+      "round": 3,
+      "role": "control",
+      "phase": "measured"
+    },
+    {
+      "round": 3,
+      "role": "baseline",
+      "phase": "measured"
+    },
+    {
+      "round": 4,
+      "role": "control",
+      "phase": "measured"
+    },
+    {
+      "round": 4,
+      "role": "baseline",
+      "phase": "measured"
+    },
+    {
+      "round": 4,
+      "role": "cpp",
+      "phase": "measured"
+    },
+    {
+      "round": 4,
+      "role": "candidate",
+      "phase": "measured"
+    },
+    {
+      "round": 5,
+      "role": "control",
+      "phase": "measured"
+    },
+    {
+      "round": 5,
+      "role": "candidate",
+      "phase": "measured"
+    },
+    {
+      "round": 5,
+      "role": "cpp",
+      "phase": "measured"
+    },
+    {
+      "round": 5,
+      "role": "baseline",
+      "phase": "measured"
+    }
+  ],
+  "reduction": {
+    "samples": "Every process independently checks exact rotated samples: threads*(floor(n/64)+int((floor(n/64)%64)<n%64)), n=count/threads",
+    "role_medians": "Median elapsed_ns and median p99_ns across the six measured processes per role; four warmups excluded only from timing reduction",
+    "throughput_ratio": "median(reference elapsed_ns) / median(candidate elapsed_ns)",
+    "p99_ratio": "median(candidate p99_ns) / median(reference p99_ns)",
+    "per_round_ratios": "Additional diagnostics only, never substituted for the frozen ratio of medians",
+    "invalid_process": "Any warmup or measured process failure invalidates the whole case/count; do not select valid rows"
+  },
+  "build": {
+    "rust": "1.98.1, default features, cargo build --locked --release --example parity",
+    "cpp": "Explicit CXX=g++; unchanged frozen build.sh, C++17 -O3 -DNDEBUG -pthread; exact compiler recorded per job",
+    "instrumentation": "No profiler, allocation counters, native CPU flags, LTO or PGO added",
+    "receipt": "Before measurement bind actual binary SHA256, complete source manifests, overlay identity and registration SHA256; control aliases baseline"
+  },
+  "execution": {
+    "repository": "wayslog/raster",
+    "temporary_branch": "codex/s0-interleaved-20261010",
+    "workflow": "benchmark.yml",
+    "runner": "ubuntu-24.04",
+    "jobs": 36,
+    "max_parallel_jobs": 18,
+    "processes_per_job": 28,
+    "total_processes": 1008,
+    "warmup_processes": 144,
+    "measured_processes": 864,
+    "hard_process_timeout_seconds": 600,
+    "reap_timeout_seconds": 10,
+    "measurement_step_minutes": 290,
+    "job_timeout_minutes": 360,
+    "budget_minutes": {
+      "four_checkouts": 8,
+      "rust_install": 5,
+      "native_dependencies": 7,
+      "source_verification_and_build": 25,
+      "measurement": 290,
+      "package": 5,
+      "upload": 10,
+      "job_overhead_reserve": 10
+    },
+    "measurement_budget_formula": "28*(600+10)/60=284.666667 minutes, plus 5.333333 minutes for metadata/oracle/hash/process overhead within 290",
+    "total_hard_runner_hour_ceiling": 216,
+    "affinity": "Select the first 1 or 4 allowed logical CPUs; all roles inherit the same exact mask; child records mask immediately before exec; do not claim physical cores or worker pinning",
+    "same_runner_scope": "All four roles, warmups and six permutations for one case/count remain in one job; short and long are distinct jobs and never numerically pooled",
+    "expected_slowest_case_minutes": "Approximately 70-100 minutes from historical rates, not a timeout guarantee or an observed result",
+    "artifact_retention_days": 30,
+    "platform_reference": "https://docs.github.com/en/actions/reference/limits"
+  },
+  "verdicts": {
+    "s0_measurement_gate": "All 36 case/count jobs complete with exact source/binary/registration/CPU/order identities, every oracle valid and every identical-program control within unchanged two-sided intervals",
+    "observed_regression": "Independently retain R-observed/R-reference >=0.98 throughput and <=1.10 P99 verdict; there is no new implementation candidate in S0",
+    "final_cpp_parity": "Independently retain Rust/C++ >=0.90 throughput and <=1.10 P99 verdict; measurement validity does not imply parity",
+    "S1_entry": "Only if the S0 measurement gate and existing bounded protocol gates hold: recommend isolated S1 with all old Adapters; no production protocol replacement or performance acceptance inferred"
+  },
+  "failure_and_retry_policy": {
+    "dispatches": 1,
+    "automatic_benchmark_retries": 0,
+    "identity_mismatch": "Do not start that case; preserve evidence and classify invalid",
+    "isolated_process_failure": "Save partial stdout/stderr, status and kill-group evidence; finish remaining preregistered samples without computing selected-subset ratios",
+    "isolation_loss": "Abort the case if a killed process cannot be reaped; do not risk overlapping samples",
+    "performance_failure": "Continue the complete batch; no changed counts, thresholds, CPU filters, extra rounds or selected reruns",
+    "artifact_failure": "Evidence incomplete; never infer a passing case from workflow status",
+    "read_only_collection_retry": "Read-only API or artifact-download retries may recover the same run/artifact identity; never redispatch an unknown outcome"
+  }
+}
