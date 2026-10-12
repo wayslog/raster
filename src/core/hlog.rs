@@ -5,6 +5,7 @@
 //! `page:23 | offset:41` word advanced with `fetch_add`. Boundary shifts run as
 //! epoch actions so that no protected session can still use a closed frame.
 use super::address::{Address, AtomicAddress};
+use super::device::Device;
 use super::epoch::LightEpoch;
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::sync::Arc;
@@ -58,6 +59,11 @@ pub struct HybridLog {
     pub safe_read_only: AtomicAddress,
     pub flushed_until: AtomicAddress,
     epoch: Arc<LightEpoch>,
+    device: Arc<dyn Device>,
+    page_bits: u32,
+    /// Per frame: one past the last page number whose flush completed.
+    frame_flushed: Box<[AtomicU64]>,
+    pending_flushes: AtomicU64,
 }
 
 // SAFETY: frames are raw page memory shared under epoch protection; all
@@ -79,7 +85,7 @@ impl LogPtr {
 }
 
 impl HybridLog {
-    pub fn new(config: LogConfig, epoch: Arc<LightEpoch>) -> Self {
+    pub fn new(config: LogConfig, epoch: Arc<LightEpoch>, device: Arc<dyn Device>) -> Self {
         assert!((12..=Address::OFFSET_BITS).contains(&config.page_bits));
         let frames_len = config.memory_pages.max(4).next_power_of_two();
         let page_size = 1u64 << config.page_bits;
@@ -108,6 +114,10 @@ impl HybridLog {
             safe_read_only: AtomicAddress::new(start),
             flushed_until: AtomicAddress::new(start),
             epoch,
+            device,
+            page_bits: config.page_bits,
+            frame_flushed: (0..frames_len).map(|_| AtomicU64::new(0)).collect(),
+            pending_flushes: AtomicU64::new(0),
         }
     }
 
@@ -190,16 +200,22 @@ impl HybridLog {
             self.shift_boundaries(old_page);
             return false;
         }
-        let current = self.tail.0.load(Ordering::Acquire);
-        if current >> TAIL_OFFSET_BITS == old_page {
-            let next = new_page << TAIL_OFFSET_BITS;
-            if self
-                .tail
-                .0
-                .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                self.shift_boundaries(new_page);
+        // Other callers keep bumping the offset of the full page, so retry the
+        // CAS until the tail leaves `old_page`.
+        let next = new_page << TAIL_OFFSET_BITS;
+        let mut current = self.tail.0.load(Ordering::Acquire);
+        while current >> TAIL_OFFSET_BITS == old_page {
+            match self.tail.0.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.shift_boundaries(new_page);
+                    break;
+                }
+                Err(observed) => current = observed,
             }
         }
         true
@@ -212,9 +228,10 @@ impl HybridLog {
             self.epoch.bump_with_action(move || {
                 // SAFETY: the store keeps the log alive while actions can run.
                 let log = unsafe { log.log() };
-                log.safe_read_only.monotonic_update(read_only);
-                // The null device persists nothing; flush completes at once.
-                log.flushed_until.monotonic_update(read_only);
+                let previous = log.safe_read_only.fetch_max(read_only);
+                for page in previous.page()..read_only.page() {
+                    log.flush_page(page);
+                }
             });
         }
         let frames = self.frames.len() as u64;
@@ -237,8 +254,66 @@ impl HybridLog {
     }
 }
 
+impl HybridLog {
+    /// Byte offset of `address` on the device.
+    #[inline(always)]
+    pub fn device_offset(&self, address: Address) -> u64 {
+        (address.page() << self.page_bits) | address.offset()
+    }
+
+    /// Reads `len` bytes at `address` from the device.
+    pub fn read_async(&self, address: Address, len: usize, done: super::device::ReadCallback) {
+        self.device
+            .read_async(self.device_offset(address), len, done);
+    }
+
+    /// Writes a whole read-only page; its frame cannot be reused before the
+    /// write completes because `head` never passes `flushed_until`.
+    fn flush_page(&self, page: u64) {
+        self.pending_flushes.fetch_add(1, Ordering::AcqRel);
+        let frame = self.frames[(page & self.frame_mask) as usize];
+        let log = LogPtr(self);
+        let done = Box::new(move |result: std::io::Result<()>| {
+            // SAFETY: `Drop` waits for all pending flushes.
+            let log = unsafe { log.log() };
+            result.expect("hybrid log page flush failed");
+            log.frame_flushed[(page & log.frame_mask) as usize].store(page + 1, Ordering::Release);
+            log.advance_flushed();
+            log.pending_flushes.fetch_sub(1, Ordering::AcqRel);
+        });
+        // SAFETY: the frame stays allocated and unmodified until the flush
+        // completes: it is read-only and below `head` only after `flushed_until`.
+        unsafe {
+            self.device.write_async(
+                self.device_offset(Address::new(page, 0)),
+                frame,
+                self.page_size as usize,
+                done,
+            )
+        };
+    }
+
+    /// Moves `flushed_until` over every contiguous completed page.
+    fn advance_flushed(&self) {
+        loop {
+            let current = self.flushed_until.load();
+            let page = current.page();
+            let done =
+                self.frame_flushed[(page & self.frame_mask) as usize].load(Ordering::Acquire);
+            if done != page + 1 || page + 1 > self.safe_read_only.load().page() {
+                return;
+            }
+            self.flushed_until
+                .monotonic_update(Address::new(page + 1, 0));
+        }
+    }
+}
+
 impl Drop for HybridLog {
     fn drop(&mut self) {
+        while self.pending_flushes.load(Ordering::Acquire) != 0 {
+            std::thread::yield_now();
+        }
         let layout = Self::frame_layout(self.page_size);
         for &frame in self.frames.iter() {
             // SAFETY: allocated in `new` with the same layout.
@@ -258,7 +333,11 @@ mod tests {
             memory_pages: 4,
             mutable_fraction: 0.5,
         };
-        let log = HybridLog::new(config, epoch.clone());
+        let log = HybridLog::new(
+            config,
+            epoch.clone(),
+            Arc::new(crate::core::device::NullDevice),
+        );
         (epoch, log)
     }
 

@@ -22,6 +22,8 @@ pub trait ReadContext<K: Key, V: Value> {
     fn get_atomic(&mut self, value: &V) {
         self.get(value)
     }
+    /// Called on the session thread when a `Pending` operation finishes.
+    fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
 pub trait UpsertContext<K: Key, V: Value> {
@@ -40,6 +42,8 @@ pub trait RmwContext<K: Key, V: Value> {
     fn rmw_copy(&mut self, old: &V) -> V;
     /// In-place update in the mutable region; `false` falls back to copy.
     fn rmw_atomic(&mut self, value: &V) -> bool;
+    /// Called on the session thread when a `Pending` operation finishes.
+    fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
 pub trait DeleteContext<K: Key> {

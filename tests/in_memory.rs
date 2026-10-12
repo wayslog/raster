@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 type Store = FasterKv<u64, AtomicU64>;
 
+#[derive(Clone)]
 struct Op {
     key: u64,
     input: u64,

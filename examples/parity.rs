@@ -4,6 +4,7 @@ use raster::core::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
+#[derive(Clone)]
 struct Request {
     key: u64,
     input: u64,
