@@ -1,8 +1,10 @@
 pub mod address;
+pub mod device;
 pub mod epoch;
 pub mod hlog;
 pub mod index;
 pub mod kv;
+mod pending;
 pub mod record;
 pub mod session;
 pub mod store;

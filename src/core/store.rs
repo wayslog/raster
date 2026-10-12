@@ -51,13 +51,28 @@ type Types<K, V> = fn(K, V) -> (K, V);
 enum Attempt {
     Done(Status),
     Retry,
+    Disk(Address, Address),
+}
+
+/// Result of an operation that may need a record read from the device.
+pub(crate) enum Outcome {
+    Done(Status),
+    /// Read the record at `address`; `observed` is the index entry seen.
+    Disk {
+        address: Address,
+        observed: Address,
+    },
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
     pub fn new(config: StoreConfig) -> Self {
+        Self::with_device(config, Arc::new(super::device::NullDevice))
+    }
+
+    pub fn with_device(config: StoreConfig, device: Arc<dyn super::device::Device>) -> Self {
         let epoch = Arc::new(LightEpoch::new());
         Self {
-            hlog: HybridLog::new(config.log, epoch.clone()),
+            hlog: HybridLog::new(config.log, epoch.clone(), device),
             index: HashIndex::new(config.index_buckets),
             epoch,
             _types: PhantomData,
@@ -107,17 +122,17 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline]
-    pub(crate) fn internal_read<C: ReadContext<K, V>>(&self, ctx: &mut C) -> Status {
+    pub(crate) fn internal_read<C: ReadContext<K, V>>(&self, ctx: &mut C) -> Outcome {
         let key = *ctx.key();
         let Some(slot) = self.index.find(key.hash()) else {
-            return Status::NotFound;
+            return Outcome::Done(Status::NotFound);
         };
         let head = self.hlog.head.load();
         let address = self.trace_back(&key, slot.entry.address(), head);
         if address >= head {
             let record = self.record(address);
             if record.info().tombstone() {
-                return Status::NotFound;
+                return Outcome::Done(Status::NotFound);
             }
             // SAFETY: published record; the value lives while we are protected.
             let value = unsafe { record.value() };
@@ -126,12 +141,14 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             } else {
                 ctx.get(value);
             }
-            Status::Ok
+            Outcome::Done(Status::Ok)
         } else if address < self.hlog.begin.load() {
-            Status::NotFound
+            Outcome::Done(Status::NotFound)
         } else {
-            // Disk reads arrive in phase B.
-            Status::IoError
+            Outcome::Disk {
+                address,
+                observed: slot.entry.address(),
+            }
         }
     }
 
@@ -142,8 +159,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
     ) -> Status {
         loop {
-            if let Attempt::Done(status) = self.upsert_attempt(slot_id, ctx) {
-                return status;
+            match self.upsert_attempt(slot_id, ctx) {
+                Attempt::Done(status) => return status,
+                Attempt::Retry => {}
+                Attempt::Disk(..) => unreachable!("blind upserts never read the device"),
             }
         }
     }
@@ -180,11 +199,43 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
-    ) -> Status {
+    ) -> Outcome {
         loop {
-            if let Attempt::Done(status) = self.rmw_attempt(slot_id, ctx) {
-                return status;
+            match self.rmw_attempt(slot_id, ctx) {
+                Attempt::Done(status) => return Outcome::Done(status),
+                Attempt::Disk(address, observed) => return Outcome::Disk { address, observed },
+                Attempt::Retry => {}
             }
+        }
+    }
+
+    /// Continues an RMW whose source came from the device (`None` if the key
+    /// was not found there). Restarts if a newer record was published meanwhile.
+    pub(crate) fn rmw_from_disk<C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        observed: Address,
+        source: Option<&V>,
+    ) -> Outcome {
+        let key = *ctx.key();
+        let slot = self.index.find_or_create(key.hash());
+        if slot.entry.address() != observed {
+            return self.internal_rmw(slot_id, ctx);
+        }
+        let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
+        let record = self.record(new_address);
+        let value = match source {
+            Some(old) => ctx.rmw_copy(old),
+            None => ctx.rmw_initial(),
+        };
+        // SAFETY: freshly allocated and not yet published.
+        unsafe { record.initialize(RecordInfo::new(observed, 0, false), key, value) };
+        if slot.try_update(new_address) {
+            Outcome::Done(Status::Ok)
+        } else {
+            record.set_invalid();
+            self.internal_rmw(slot_id, ctx)
         }
     }
 
@@ -207,8 +258,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             self.epoch.protect_and_drain(slot_id);
             return Attempt::Retry;
         } else if address >= self.hlog.begin.load() && address < head {
-            // Disk reads arrive in phase B.
-            return Attempt::Done(Status::IoError);
+            return Attempt::Disk(address, slot.entry.address());
         }
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
