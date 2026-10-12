@@ -53,6 +53,7 @@ pub struct FileDevice {
 
 struct FileInner {
     directory: PathBuf,
+    direct: bool,
     segment_bits: u32,
     segments: Mutex<HashMap<u64, Arc<File>>>,
 }
@@ -66,20 +67,26 @@ impl SendPtr {
     }
 }
 
+const SECTOR: u64 = 512;
+
 impl FileInner {
     fn segment(&self, index: u64) -> io::Result<Arc<File>> {
         let mut segments = self.segments.lock().unwrap();
         if let Some(file) = segments.get(&index) {
             return Ok(file.clone());
         }
-        let file = Arc::new(
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(self.directory.join(format!("log.{index}")))?,
-        );
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(target_os = "linux")]
+        if self.direct {
+            use std::os::unix::fs::OpenOptionsExt;
+            #[cfg(target_arch = "aarch64")]
+            const O_DIRECT: i32 = 0o200000;
+            #[cfg(not(target_arch = "aarch64"))]
+            const O_DIRECT: i32 = 0o40000;
+            options.custom_flags(O_DIRECT);
+        }
+        let file = Arc::new(options.open(self.directory.join(format!("log.{index}")))?);
         segments.insert(index, file.clone());
         Ok(file)
     }
@@ -103,6 +110,56 @@ impl FileInner {
         }
         Ok(())
     }
+
+    fn read(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        if !self.direct {
+            let mut buffer = vec![0u8; len];
+            self.for_each_piece(offset, len, |file, at, from, piece| {
+                file.read_exact_at(&mut buffer[from..from + piece], at)
+            })?;
+            return Ok(buffer);
+        }
+        let start = offset & !(SECTOR - 1);
+        let end = (offset + len as u64).next_multiple_of(SECTOR);
+        let mut aligned = AlignedBuffer::new((end - start) as usize);
+        let total = aligned.len();
+        self.for_each_piece(start, total, |file, at, from, piece| {
+            file.read_exact_at(&mut aligned.as_mut()[from..from + piece], at)
+        })?;
+        let skip = (offset - start) as usize;
+        Ok(aligned.as_mut()[skip..skip + len].to_vec())
+    }
+}
+
+/// Sector-aligned heap buffer for unbuffered reads.
+struct AlignedBuffer {
+    ptr: *mut u8,
+    layout: std::alloc::Layout,
+}
+
+impl AlignedBuffer {
+    fn new(len: usize) -> Self {
+        let layout =
+            std::alloc::Layout::from_size_align(len, SECTOR as usize).expect("buffer layout");
+        // SAFETY: `len` is a non-zero multiple of the sector size.
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        assert!(!ptr.is_null(), "read buffer allocation failed");
+        Self { ptr, layout }
+    }
+    fn len(&self) -> usize {
+        self.layout.size()
+    }
+    fn as_mut(&mut self) -> &mut [u8] {
+        // SAFETY: owned, initialized allocation of `len` bytes.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.layout.size()) }
+    }
+}
+
+impl Drop for AlignedBuffer {
+    fn drop(&mut self) {
+        // SAFETY: allocated in `new` with this layout.
+        unsafe { std::alloc::dealloc(self.ptr, self.layout) };
+    }
 }
 
 impl FileDevice {
@@ -110,6 +167,18 @@ impl FileDevice {
         directory: impl Into<PathBuf>,
         segment_bits: u32,
         threads: usize,
+    ) -> io::Result<Self> {
+        Self::open_with(directory, segment_bits, threads, false)
+    }
+
+    /// With `direct`, bypasses the OS page cache (O_DIRECT on Linux), like
+    /// FASTER's default unbuffered files. Page writes are already sector
+    /// aligned; reads are widened to sector boundaries.
+    pub fn open_with(
+        directory: impl Into<PathBuf>,
+        segment_bits: u32,
+        threads: usize,
+        direct: bool,
     ) -> io::Result<Self> {
         let directory = directory.into();
         std::fs::create_dir_all(&directory)?;
@@ -142,6 +211,7 @@ impl FileDevice {
         Ok(Self {
             inner: Arc::new(FileInner {
                 directory,
+                direct: direct && cfg!(target_os = "linux"),
                 segment_bits,
                 segments: Mutex::new(HashMap::new()),
             }),
@@ -171,13 +241,7 @@ impl Device for FileDevice {
 
     fn read_async(&self, offset: u64, len: usize, done: ReadCallback) {
         let inner = self.inner.clone();
-        self.submit(Box::new(move || {
-            let mut buffer = vec![0u8; len];
-            let result = inner.for_each_piece(offset, len, |file, at, from, piece| {
-                file.read_exact_at(&mut buffer[from..from + piece], at)
-            });
-            done(result.map(|()| buffer));
-        }));
+        self.submit(Box::new(move || done(inner.read(offset, len))));
     }
 }
 
@@ -196,26 +260,41 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    #[test]
-    fn write_then_read_across_segments() {
-        let dir = std::env::temp_dir().join(format!("raster-device-{}", std::process::id()));
-        let device = FileDevice::open(&dir, 12, 2).unwrap();
-        let data: Vec<u8> = (0..10_000u32).map(|i| i as u8).collect();
+    fn round_trip(direct: bool) {
+        let dir =
+            std::env::temp_dir().join(format!("raster-device-{direct}-{}", std::process::id()));
+        let device = FileDevice::open_with(&dir, 13, 2, direct).unwrap();
+        // Sector-aligned source buffer and offset, as page flushes are.
+        let mut data = AlignedBuffer::new(12_288);
+        for (i, byte) in data.as_mut().iter_mut().enumerate() {
+            *byte = i as u8;
+        }
         let (tx, rx) = mpsc::channel();
         // SAFETY: `data` outlives the wait below.
         unsafe {
             device.write_async(
-                4000,
-                data.as_ptr(),
+                4096,
+                data.ptr,
                 data.len(),
                 Box::new(move |r| tx.send(r).unwrap()),
             )
         };
         rx.recv().unwrap().unwrap();
         let (tx, rx) = mpsc::channel();
-        device.read_async(4000, data.len(), Box::new(move |r| tx.send(r).unwrap()));
-        assert_eq!(rx.recv().unwrap().unwrap(), data);
+        // Unaligned read spanning a segment boundary.
+        device.read_async(8000, 300, Box::new(move |r| tx.send(r).unwrap()));
+        assert_eq!(rx.recv().unwrap().unwrap(), &data.as_mut()[3904..4204]);
         drop(device);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn buffered_round_trip_across_segments() {
+        round_trip(false);
+    }
+
+    #[test]
+    fn direct_round_trip_across_segments() {
+        round_trip(true);
     }
 }
