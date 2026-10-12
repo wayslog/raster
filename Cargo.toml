@@ -4,16 +4,10 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false
-description = "RasterKV embedded key-value store with hybrid log, sessions, and checkpoint recovery"
+description = "RasterKV: a Rust implementation of the FASTER key-value store following the FASTER C++ contract"
 
 [lib]
 path = "src/lib.rs"
-
-[features]
-default = []
-# Controls compilation of the backend skeleton; it does not claim that the backend is complete.
-io-uring = []
-config-toml = ["dep:toml"]
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -22,7 +16,6 @@ unsafe_op_in_unsafe_fn = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [dependencies]
-cap-std = "=4.0.3"
 
-# Enables full syntax parsing; field mapping and verification are handled by the configuration module.
-toml = { version = "=1.1.6", optional = true, default-features = false, features = ["std", "parse"] }
+[profile.release]
+debug = 1
