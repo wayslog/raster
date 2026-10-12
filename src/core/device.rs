@@ -240,6 +240,12 @@ impl Device for FileDevice {
     }
 
     fn read_async(&self, offset: u64, len: usize, done: ReadCallback) {
+        if !self.inner.direct {
+            // Buffered reads are served from the page cache; like libaio on a
+            // buffered file, complete them on the caller instead of handing
+            // them to another thread. The caller still sees `Pending`.
+            return done(self.inner.read(offset, len));
+        }
         let inner = self.inner.clone();
         self.submit(Box::new(move || done(inner.read(offset, len))));
     }
