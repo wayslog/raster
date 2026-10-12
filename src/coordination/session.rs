@@ -1,11 +1,21 @@
 //! Stable activation handles keep ordinary session bookkeeping independent.
 //! Global state publication falls back to the registry before taking a slot.
 use super::*;
-use std::sync::Weak;
+use std::sync::{Weak, atomic::AtomicU64};
 
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "observation_tests.rs"]
+mod observation_tests;
+
+pub(crate) struct RestObservation {
+    slot: Weak<SessionSlot>,
+    revision: u64,
+    state: SystemState,
+}
 
 #[derive(Debug)]
 pub(crate) struct RegistrationHandle {
@@ -31,6 +41,7 @@ pub(super) struct SlotState {
 pub(super) struct SessionSlot {
     id: SessionId,
     state: crate::sync::Mutex<SlotState>,
+    observation_revision: AtomicU64,
 }
 
 struct PoisonNotification<'a> {
@@ -55,12 +66,21 @@ impl SessionSlot {
     ) -> Arc<Self> {
         Arc::new(Self {
             id,
+            observation_revision: AtomicU64::new(0),
             state: crate::sync::Mutex::new(SlotState {
                 active,
                 system,
                 last_accepted,
             }),
         })
+    }
+
+    // All invalidations run while this slot is locked. Saturation permanently
+    // disables caching for the activation instead of allowing revision ABA.
+    pub(super) fn invalidate_observation(&self) {
+        let revision = self.observation_revision.load(Ordering::SeqCst);
+        self.observation_revision
+            .store(revision.saturating_add(1), Ordering::SeqCst);
     }
 
     #[inline]
@@ -195,6 +215,49 @@ impl Coordinator {
         self.with_registration(handle, id, |slot| Ok(slot.system))
     }
 
+    /// Cache only complete REST observations bound to this activation. A hit
+    /// may linearize before a concurrent publication or departure; acceptance
+    /// still validates the current registration under its original slot lock.
+    #[inline]
+    pub fn observed_session_state(
+        &self,
+        handle: &RegistrationHandle,
+        id: SessionId,
+        cached: &mut Option<RestObservation>,
+    ) -> Result<SystemState, Error> {
+        if !std::ptr::eq(handle.owner.as_ptr(), Arc::as_ptr(&self.control)) || handle.slot.id != id
+        {
+            return Err(Error::InvalidState("session registration owner mismatch"));
+        }
+        if let Some(observed) = cached.as_ref()
+            && std::ptr::eq(observed.slot.as_ptr(), Arc::as_ptr(&handle.slot))
+            && !self.publishing.load(Ordering::SeqCst)
+            && observed.revision == handle.slot.observation_revision.load(Ordering::SeqCst)
+            && !handle.slot.state.is_poisoned()
+        {
+            // An interrupted publisher sets failure before clearing publishing.
+            self.healthy()?;
+            return Ok(observed.state);
+        }
+        *cached = None;
+        let (state, revision) = self.with_registration(handle, id, |slot| {
+            // Capture the state and its revision under the same lock. If a
+            // publisher changes either after release, the next hit is rejected.
+            Ok((
+                slot.system,
+                handle.slot.observation_revision.load(Ordering::SeqCst),
+            ))
+        })?;
+        if state.phase == Phase::Rest && revision != u64::MAX {
+            *cached = Some(RestObservation {
+                slot: Arc::downgrade(&handle.slot),
+                revision,
+                state,
+            });
+        }
+        Ok(state)
+    }
+
     #[inline]
     pub fn accept_registered(
         &self,
@@ -236,6 +299,7 @@ impl Coordinator {
         registry.system = system;
         for entry in registry.sessions.values().filter(|entry| entry.active) {
             entry.slot.with_state(&self.failed, |slot| {
+                entry.slot.invalidate_observation();
                 slot.system = system;
                 Ok(())
             })?;

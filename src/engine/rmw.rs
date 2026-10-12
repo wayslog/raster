@@ -1,6 +1,7 @@
 //! RMW Check the chain head again after disk wait;Release old values and recalculate when there is insufficient space,Cannot override concurrent updates.
 use super::{
     Engine, SessionRuntime,
+    operation_gate::{InitialPermit, WriteAttempt},
     pending::TaskStep,
     task::{BorrowedTask, TaskWork},
 };
@@ -27,6 +28,7 @@ use std::{
 enum RmwStep {
     Complete,
     Retry,
+    Structural,
 }
 
 struct RmwTask<S: Schema, O: RmwOperation<S>> {
@@ -66,16 +68,31 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: &mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
+        gate: &mut InitialPermit<'_>,
     ) -> RmwStep {
-        if matches!(
-            self.run_locked(engine, budget, Some(hint)),
-            RmwStep::Complete
-        ) {
+        let mut step = self.run_locked(engine, budget, Some(hint), gate.is_shared());
+        if matches!(step, RmwStep::Structural) {
+            step = match gate.make_structural() {
+                Ok(()) => self.run_locked(engine, budget, Some(hint), false),
+                Err(Error::Busy) => RmwStep::Retry,
+                Err(cause) => {
+                    self.finish(
+                        engine,
+                        Err(OperationError {
+                            cause,
+                            effect: self.effect,
+                        }),
+                    );
+                    RmwStep::Complete
+                }
+            };
+        }
+        if matches!(step, RmwStep::Complete) {
             return RmwStep::Complete;
         }
         match self.prepare_pending(engine) {
             // Resume only a lookup stopped before its first device submission.
-            Ok(true) => self.run_locked(engine, budget, None),
+            Ok(true) => self.run_locked(engine, budget, None, false),
             Ok(false) => RmwStep::Retry,
             Err(cause) => {
                 self.finish(
@@ -94,7 +111,8 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
-    ) -> Result<Option<Outcome<O::Output>>, Error> {
+        in_place_only: bool,
+    ) -> Result<WriteAttempt<Outcome<O::Output>>, Error> {
         if self.lookup.is_none() {
             let mut resolved = match hint.as_ref() {
                 Some(hint) => engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?,
@@ -114,7 +132,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                     // Preserve the head check before running user code. The
                     // borrowed record remains inside this initial epoch scope.
                     if engine.index.prepare_guarded(self.hash, guard)? != resolved.entry {
-                        return Ok(None);
+                        return Ok(WriteAttempt::Retry);
                     }
                     self.effect = Effect::Unknown;
                     let request = self.request.as_mut().expect("Request not completed");
@@ -123,7 +141,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                     })? {
                         ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
                             self.effect = Effect::Applied;
-                            return Ok(Some(Outcome::Success(output)));
+                            return Ok(WriteAttempt::Ready(Outcome::Success(output)));
                         }
                         ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
                             self.effect = Effect::NotApplied;
@@ -133,8 +151,11 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                         }
                         ValueAccess::Contended => {
                             self.effect = Effect::NotApplied;
-                            return Ok(None);
+                            return Ok(WriteAttempt::Retry);
                         }
+                    }
+                    if in_place_only {
+                        return Ok(WriteAttempt::Structural);
                     }
                     // Copy under the same record protection instead of
                     // rebuilding an owning lookup after an Append decision.
@@ -143,17 +164,22 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                         .try_read_live(|view| request.copy_update(ValueRead { view }))?
                     {
                         ValueAccess::Ready(Some(value)) => value?,
-                        ValueAccess::Ready(None) | ValueAccess::Contended => return Ok(None),
+                        ValueAccess::Ready(None) | ValueAccess::Contended => {
+                            return Ok(WriteAttempt::Retry);
+                        }
                     };
                     return self.append_record(engine, value, output, resolved.entry);
                 }
+            }
+            if in_place_only {
+                return Ok(WriteAttempt::Structural);
             }
             if !resolved.entry.present {
                 if matches!(
                     engine.index.reserve_empty(resolved.entry)?,
                     PublishResult::Conflict(_)
                 ) {
-                    return Ok(None);
+                    return Ok(WriteAttempt::Retry);
                 }
                 resolved = engine.resolve_index(self.hash, &self.key)?;
             }
@@ -172,13 +198,13 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         let (snapshot, lookup) = self.lookup.as_mut().expect("query_created");
         let source = lookup.step(&engine.log, &engine.storage, budget)?;
         if matches!(source, LookupStep::AwaitingIo | LookupStep::Continue) {
-            return Ok(None);
+            return Ok(WriteAttempt::Retry);
         }
         let entry = engine.index.prepare(self.hash)?;
         let changed = entry != *snapshot;
         self.lookup = None;
         if changed {
-            return Ok(None);
+            return Ok(WriteAttempt::Retry);
         }
         let request = self
             .request
@@ -196,7 +222,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                     })? {
                         ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
                             self.effect = Effect::Applied;
-                            return Ok(Some(Outcome::Success(output)));
+                            return Ok(WriteAttempt::Ready(Outcome::Success(output)));
                         }
                         ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
                             self.effect = Effect::NotApplied;
@@ -204,13 +230,13 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                         }
                         ValueAccess::Contended => {
                             self.effect = Effect::NotApplied;
-                            return Ok(None);
+                            return Ok(WriteAttempt::Retry);
                         }
                     }
                 }
                 match lease.try_read(|view| request.copy_update(ValueRead { view }))? {
                     ValueAccess::Ready(value) => value?,
-                    ValueAccess::Contended => return Ok(None),
+                    ValueAccess::Contended => return Ok(WriteAttempt::Retry),
                 }
             }
             LookupStep::Decoded(value) => {
@@ -218,7 +244,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
             }
             LookupStep::Tombstone | LookupStep::Missing => {
                 if !self.options.create_if_missing {
-                    return Ok(Some(Outcome::NotFound));
+                    return Ok(WriteAttempt::Ready(Outcome::NotFound));
                 }
                 request.initial()?
             }
@@ -232,7 +258,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         value: OwnedValueOf<S>,
         output: O::Output,
         entry: crate::index::EntrySnapshot,
-    ) -> Result<Option<Outcome<O::Output>>, Error> {
+    ) -> Result<WriteAttempt<Outcome<O::Output>>, Error> {
         let plan = engine.schema.value_layout().plan(&value)?.validate()?;
         engine.log.record_fits(self.key.len(), plan)?;
         let allocation = match engine.log.allocate_record(
@@ -242,7 +268,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         ) {
             Ok(allocation) => allocation,
             Err(Error::CapacityExceeded) if engine.storage.device.capabilities().supports_files => {
-                return Ok(None);
+                return Ok(WriteAttempt::Retry);
             }
             Err(error) => return Err(error),
         };
@@ -255,7 +281,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         {
             PublishResult::Published => {
                 self.effect = Effect::Applied;
-                Ok(Some(Outcome::Success(output)))
+                Ok(WriteAttempt::Ready(Outcome::Success(output)))
             }
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
@@ -285,6 +311,7 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
         engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+        in_place_only: bool,
     ) -> RmwStep {
         if self.request.is_none() {
             return RmwStep::Complete;
@@ -316,27 +343,30 @@ impl<S: Schema, O: RmwOperation<S>> RmwTask<S, O> {
                 return RmwStep::Complete;
             }
         }
-        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(engine, budget, hint))) {
+        let result = match catch_unwind(AssertUnwindSafe(|| {
+            self.advance(engine, budget, hint, in_place_only)
+        })) {
             Ok(result) => result,
             Err(_) => {
                 engine.failed.store(true, Ordering::SeqCst);
                 Err(Error::InvalidState("Write callback panic"))
             }
         };
-        if matches!(result, Ok(None)) {
-            return RmwStep::Retry;
-        }
+        let result = match result {
+            Ok(WriteAttempt::Retry) => return RmwStep::Retry,
+            Ok(WriteAttempt::Structural) => return RmwStep::Structural,
+            Ok(WriteAttempt::Ready(value)) => Ok(value),
+            Err(error) => Err(error),
+        };
         if result.is_err() && self.effect == Effect::Unknown {
             engine.failed.store(true, Ordering::SeqCst);
         }
         self.finish(
             engine,
-            result
-                .map(|value| value.expect("Waiting space excluded"))
-                .map_err(|cause| OperationError {
-                    cause,
-                    effect: self.effect,
-                }),
+            result.map_err(|cause| OperationError {
+                cause,
+                effect: self.effect,
+            }),
         );
         RmwStep::Complete
     }
@@ -375,9 +405,12 @@ impl<S: Schema, O: RmwOperation<S>> TaskWork<S> for RmwTask<S, O> {
                     return TaskStep::Complete;
                 }
             };
-        match self.run_locked(engine, budget, None) {
+        match self.run_locked(engine, budget, None, false) {
             RmwStep::Complete => TaskStep::Complete,
             RmwStep::Retry => TaskStep::Retry,
+            RmwStep::Structural => {
+                unreachable!("Exclusive attempt cannot require structural access")
+            }
         }
     }
     fn abandon(&mut self, engine: &Arc<Engine<S>>, error: OperationError) {
@@ -405,24 +438,19 @@ impl<S: Schema> Engine<S> {
         options: RmwOptions,
         mut hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
-        if let Err(reason) = self.observe_session(session) {
-            return Err(Rejected { request, reason });
-        }
+        let shared = match self.observe_write_entry(session) {
+            Ok(shared) => shared,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
         let (hash, key) = match self.prepare(session, serial, &request) {
             Ok(value) => value,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let _gate = match super::operation_gate::try_lock(
-            &self.operations[hash.0 as usize % self.operations.len()],
-        ) {
-            Ok(guard) => guard,
-            Err(_) => {
-                return Err(Rejected {
-                    request,
-                    reason: Error::Busy,
-                });
-            }
-        };
+        let mut gate =
+            match self.operations[hash.0 as usize % self.operations.len()].initial(shared) {
+                Ok(guard) => guard,
+                Err(reason) => return Err(Rejected { request, reason }),
+            };
         if session.pending() >= self.config.session.max_pending {
             return Err(Rejected {
                 request,
@@ -473,7 +501,7 @@ impl<S: Schema> Engine<S> {
             },
         );
         if matches!(
-            task.run_initial(self, PollBudget::default(), &mut hint),
+            task.run_initial(self, PollBudget::default(), &mut hint, &mut gate),
             RmwStep::Complete
         ) {
             self.retain_operation(session, &mut task.mailbox);

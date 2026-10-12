@@ -31,8 +31,7 @@ impl ReadOperation<Schema> for Request {
         Ok(*value.view())
     }
 }
-#[test]
-fn public_read_does_not_wait_for_an_unchanged_routing_write_lock() {
+fn read_with_unchanged_index_lock(hold_bucket: bool) {
     let mut config = Config::default();
     config.index.buckets = 1;
     config.log.page_bytes = 4096;
@@ -55,26 +54,43 @@ fn public_read_does_not_wait_for_an_unchanged_routing_write_lock() {
         let store = &store;
         let worker = scope.spawn(move || {
             let mut session = store.start_session(Default::default()).unwrap();
+            assert!(matches!(
+                session.read(Serial(0), Request, ReadOptions::default()),
+                Ok(Submission::Ready(Ok(Outcome::Success(42))))
+            ));
             started_tx.send(()).unwrap();
             go_rx.recv().unwrap();
-            let value = match session.read(Serial(0), Request, ReadOptions::default()) {
+            let value = match session.read(Serial(1), Request, ReadOptions::default()) {
                 Ok(Submission::Ready(Ok(Outcome::Success(value)))) => value,
                 _ => panic!("Expected a completed resident read"),
             };
             result_tx.send(value).unwrap();
         });
         started_rx.recv().unwrap();
-        let state = store.inner.index.state.write().unwrap();
+        let active = store.inner.index.state.read().unwrap().active.clone();
+        let state = (!hold_bucket).then(|| store.inner.index.state.write().unwrap());
+        let bucket = hold_bucket.then(|| active.buckets[0].lock().unwrap());
         go_tx.send(()).unwrap();
-        let while_locked = result_rx.recv_timeout(Duration::from_secs(5));
+        let while_locked = result_rx.recv_timeout(Duration::from_millis(200));
+        drop(bucket);
         drop(state);
         worker.join().unwrap();
         assert_eq!(
             while_locked,
             Ok(42),
-            "Read waited for an unchanged routing lock"
+            "Read waited for an unchanged index lock"
         );
     });
+}
+
+#[test]
+fn public_read_does_not_wait_for_an_unchanged_routing_write_lock() {
+    read_with_unchanged_index_lock(false);
+}
+
+#[test]
+fn warmed_public_read_does_not_wait_for_an_unchanged_bucket_lock() {
+    read_with_unchanged_index_lock(true);
 }
 
 struct SetValue;

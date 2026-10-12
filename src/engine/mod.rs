@@ -57,7 +57,7 @@ pub(crate) struct Engine<S: Schema> {
     pub checkpoints: std::sync::Mutex<checkpoint::CheckpointRuntime>,
     pub storage_progress: std::sync::Mutex<storage_progress::StorageProgress>,
     pub version_permits: version_permit::VersionPermits,
-    pub operations: Vec<crate::sync::Mutex<()>>,
+    pub operations: Vec<operation_gate::OperationGate>,
     pub failed: std::sync::atomic::AtomicBool,
     pub shutdown_requested: std::sync::atomic::AtomicBool,
     pub schema: std::sync::Arc<S>,

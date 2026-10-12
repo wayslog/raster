@@ -431,7 +431,7 @@ fn build<S: Schema>(
         config,
         shutdown_state: crate::sync::Mutex::new(false),
         version_permits: Default::default(),
-        operations: (0..64).map(|_| crate::sync::Mutex::new(())).collect(),
+        operations: (0..64).map(|_| Default::default()).collect(),
         failed: false.into(),
         shutdown_requested: false.into(),
     };

@@ -30,6 +30,7 @@ impl Table {
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
         let mut kept = 0;
+        let _publication = read_cache::BucketPublication::begin(&self.publications[number]);
         // Entry It is pure copy data;Press forward in exclusive barrel lock,Do not allocate the second bucket.
         for read in 0..bucket.blocks.len() * SLOTS {
             if let Some(entry) = bucket.blocks[read / SLOTS][read % SLOTS]

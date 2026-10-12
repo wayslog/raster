@@ -338,7 +338,7 @@ impl<S: Schema> Builder<S> {
                 cache,
                 shutdown_state: crate::sync::Mutex::new(false),
                 version_permits: Default::default(),
-                operations: (0..64).map(|_| crate::sync::Mutex::new(())).collect(),
+                operations: (0..64).map(|_| Default::default()).collect(),
                 failed: std::sync::atomic::AtomicBool::new(false),
                 shutdown_requested: std::sync::atomic::AtomicBool::new(false),
             }),

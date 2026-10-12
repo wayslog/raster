@@ -24,6 +24,8 @@ pub(crate) struct ExecutionContext {
 pub(crate) struct SessionRuntime {
     pub id: SessionId,
     pub registration: crate::coordination::RegistrationHandle,
+    pub rest_observation: Option<crate::coordination::RestObservation>,
+    pub index_snapshots: crate::index::SnapshotCache,
     pub tracker: std::sync::Arc<super::metrics::Tracker>,
     pub current: ExecutionContext,
     pub previous: Option<ExecutionContext>,
@@ -49,6 +51,8 @@ impl SessionRuntime {
         Self {
             id,
             registration: handle,
+            rest_observation: None,
+            index_snapshots: crate::index::SnapshotCache::default(),
             tracker,
             current: ExecutionContext {
                 version,

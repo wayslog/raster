@@ -20,6 +20,11 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, atomic::Ordering},
 };
+// Initial-only borrows travel together and never enter a suspended task.
+struct InitialRead<'a, 'epoch, S: Schema> {
+    resident: crate::log::resident::ReadHint<'a, 'epoch, crate::schema::SharedValue<S>>,
+    snapshots: &'a mut crate::index::SnapshotCache,
+}
 struct ReadTask<S: Schema, O: ReadOperation<S>> {
     schema: std::marker::PhantomData<fn() -> S>,
     monitor: super::metrics::Monitor,
@@ -91,7 +96,7 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
         &mut self,
         engine: &Arc<Engine<S>>,
         budget: PollBudget,
-        mut hint: Option<crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
+        mut initial: Option<&mut InitialRead<'_, '_, S>>,
     ) -> TaskStep {
         if self.request.is_none() {
             return TaskStep::Complete;
@@ -126,43 +131,51 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
         let result = catch_unwind(AssertUnwindSafe(
             || -> Result<Option<Outcome<O::Output>>, Error> {
                 if self.lookup.is_none() {
-                    let resolved = if let Some(hint) = hint.as_ref() {
-                        engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?
-                    } else {
-                        engine.resolve_index(self.hash, &self.key)?
-                    };
-                    if engine.config.cache.enabled {
+                    let (entry, head) = if engine.config.cache.enabled {
+                        let resolved = engine.resolve_index(self.hash, &self.key)?;
                         engine.metrics.cache(super::metrics::CacheEvent::Lookup);
-                    }
-                    if let Some(record) = resolved.cached {
-                        if record.source < engine.log.frontiers()?.begin {
-                            // GC Cache header replaced;Reparse index,Live keys after migration cannot be reported as truncated.
-                            return Ok(None);
+                        if let Some(record) = resolved.cached {
+                            if record.source < engine.log.frontiers()?.begin {
+                                // GC Cache header replaced;Reparse index,Live keys after migration cannot be reported as truncated.
+                                return Ok(None);
+                            }
+                            let encoded = crate::format::Record::decode(record.encoded())?;
+                            if encoded.header.version != record.version {
+                                return Err(Error::InvalidState("Cache record version mismatch"));
+                            }
+                            engine.metrics.cache(super::metrics::CacheEvent::Hit);
+                            if let crate::index::IndexHead::Cache(address) = resolved.entry.head {
+                                engine.cache.touch(address)?;
+                            }
+                            let value = engine.log.decode_temporary(encoded.value)?;
+                            return value
+                                .read(|view| {
+                                    self.request
+                                        .as_mut()
+                                        .expect("The request has not yet been finalized")
+                                        .read(ValueRead { view })
+                                })?
+                                .map(|value| Some(Outcome::Success(value)));
                         }
-                        let encoded = crate::format::Record::decode(record.encoded())?;
-                        if encoded.header.version != record.version {
-                            return Err(Error::InvalidState("Cache record version mismatch"));
-                        }
-                        engine.metrics.cache(super::metrics::CacheEvent::Hit);
-                        if let crate::index::IndexHead::Cache(address) = resolved.entry.head {
-                            engine.cache.touch(address)?;
-                        }
-                        let value = engine.log.decode_temporary(encoded.value)?;
-                        return value
-                            .read(|view| {
-                                self.request
-                                    .as_mut()
-                                    .expect("The request has not yet been finalized")
-                                    .read(ValueRead { view })
-                            })?
-                            .map(|value| Some(Outcome::Success(value)));
-                    }
-                    if let Some(hint) = hint.as_mut() {
-                        if let Some(value) =
-                            engine
-                                .log
-                                .resident_head_borrowed(&self.key, resolved.head, hint)?
-                        {
+                        (resolved.entry, resolved.head)
+                    } else {
+                        let entry = if let Some(initial) = initial.as_deref_mut() {
+                            engine.index.prepare_cached_guarded(
+                                self.hash,
+                                initial.resident.guard,
+                                initial.snapshots,
+                            )?
+                        } else {
+                            engine.index.prepare(self.hash)?
+                        };
+                        (entry, Engine::<S>::head(entry)?)
+                    };
+                    if let Some(initial) = initial.as_deref_mut() {
+                        if let Some(value) = engine.log.resident_head_borrowed(
+                            &self.key,
+                            head,
+                            &mut initial.resident,
+                        )? {
                             let result = Self::invoke_read(
                                 self.request
                                     .as_mut()
@@ -172,9 +185,7 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
                             )?;
                             return self.finish_read_access(result);
                         }
-                    } else if let Some(value) =
-                        engine.log.resident_head(&self.key, resolved.head)?
-                    {
+                    } else if let Some(value) = engine.log.resident_head(&self.key, head)? {
                         // Keep tombstone and callback behavior identical to the chain lookup.
                         if value.is_tombstone() {
                             return Ok(Some(if self.options.abort_if_tombstone {
@@ -185,11 +196,11 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
                         }
                         return self.read_resident(value);
                     }
-                    self.observed = Some(resolved.entry);
+                    self.observed = Some(entry);
                     let mut lookup = engine.log.lookup_deferred(
                         &engine.storage,
                         self.key.clone(),
-                        resolved.head,
+                        head,
                         CompletionHub::route(self.mailbox.id()),
                     )?;
                     if self.mailbox.registered_id().is_some() {
@@ -282,9 +293,14 @@ impl<S: Schema, O: ReadOperation<S>> ReadTask<S, O> {
         engine: &Arc<Engine<S>>,
         budget: PollBudget,
         hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
+        snapshots: &mut crate::index::SnapshotCache,
     ) -> TaskStep {
+        let mut initial = InitialRead::<S> {
+            resident: hint,
+            snapshots,
+        };
         if matches!(
-            self.step_with_hint(engine, budget, Some(hint)),
+            self.step_with_hint(engine, budget, Some(&mut initial)),
             TaskStep::Complete
         ) {
             return TaskStep::Complete;
@@ -449,7 +465,12 @@ impl<S: Schema> Engine<S> {
             },
         );
         if matches!(
-            task.run_initial(self, PollBudget::default(), hint),
+            task.run_initial(
+                self,
+                PollBudget::default(),
+                hint,
+                &mut session.index_snapshots
+            ),
             TaskStep::Complete
         ) {
             self.retain_operation(session, &mut task.mailbox);
