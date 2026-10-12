@@ -157,8 +157,16 @@ fn main() {
 
     let mut expected = vec![7u64; threads * 256];
     let (mut elapsed, mut checksum, mut samples) = (0u64, 0u64, Vec::new());
-    for (worker, result) in results.into_iter().enumerate() {
+    // Diagnostics only: per-thread elapsed time and sampled P99.
+    let mut per_thread = Vec::new();
+    for (worker, mut result) in results.into_iter().enumerate() {
         elapsed = elapsed.max(result.elapsed);
+        result.samples.sort_unstable();
+        per_thread.push(format!(
+            "[{},{}]",
+            result.elapsed,
+            result.samples[result.samples.len() * 99 / 100]
+        ));
         checksum = checksum.wrapping_add(result.checksum);
         samples.extend(result.samples);
         for i in 0..count / threads {
@@ -184,9 +192,10 @@ fn main() {
         digest = (digest ^ context.output).wrapping_mul(0x0100_0000_01b3);
     }
     println!(
-        "{{\"engine\":\"rust\",\"operation\":\"{operation}\",\"distribution\":\"{distribution}\",\"threads\":{threads},\"count\":{count},\"elapsed_ns\":{elapsed},\"p99_ns\":{},\"samples\":{},\"checksum\":{checksum},\"digest\":{digest},\"verified_keys\":{},\"retries\":0,\"pending\":0}}",
+        "{{\"engine\":\"rust\",\"operation\":\"{operation}\",\"distribution\":\"{distribution}\",\"threads\":{threads},\"count\":{count},\"elapsed_ns\":{elapsed},\"p99_ns\":{},\"samples\":{},\"checksum\":{checksum},\"digest\":{digest},\"verified_keys\":{},\"retries\":0,\"pending\":0,\"per_thread\":[{}]}}",
         samples[samples.len() * 99 / 100],
         samples.len(),
-        expected.len()
+        expected.len(),
+        per_thread.join(",")
     );
 }

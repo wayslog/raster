@@ -152,6 +152,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     fn upsert_attempt<C: UpsertContext<K, V>>(&self, slot_id: &SlotId, ctx: &mut C) -> Attempt {
         let key = *ctx.key();
         let slot = self.index.find_or_create(key.hash());
+        self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let address = self.trace_back(&key, slot.entry.address(), head);
         if address >= self.hlog.read_only.load() {
@@ -191,6 +192,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     fn rmw_attempt<C: RmwContext<K, V>>(&self, slot_id: &SlotId, ctx: &mut C) -> Attempt {
         let key = *ctx.key();
         let slot = self.index.find_or_create(key.hash());
+        self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let address = self.trace_back(&key, slot.entry.address(), head);
         let read_only = self.hlog.read_only.load();
