@@ -131,6 +131,27 @@ impl HybridLog {
         unsafe { frame.add(address.offset() as usize) }
     }
 
+    /// Hints that the record at `address` is about to be updated, so its cache
+    /// line is fetched once in exclusive state instead of shared then upgraded.
+    /// Prefetches never fault, so any address is acceptable.
+    #[inline(always)]
+    pub fn prefetch_for_write(&self, address: Address) {
+        let ptr = self.get(address);
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: PREFETCHW only hints the cache and never faults; it decodes
+        // as a NOP on CPUs without PRFCHW.
+        unsafe {
+            std::arch::asm!("prefetchw [{0}]", in(reg) ptr, options(nostack, preserves_flags, readonly));
+        }
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: PRFM only hints the cache and never faults.
+        unsafe {
+            std::arch::asm!("prfm pstl1keep, [{0}]", in(reg) ptr, options(nostack, preserves_flags, readonly));
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let _ = ptr;
+    }
+
     #[inline]
     pub fn tail(&self) -> Address {
         let word = self.tail.0.load(Ordering::Acquire);

@@ -108,9 +108,13 @@ int main(int argc, char** argv) {
   for (auto& worker : workers) worker.join();
   uint64_t elapsed = 0, checksum = 0;
   std::vector<uint64_t> samples, expected(threads * 256, 7);
+  std::string per_thread;  // Diagnostics only: per-thread elapsed time and sampled P99.
   for (size_t worker = 0; worker < threads; ++worker) {
     auto& result = results[worker];
     elapsed = std::max(elapsed, result.elapsed);
+    std::sort(result.samples.begin(), result.samples.end());
+    per_thread += (worker ? ",[" : "[") + std::to_string(result.elapsed) + "," +
+      std::to_string(result.samples[result.samples.size() * 99 / 100]) + "]";
     checksum += result.checksum;
     samples.insert(samples.end(), result.samples.begin(), result.samples.end());
     for (size_t i = 0; i < count / threads; ++i) {
@@ -131,5 +135,5 @@ int main(int argc, char** argv) {
   std::cout << "{\"engine\":\"cpp\",\"operation\":\"" << operation << "\",\"distribution\":\"" << distribution
     << "\",\"threads\":" << threads << ",\"count\":" << count << ",\"elapsed_ns\":" << elapsed
     << ",\"p99_ns\":" << samples[samples.size() * 99 / 100] << ",\"samples\":" << samples.size()
-    << ",\"checksum\":" << checksum << ",\"digest\":" << digest << ",\"verified_keys\":" << expected.size() << "}\n";
+    << ",\"checksum\":" << checksum << ",\"digest\":" << digest << ",\"verified_keys\":" << expected.size() << ",\"per_thread\":[" << per_thread << "]}\n";
 }
