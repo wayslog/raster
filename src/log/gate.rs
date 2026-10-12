@@ -28,17 +28,7 @@ pub(crate) struct SharedUpdatePermit<'a> {
 impl MutationGate {
     /// Only allow atomic layouts that can be accessed safely concurrently;Do not grant mutable references to ordinary values.
     pub fn try_update(&self) -> Result<SharedUpdatePermit<'_>, Error> {
-        let state = self.state.load(PUBLISH_ORDER);
-        if state >= EXCLUSIVE - 1 {
-            return Err(Error::Busy);
-        }
-        self.state
-            .compare_exchange(state, state + 1, PUBLISH_ORDER, PUBLISH_ORDER)
-            .map_err(|_| Error::Busy)?;
-        Ok(SharedUpdatePermit {
-            gate: self,
-            local: PhantomData,
-        })
+        self.try_read_from(self.state.load(PUBLISH_ORDER))
     }
     /// Retry only compatible reader/update count changes. An exclusive owner,
     /// count overflow, or exhausted budget suspends the operation as before.

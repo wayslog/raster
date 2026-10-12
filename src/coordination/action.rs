@@ -308,6 +308,7 @@ impl Coordinator {
                 }
                 participant.departed = true;
             }
+            slot.invalidate_observation();
             registered.active = false;
             registry
                 .sessions

@@ -493,7 +493,21 @@ fn accumulation_of_the_same_key_across_multiple_sessions_will_not_lose_updates()
                     loop {
                         match session.rmw(Serial(serial), request, RmwOptions::default()) {
                             Ok(result) => {
-                                assert!(matches!(outcome(result), Outcome::Success(_)));
+                                // Structural fallback can be accepted while shared updates
+                                // are active; collect its completion instead of requiring Ready.
+                                let result = match result {
+                                    Submission::Ready(result) => result,
+                                    Submission::Pending(mut ticket) => session
+                                        .wait(
+                                            &mut ticket,
+                                            Deadline(
+                                                std::time::Instant::now()
+                                                    + std::time::Duration::from_secs(5),
+                                            ),
+                                        )
+                                        .unwrap(),
+                                };
+                                assert!(matches!(result, Ok(Outcome::Success(_))));
                                 break;
                             }
                             Err(rejected) => {

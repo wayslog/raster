@@ -1,6 +1,7 @@
 //! Upsert Keep generated values while waiting for space;Get the latest link head in the same key quorum for each release.
 use super::{
     Engine, SessionRuntime,
+    operation_gate::WriteAttempt,
     pending::{PendingTask, TaskStep},
 };
 use crate::{
@@ -29,6 +30,7 @@ struct Prepared<S: Schema, T> {
 enum UpsertStep<T> {
     Ready(T),
     Retry,
+    Structural,
     Failed,
 }
 struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
@@ -36,6 +38,7 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
     monitor: super::metrics::Monitor,
     request: Option<O>,
     prepared: Option<Prepared<S, O::Output>>,
+    skip_in_place: bool,
     key: super::EncodedKey,
     hash: KeyHash,
     effect: Effect,
@@ -48,8 +51,9 @@ struct UpsertTask<S: Schema, O: UpsertOperation<S>> {
 impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     fn advance(
         &mut self,
+        in_place_only: bool,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
-    ) -> Result<Option<O::Output>, Error> {
+    ) -> Result<WriteAttempt<O::Output>, Error> {
         let engine = &self.engine;
         let resolved = match hint.as_ref() {
             Some(hint) => engine.resolve_index_guarded(self.hash, &self.key, hint.guard)?,
@@ -65,29 +69,35 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
             };
             // A miss preserves the full collision-chain and Pending paths.
             // The borrowed view remains inside the initial record epoch scope.
-            let lease = if borrowed.is_none() {
+            let lease = if borrowed.is_none() && !in_place_only && !self.skip_in_place {
                 engine.log.find_mutable(&self.key, head)?
             } else {
                 None
             };
             let record = borrowed.or_else(|| lease.as_ref().map(|lease| lease.borrow()));
-            if let Some(record) = record.filter(|record| !record.is_tombstone()) {
+            if !self.skip_in_place
+                && let Some(record) = record.filter(|record| !record.is_tombstone())
+            {
                 self.effect = Effect::Unknown;
                 match record.update_at_version(self.version, |view| {
                     request.update_in_place(ValueUpdate { view })
                 })? {
                     ValueAccess::Ready(Some(UpdateDecision::Updated(output))) => {
                         self.effect = Effect::Applied;
-                        return Ok(Some(output));
+                        return Ok(WriteAttempt::Ready(output));
                     }
                     ValueAccess::Ready(Some(UpdateDecision::Append) | None) => {
-                        self.effect = Effect::NotApplied
+                        self.effect = Effect::NotApplied;
+                        self.skip_in_place = true;
                     }
                     ValueAccess::Contended => {
                         self.effect = Effect::NotApplied;
-                        return Ok(None);
+                        return Ok(WriteAttempt::Retry);
                     }
                 }
+            }
+            if in_place_only {
+                return Ok(WriteAttempt::Structural);
             }
             let (value, output) = request.replacement()?;
             let plan = engine.schema.value_layout().plan(&value)?.validate()?;
@@ -102,7 +112,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
         let allocation = match engine.log.allocate_record(&self.key, head, prepared.plan) {
             Ok(allocation) => allocation,
             Err(Error::CapacityExceeded) if engine.storage.device.capabilities().supports_files => {
-                return Ok(None);
+                return Ok(WriteAttempt::Retry);
             }
             Err(error) => return Err(error),
         };
@@ -119,7 +129,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 self.effect = Effect::Applied;
                 let output = prepared.output.take().expect("Output not delivered yet");
                 self.prepared = None;
-                Ok(Some(output))
+                Ok(WriteAttempt::Ready(output))
             }
             PublishResult::Conflict(_) => {
                 engine.log.retire(address)?;
@@ -163,6 +173,7 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
     }
     fn run_locked(
         &mut self,
+        in_place_only: bool,
         hint: Option<&mut crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>>,
         failure: &mut Option<OperationError>,
     ) -> UpsertStep<O::Output> {
@@ -188,21 +199,20 @@ impl<S: Schema, O: UpsertOperation<S>> UpsertTask<S, O> {
                 return UpsertStep::Failed;
             }
         }
-        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(hint))) {
+        let result = match catch_unwind(AssertUnwindSafe(|| self.advance(in_place_only, hint))) {
             Ok(result) => result,
             Err(_) => {
                 self.engine.failed.store(true, Ordering::SeqCst);
                 Err(Error::InvalidState("Write callback panic"))
             }
         };
-        if matches!(result, Ok(None)) {
-            return UpsertStep::Retry;
-        }
         if result.is_err() && self.effect == Effect::Unknown {
             self.engine.failed.store(true, Ordering::SeqCst);
         }
         match result {
-            Ok(value) => UpsertStep::Ready(value.expect("Waiting space excluded")),
+            Ok(WriteAttempt::Ready(value)) => UpsertStep::Ready(value),
+            Ok(WriteAttempt::Retry) => UpsertStep::Retry,
+            Ok(WriteAttempt::Structural) => UpsertStep::Structural,
             Err(cause) => {
                 *failure = Some(OperationError {
                     cause,
@@ -244,8 +254,11 @@ impl<S: Schema, O: UpsertOperation<S>> PendingTask for UpsertTask<S, O> {
                 }
             };
         let mut failure = None;
-        match self.run_locked(None, &mut failure) {
+        match self.run_locked(false, None, &mut failure) {
             UpsertStep::Retry => TaskStep::Retry,
+            UpsertStep::Structural => {
+                unreachable!("Exclusive attempt cannot require structural access")
+            }
             UpsertStep::Ready(result) => {
                 self.finish(Ok(Outcome::Success(result)));
                 TaskStep::Complete
@@ -279,24 +292,19 @@ impl<S: Schema> Engine<S> {
         request: O,
         mut hint: crate::log::resident::ReadHint<'_, '_, crate::schema::SharedValue<S>>,
     ) -> Result<Submission<O::Output>, Rejected<O>> {
-        if let Err(reason) = self.observe_session(session) {
-            return Err(Rejected { request, reason });
-        }
+        let shared = match self.observe_write_entry(session) {
+            Ok(shared) => shared,
+            Err(reason) => return Err(Rejected { request, reason }),
+        };
         let (hash, key) = match self.prepare(session, serial, &request) {
             Ok(value) => value,
             Err(reason) => return Err(Rejected { request, reason }),
         };
-        let _gate = match super::operation_gate::try_lock(
-            &self.operations[hash.0 as usize % self.operations.len()],
-        ) {
-            Ok(guard) => guard,
-            Err(_) => {
-                return Err(Rejected {
-                    request,
-                    reason: Error::Busy,
-                });
-            }
-        };
+        let mut gate =
+            match self.operations[hash.0 as usize % self.operations.len()].initial(shared) {
+                Ok(guard) => guard,
+                Err(reason) => return Err(Rejected { request, reason }),
+            };
         if session.pending() >= self.config.session.max_pending {
             return Err(Rejected {
                 request,
@@ -331,6 +339,7 @@ impl<S: Schema> Engine<S> {
             engine: self.clone(),
             request: Some(request),
             prepared: None,
+            skip_in_place: false,
             key,
             hash,
             effect: Effect::NotApplied,
@@ -341,7 +350,24 @@ impl<S: Schema> Engine<S> {
             permit,
         };
         let mut failure = None;
-        let result = match task.run_locked(Some(&mut hint), &mut failure) {
+        let mut step = task.run_locked(gate.is_shared(), Some(&mut hint), &mut failure);
+        if matches!(step, UpsertStep::Structural) {
+            step = match gate.make_structural() {
+                Ok(()) => task.run_locked(false, Some(&mut hint), &mut failure),
+                Err(Error::Busy) => UpsertStep::Retry,
+                Err(cause) => {
+                    failure = Some(OperationError {
+                        cause,
+                        effect: task.effect,
+                    });
+                    UpsertStep::Failed
+                }
+            };
+        }
+        let result = match step {
+            UpsertStep::Structural => {
+                unreachable!("Exclusive attempt cannot require structural access")
+            }
             UpsertStep::Ready(result) => Ok(Outcome::Success(result)),
             UpsertStep::Failed => Err(failure.expect("Failed steps provide an error")),
             UpsertStep::Retry => {

@@ -158,6 +158,8 @@ fn a_checkpoint_started_inside_a_rest_read_waits_for_that_sessions_next_observat
         let store = &store;
         let worker = scope.spawn(move || {
             let mut session = store.start_session(Default::default()).unwrap();
+            // Exercise checkpoint handoff after the REST observation is cached.
+            session.refresh().unwrap();
             let result = session.read(
                 Serial(7),
                 BlockingRead {
@@ -226,6 +228,8 @@ fn a_rest_read_registers_its_pending_version_before_the_next_checkpoint_observat
     use std::{cell::RefCell, rc::Rc, time::Instant};
     let store = store();
     let mut session = store.start_session(Default::default()).unwrap();
+    // Exercise Pending handoff from a warmed REST observation.
+    session.refresh().unwrap();
     let entry = store.inner.index.prepare(U64Key.hash(&7)).unwrap();
     let crate::index::IndexHead::Log(address) = entry.head else {
         panic!("missing resident record")

@@ -103,6 +103,7 @@ struct Bucket {
 struct Table {
     owner: u64,
     buckets: Vec<Mutex<Bucket>>,
+    publications: Vec<AtomicU64>,
     generation: Generation,
 }
 impl Table {
@@ -117,10 +118,15 @@ impl Table {
             .fetch_update(PUBLISH_ORDER, PUBLISH_ORDER, |n| n.checked_add(1))
             .map_err(|_| Error::CapacityExceeded)?;
         let mut buckets = Vec::new();
+        let mut publications = Vec::new();
+        publications
+            .try_reserve_exact(config.buckets)
+            .map_err(|_| Error::OutOfMemory)?;
         buckets
             .try_reserve_exact(config.buckets)
             .map_err(|_| Error::OutOfMemory)?;
         for _ in 0..config.buckets {
+            publications.push(AtomicU64::new(0));
             buckets.push(Mutex::new(Bucket {
                 blocks: Vec::new(),
                 revision: 0,
@@ -130,6 +136,7 @@ impl Table {
         Ok(Self {
             owner,
             buckets,
+            publications,
             generation: Generation(0),
         })
     }
@@ -204,6 +211,8 @@ impl Table {
             .revision
             .checked_add(1)
             .ok_or(Error::CapacityExceeded)?;
+        let _publication =
+            read_cache::BucketPublication::begin(&self.publications[expected.bucket]);
         if head == IndexHead::Empty && !reserve_empty {
             for slot in bucket.blocks.iter_mut().flatten() {
                 if slot.is_some_and(|entry| entry.tag == expected.tag) {
@@ -324,6 +333,8 @@ impl Table {
 }
 
 mod gc;
+mod read_cache;
+pub(crate) use read_cache::SnapshotCache;
 pub(crate) mod growth;
 pub(crate) use growth::MemIndex;
 

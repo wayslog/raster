@@ -15,7 +15,7 @@ mod admission_tests;
 use action::ActiveAction;
 mod session;
 use session::SessionSlot;
-pub(crate) use session::{RegisteredSession, RegistrationHandle};
+pub(crate) use session::{RegisteredSession, RegistrationHandle, RestObservation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -336,6 +336,7 @@ impl Coordinator {
             .filter(|entry| entry.active)
             .ok_or(Error::InvalidState("session_not_registered"))?;
         entry.slot.with_state(&self.failed, |slot| {
+            entry.slot.invalidate_observation();
             slot.active = false;
             Ok(())
         })?;

@@ -79,6 +79,37 @@ impl MemIndex {
         hash: KeyHash,
         guard: &crate::epoch::EpochGuard<'_>,
     ) -> Result<EntrySnapshot, Error> {
+        self.prepare_routed(hash, guard, |table| table.prepare(hash))
+    }
+    #[inline]
+    pub fn prepare_cached_guarded(
+        &self,
+        hash: KeyHash,
+        guard: &crate::epoch::EpochGuard<'_>,
+        cache: &mut SnapshotCache,
+    ) -> Result<EntrySnapshot, Error> {
+        if cache.bypass_probe() {
+            return self.prepare_guarded(hash, guard);
+        }
+        self.prepare_cache_probe(hash, guard, cache)
+    }
+    // Keep the probe frame out of the bypass path. The small selector above
+    // can be specialized at its caller without duplicating this slow path.
+    fn prepare_cache_probe(
+        &self,
+        hash: KeyHash,
+        guard: &crate::epoch::EpochGuard<'_>,
+        cache: &mut SnapshotCache,
+    ) -> Result<EntrySnapshot, Error> {
+        self.prepare_routed(hash, guard, |table| table.prepare_cached(hash, cache))
+    }
+    // Each caller specializes its lookup; ordinary reads pay no cache dispatch.
+    fn prepare_routed(
+        &self,
+        hash: KeyHash,
+        guard: &crate::epoch::EpochGuard<'_>,
+        prepare: impl FnOnce(&Table) -> Result<EntrySnapshot, Error>,
+    ) -> Result<EntrySnapshot, Error> {
         self.metrics
             .index(crate::engine::metrics::IndexEvent::Lookup);
         let owner = self
@@ -97,10 +128,19 @@ impl MemIndex {
         // epoch manager delivers its retirement. This guard entered before the
         // pointer load and stays alive through prepare. Restore requires &mut
         // self, and neither this reference nor a table reference escapes.
-        self.prepare_loaded(hash, unsafe { &*table })
+        let table = unsafe { &*table };
+        self.check_prepared_route(hash, table, prepare(table))
     }
+    #[cfg(test)]
     fn prepare_loaded(&self, hash: KeyHash, table: &Table) -> Result<EntrySnapshot, Error> {
-        let result = table.prepare(hash);
+        self.check_prepared_route(hash, table, table.prepare(hash))
+    }
+    fn check_prepared_route(
+        &self,
+        hash: KeyHash,
+        table: &Table,
+        result: Result<EntrySnapshot, Error>,
+    ) -> Result<EntrySnapshot, Error> {
         if self.state.is_poisoned() {
             return Err(Error::InvalidState("Index route lock poisoning"));
         }
@@ -366,6 +406,11 @@ impl MemIndex {
             let mut upper = growth.table.buckets[growth.next + old_buckets]
                 .lock()
                 .map_err(|_| Error::InvalidState("New index bucket lock poisoning"))?;
+            let _lower_publication =
+                read_cache::BucketPublication::begin(&growth.table.publications[growth.next]);
+            let _upper_publication = read_cache::BucketPublication::begin(
+                &growth.table.publications[growth.next + old_buckets],
+            );
             lower.blocks = low;
             upper.blocks = high;
             lower.revision = source.revision;

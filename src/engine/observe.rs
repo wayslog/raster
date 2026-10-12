@@ -17,7 +17,7 @@ impl<S: Schema> Engine<S> {
         self.observe_entry(session)
             .map(|observation| observation.changed)
     }
-    /// Only for the initial Read call on its owning session thread. After a
+    /// Only for the initial operation call on its owning session thread. After a
     /// REST observation, a later checkpoint cannot pass Prepare until this
     /// session observes it. Do not observe again before completing the initial
     /// attempt or registering its suspended version.
@@ -25,14 +25,31 @@ impl<S: Schema> Engine<S> {
         self.observe_entry(session)
             .map(|observation| observation.rest)
     }
+    pub(super) fn observe_write_entry(&self, session: &mut SessionRuntime) -> Result<bool, Error> {
+        use crate::schema::ValueLayout;
+        let rest = self.observe_read_entry(session)?;
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rest && self.schema.value_layout().concurrent_updates()
+        })) {
+            Ok(shared) => Ok(shared),
+            Err(_) => {
+                self.failed.store(true, Ordering::SeqCst);
+                Err(Error::InvalidState(
+                    "Value layout capability callback panic",
+                ))
+            }
+        }
+    }
     fn observe_entry(&self, session: &mut SessionRuntime) -> Result<EntryObservation, Error> {
         let _timer = self.metrics.timer(false);
         let mut changed = false;
         // Each observation has a fixed upper limit;When concurrent actions continue to change, let the caller continue in the next round.
         for _ in 0..8 {
-            let state = self
-                .coordinator
-                .session_state(&session.registration, session.id)?;
+            let state = self.coordinator.observed_session_state(
+                &session.registration,
+                session.id,
+                &mut session.rest_observation,
+            )?;
             if self.failed.load(Ordering::SeqCst) {
                 if state.id.is_none() {
                     return Ok(EntryObservation {
