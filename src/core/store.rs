@@ -53,6 +53,8 @@ pub struct FasterKv<K: Key, V: Value> {
     /// Allocated while a checkpoint runs; freed by an epoch action at REST.
     pub(crate) checkpoint_locks: AtomicPtr<CheckpointLocks>,
     pub(crate) cpr: std::sync::Mutex<CprRun>,
+    pub(crate) gc: std::sync::Mutex<super::gc::GcRun>,
+    pub(crate) gc_next_chunk: std::sync::atomic::AtomicU64,
     pub(crate) dirs: Option<CheckpointDirs>,
     /// Persisted serial numbers of recovered sessions, by session GUID.
     pub(crate) continue_tokens: std::sync::Mutex<std::collections::HashMap<super::guid::Guid, u64>>,
@@ -106,6 +108,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             state: AtomicSystemState::new(SystemState::rest(1)),
             checkpoint_locks: AtomicPtr::new(std::ptr::null_mut()),
             cpr: Default::default(),
+            gc: Default::default(),
+            gc_next_chunk: Default::default(),
             dirs: config.checkpoint_dir.map(|root| CheckpointDirs { root }),
             continue_tokens: Default::default(),
             _types: PhantomData,

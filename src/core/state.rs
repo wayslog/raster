@@ -13,6 +13,7 @@ pub enum Action {
     CheckpointIndex = 2,
     CheckpointHybridLog = 3,
     Recover = 4,
+    Gc = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub enum Phase {
     WaitPending = 5,
     WaitFlush = 6,
     PersistenceCallback = 7,
+    GcIoPending = 8,
+    GcInProgress = 9,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,7 +57,8 @@ impl SystemState {
             1 => Action::CheckpointFull,
             2 => Action::CheckpointIndex,
             3 => Action::CheckpointHybridLog,
-            _ => Action::Recover,
+            4 => Action::Recover,
+            _ => Action::Gc,
         };
         let phase = match (word >> 8) as u8 {
             0 => Phase::Rest,
@@ -64,7 +68,9 @@ impl SystemState {
             4 => Phase::InProgress,
             5 => Phase::WaitPending,
             6 => Phase::WaitFlush,
-            _ => Phase::PersistenceCallback,
+            7 => Phase::PersistenceCallback,
+            8 => Phase::GcIoPending,
+            _ => Phase::GcInProgress,
         };
         Self {
             action,
@@ -97,6 +103,9 @@ impl SystemState {
             (Action::CheckpointFull | Action::CheckpointHybridLog, PersistenceCallback) => {
                 (Rest, false)
             }
+            (Action::Gc, Rest) => (GcIoPending, false),
+            (Action::Gc, GcIoPending) => (GcInProgress, false),
+            (Action::Gc, GcInProgress) => (Rest, false),
             other => unreachable!("no transition from {other:?}"),
         };
         let action = if phase == Rest {

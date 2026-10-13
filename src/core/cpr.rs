@@ -152,6 +152,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Phase::Prepare if current.action == Action::CheckpointFull => {
                 self.finish_index_checkpoint(&mut run);
             }
+            Phase::GcInProgress => {
+                drop(run);
+                self.gc_truncate();
+                return true;
+            }
             Phase::WaitFlush => {
                 let final_address = self.hlog.tail();
                 self.hlog.shift_read_only_to(final_address);
@@ -161,16 +166,22 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 run.failed |= run.log_meta.write(&dir).is_err();
             }
             Phase::Rest => {
-                if current.action == Action::CheckpointIndex {
-                    self.finish_index_checkpoint(&mut run);
-                } else {
-                    let locks = self
-                        .checkpoint_locks
-                        .swap(std::ptr::null_mut(), Ordering::AcqRel);
-                    let locks = LocksPtr(locks);
-                    // SAFETY: no session can still use the table once every
-                    // session has moved past this epoch.
-                    self.epoch.bump_with_action(move || unsafe { locks.free() });
+                match current.action {
+                    Action::CheckpointIndex => self.finish_index_checkpoint(&mut run),
+                    Action::Gc => {
+                        drop(run);
+                        self.gc_complete();
+                        return true;
+                    }
+                    _ => {
+                        let locks = self
+                            .checkpoint_locks
+                            .swap(std::ptr::null_mut(), Ordering::AcqRel);
+                        let locks = LocksPtr(locks);
+                        // SAFETY: no session can still use the table once every
+                        // session has moved past this epoch.
+                        self.epoch.bump_with_action(move || unsafe { locks.free() });
+                    }
                 }
                 run.log_callback = None;
             }

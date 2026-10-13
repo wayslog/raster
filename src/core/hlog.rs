@@ -316,6 +316,11 @@ impl HybridLog {
         unsafe { self.device.write_async(offset, data, len, done) };
     }
 
+    /// Releases device storage below `begin` (FASTER `Truncate`).
+    pub fn truncate(&self, begin: Address, done: Box<dyn FnOnce(u64) + Send>) {
+        self.device.truncate(self.device_offset(begin), done);
+    }
+
     /// Byte offset of `address` on the device.
     #[inline(always)]
     pub fn device_offset(&self, address: Address) -> u64 {
