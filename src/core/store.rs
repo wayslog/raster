@@ -177,9 +177,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let key = *ctx.key();
         let slot = self.index.find_or_create(key.hash());
         self.hlog.prefetch_for_write(slot.entry.address());
+        // Load both boundaries before touching the record, as FASTER does.
         let head = self.hlog.head.load();
+        let read_only = self.hlog.read_only.load();
         let address = self.trace_back(&key, slot.entry.address(), head);
-        if address >= self.hlog.read_only.load() {
+        if address >= read_only {
             let record = self.record(address);
             // SAFETY: published record in the mutable region.
             if !record.info().tombstone() && ctx.put_atomic(unsafe { record.value() }) {
@@ -251,8 +253,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let slot = self.index.find_or_create(key.hash());
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
-        let address = self.trace_back(&key, slot.entry.address(), head);
         let read_only = self.hlog.read_only.load();
+        let address = self.trace_back(&key, slot.entry.address(), head);
         if address >= read_only {
             let record = self.record(address);
             // SAFETY: published record in the mutable region.
