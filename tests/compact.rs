@@ -143,7 +143,13 @@ fn compaction_under_concurrent_rmw_loses_no_update() {
         for t in 0..THREADS {
             let store = &store;
             scope.spawn(move || {
-                let mut session = store.start_session();
+                // Another action may already be running; wait for REST.
+                let mut session = loop {
+                    if let Some(session) = store.try_start_session() {
+                        break session;
+                    }
+                    std::thread::yield_now();
+                };
                 for round in 0..ROUNDS {
                     for key in 0..KEYS {
                         let serial = (round * KEYS + key) * THREADS + t;
@@ -197,7 +203,13 @@ fn auto_compaction_keeps_the_log_near_its_budget() {
         for t in 0..2u64 {
             let store = &store;
             scope.spawn(move || {
-                let mut session = store.start_session();
+                // Another action may already be running; wait for REST.
+                let mut session = loop {
+                    if let Some(session) = store.try_start_session() {
+                        break session;
+                    }
+                    std::thread::yield_now();
+                };
                 for round in 0..200u64 {
                     for key in 0..KEYS {
                         let _ =
