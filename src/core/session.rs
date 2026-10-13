@@ -77,7 +77,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             guid,
             serial,
             phase: Phase::Rest,
-            plain: store.read_cache.is_none(),
+            plain: store.read_cache.is_none() && store.maintenance.budget == 0,
             version: state.version,
             checkpoint_serial: serial,
             next_id: 0,
@@ -179,8 +179,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: UpsertContext<K, V> + Clone + 'static,
     {
-        if self.phase != Phase::Rest {
+        if !self.plain {
             self.heavy_enter();
+            self.assist_compaction();
         }
         // The checkpoint persists the serial of the last version-v operation.
         // If this operation shifts to v+1, the previous serial is restored
@@ -219,8 +220,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: RmwContext<K, V> + Clone + 'static,
     {
-        if self.phase != Phase::Rest {
+        if !self.plain {
             self.heavy_enter();
+            self.assist_compaction();
         }
         // The checkpoint persists the serial of the last version-v operation.
         // If this operation shifts to v+1, the previous serial is restored
@@ -447,7 +449,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     #[cold]
     fn handle_special_phases(&mut self) {
         self.follow_state_machine();
-        self.plain = self.phase == Phase::Rest && self.store.read_cache.is_none();
+        self.plain = self.phase == Phase::Rest
+            && self.store.read_cache.is_none()
+            && self.store.maintenance.budget == 0;
     }
 
     fn follow_state_machine(&mut self) {

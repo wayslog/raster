@@ -33,6 +33,7 @@ fn scan_returns_every_immutable_record_in_address_order() {
     let store = FasterKv::<u64, AtomicU64>::with_device(
         StoreConfig {
             index_buckets: 1 << 14,
+            log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
                 page_bits: 12,

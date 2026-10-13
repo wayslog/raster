@@ -64,6 +64,7 @@ fn shift_begin_address_truncates_segments_and_index() {
     let store = FasterKv::<u64, AtomicU64>::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
                 page_bits: 12,
@@ -135,6 +136,7 @@ fn gc_completes_while_sessions_keep_writing() {
     let store = FasterKv::<u64, AtomicU64>::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
                 page_bits: 12,

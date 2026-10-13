@@ -86,6 +86,7 @@ fn main() {
 
     let store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
         index_buckets: 1024,
+        log_size_budget: 0,
         checkpoint_dir: None,
         log: LogConfig {
             page_bits: 25,

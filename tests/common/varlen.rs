@@ -296,6 +296,7 @@ impl Drop for TestDirectory {
 pub fn config(dir: &TestDirectory, resident: bool) -> StoreConfig {
     StoreConfig {
         index_buckets: 256,
+        log_size_budget: 0,
         log: raster::core::hlog::LogConfig {
             page_bits: 12,
             memory_pages: if resident { 2048 } else { 8 },

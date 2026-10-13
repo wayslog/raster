@@ -65,6 +65,7 @@ fn store(dir: &std::path::Path) -> FasterKv<u64, AtomicU64> {
     FasterKv::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
                 page_bits: 12,
@@ -402,4 +403,144 @@ fn variable_in_memory_concurrent_compaction() {
 #[test]
 fn variable_on_disk_concurrent_compaction() {
     variable_concurrent_compaction(false, "compact-concurrent-disk");
+}
+
+#[test]
+fn budget_limited_writer_claims_compaction_pages() {
+    let dir = TestDirectory::new("compact-assistance");
+    let mut config = variable::config(&dir, false);
+    config.log_size_budget = 1;
+    let store = common::varlen::VarStore::with_device(
+        config,
+        Arc::new(FileDevice::open(dir.0.join("log"), 16, 2).unwrap()),
+    );
+    {
+        let mut session = store.start_session();
+        for id in 0..3000 {
+            assert_eq!(
+                session.upsert(&mut variable::request(id, 1000), id),
+                Status::Ok
+            );
+        }
+    }
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let barrier = std::sync::Barrier::new(2);
+    let count = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let mut session = store.start_session();
+            common::varlen::SIZE_READS.with(|count| count.set(0));
+            barrier.wait();
+            let mut serial = 3000;
+            while !done.load(Ordering::Acquire) {
+                assert_eq!(
+                    session.upsert(&mut variable::request(2999, 1000), serial),
+                    Status::Ok
+                );
+                serial += 1;
+                session.refresh();
+            }
+            common::varlen::SIZE_READS.with(|count| count.get())
+        });
+        let mut session = store.start_session();
+        barrier.wait();
+        session.compact(Address::MAX, true, 1).unwrap();
+        done.store(true, Ordering::Release);
+        // The writer may still be finishing an epoch transition.
+        drop(session);
+        worker.join().unwrap()
+    });
+    assert!(
+        count > 0,
+        "writer did not inspect any claimed compaction records"
+    );
+    let mut session = store.start_session();
+    for id in 0..3000 {
+        assert_eq!(
+            variable::request(id, 0).read(&mut session, id).1,
+            vec![88; 1000]
+        );
+    }
+}
+
+struct BrokenDevice {
+    file: FileDevice,
+    broken: std::sync::atomic::AtomicBool,
+    corrupt: bool,
+    target: std::sync::atomic::AtomicU64,
+}
+impl device::Device for BrokenDevice {
+    unsafe fn write_async(
+        &self,
+        offset: u64,
+        data: *const u8,
+        len: usize,
+        done: device::WriteCallback,
+    ) {
+        // SAFETY: forwarding the caller's unchanged buffer and completion lifetime.
+        unsafe { self.file.write_async(offset, data, len, done) };
+    }
+    fn read_async(&self, offset: u64, len: usize, done: device::ReadCallback) {
+        if !self.broken.load(Ordering::Acquire) {
+            self.file.read_async(offset, len, done);
+            return;
+        }
+        if !self.corrupt {
+            done(Err(std::io::Error::other("injected read failure")));
+            return;
+        }
+        let target = self.target.load(Ordering::Acquire);
+        self.file.read_async(
+            offset,
+            len,
+            Box::new(move |result| {
+                done(result.map(|mut bytes| {
+                    if target >= offset && target + 4 <= offset + bytes.len() as u64 {
+                        let at = (target - offset) as usize;
+                        bytes[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+                    }
+                    bytes
+                }));
+            }),
+        );
+    }
+}
+
+#[test]
+fn compaction_does_not_truncate_after_read_failure_or_corruption() {
+    for corrupt in [false, true] {
+        let dir = TestDirectory::new(if corrupt {
+            "compact-corrupt"
+        } else {
+            "compact-io-error"
+        });
+        let device = Arc::new(BrokenDevice {
+            file: FileDevice::open(dir.0.join("log"), 16, 2).unwrap(),
+            broken: std::sync::atomic::AtomicBool::new(false),
+            corrupt,
+            target: std::sync::atomic::AtomicU64::new(0),
+        });
+        let store =
+            common::varlen::VarStore::with_device(variable::config(&dir, false), device.clone());
+        let mut session = store.start_session();
+        let begin = store.hlog.begin.load();
+        device
+            .target
+            .store(store.hlog.device_offset(begin) + 8, Ordering::Release);
+        for id in 0..600 {
+            assert_eq!(
+                session.upsert(&mut variable::request(id, 600), id),
+                Status::Ok
+            );
+        }
+        device.broken.store(true, Ordering::Release);
+        assert_eq!(
+            session.compact(Address::MAX, true, 2),
+            Err(if corrupt {
+                Status::Corruption
+            } else {
+                Status::IoError
+            })
+        );
+        assert_eq!(store.hlog.begin.load(), begin);
+    }
 }

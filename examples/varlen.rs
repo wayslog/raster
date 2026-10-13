@@ -251,6 +251,7 @@ fn main() {
     let store = FasterKv::<u64, BytesValue>::with_device(
         StoreConfig {
             index_buckets: 1 << 22,
+            log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
                 page_bits: 25,
