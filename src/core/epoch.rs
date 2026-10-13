@@ -21,6 +21,8 @@ struct Slot {
     used: AtomicBool,
     /// Last state-machine phase this slot's session finished.
     phase_finished: AtomicU8,
+    /// Sessions take part in phase barriers; internal helpers do not.
+    session: AtomicBool,
 }
 
 #[repr(align(64))]
@@ -67,6 +69,7 @@ impl LightEpoch {
                     local_epoch: AtomicU64::new(UNPROTECTED),
                     used: AtomicBool::new(false),
                     phase_finished: AtomicU8::new(NO_PHASE),
+                    session: AtomicBool::new(false),
                 })
                 .collect(),
             drain: (0..DRAIN_SLOTS)
@@ -78,15 +81,25 @@ impl LightEpoch {
         }
     }
 
+    /// Reserves a slot for a session, which takes part in phase barriers.
     pub fn reserve(&self) -> Option<SlotId> {
-        self.slots
-            .iter()
-            .position(|slot| {
-                slot.used
-                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-                    .is_ok()
-            })
-            .map(SlotId)
+        self.reserve_slot(true)
+    }
+
+    /// Reserves a slot for an internal helper (e.g. a log scanner) that only
+    /// needs memory protection and never acknowledges state-machine phases.
+    pub fn reserve_helper(&self) -> Option<SlotId> {
+        self.reserve_slot(false)
+    }
+
+    fn reserve_slot(&self, session: bool) -> Option<SlotId> {
+        let index = self.slots.iter().position(|slot| {
+            slot.used
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+        })?;
+        self.slots[index].session.store(session, Ordering::Release);
+        Some(SlotId(index))
     }
 
     pub fn release(&self, id: SlotId) {
@@ -215,7 +228,8 @@ impl LightEpoch {
             .phase_finished
             .store(phase, Ordering::SeqCst);
         self.slots.iter().all(|slot| {
-            slot.local_epoch.load(Ordering::SeqCst) == UNPROTECTED
+            !slot.session.load(Ordering::Acquire)
+                || slot.local_epoch.load(Ordering::SeqCst) == UNPROTECTED
                 || slot.phase_finished.load(Ordering::SeqCst) == phase
         })
     }

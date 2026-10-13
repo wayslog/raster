@@ -11,6 +11,7 @@ pub mod kv;
 mod pending;
 pub mod record;
 pub mod recovery;
+pub mod scan;
 pub mod session;
 pub mod state;
 pub mod store;
