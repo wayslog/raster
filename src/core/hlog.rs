@@ -248,6 +248,54 @@ impl HybridLog {
 }
 
 impl HybridLog {
+    /// Number of in-memory page frames.
+    pub fn frames(&self) -> u64 {
+        self.frames.len() as u64
+    }
+
+    /// Copies recovered bytes into the frame of `page`, starting at offset 0.
+    /// Only for recovery, before any session exists.
+    pub fn load_page(&self, page: u64, bytes: &[u8]) {
+        assert!(bytes.len() as u64 <= self.page_size);
+        let frame = self.frames[(page & self.frame_mask) as usize];
+        // SAFETY: no session exists during recovery, so the frame is unshared.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), frame, bytes.len()) };
+    }
+
+    /// Restores the in-memory window after recovery (FASTER `RecoveryReset`):
+    /// everything below `tail` is durable and read-only.
+    pub fn recovery_reset(&self, begin: Address, head: Address, tail: Address) {
+        for boundary in [&self.begin, &self.head, &self.safe_head] {
+            boundary.store(if std::ptr::eq(boundary, &self.begin) {
+                begin
+            } else {
+                head
+            });
+        }
+        for boundary in [&self.read_only, &self.safe_read_only, &self.flushed_until] {
+            boundary.store(tail);
+        }
+        self.tail.0.store(
+            (tail.page() << TAIL_OFFSET_BITS) | tail.offset(),
+            Ordering::Release,
+        );
+    }
+
+    /// Writes raw bytes to the log device (recovery only).
+    ///
+    /// # Safety
+    /// See [`Device::write_async`].
+    pub unsafe fn write_async(
+        &self,
+        offset: u64,
+        data: *const u8,
+        len: usize,
+        done: super::device::WriteCallback,
+    ) {
+        // SAFETY: forwarded from the caller.
+        unsafe { self.device.write_async(offset, data, len, done) };
+    }
+
     /// Byte offset of `address` on the device.
     #[inline(always)]
     pub fn device_offset(&self, address: Address) -> u64 {

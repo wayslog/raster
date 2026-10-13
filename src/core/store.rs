@@ -54,6 +54,8 @@ pub struct FasterKv<K: Key, V: Value> {
     pub(crate) checkpoint_locks: AtomicPtr<CheckpointLocks>,
     pub(crate) cpr: std::sync::Mutex<CprRun>,
     pub(crate) dirs: Option<CheckpointDirs>,
+    /// Persisted serial numbers of recovered sessions, by session GUID.
+    pub(crate) continue_tokens: std::sync::Mutex<std::collections::HashMap<super::guid::Guid, u64>>,
     _types: PhantomData<Types<K, V>>,
 }
 
@@ -105,6 +107,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             checkpoint_locks: AtomicPtr::new(std::ptr::null_mut()),
             cpr: Default::default(),
             dirs: config.checkpoint_dir.map(|root| CheckpointDirs { root }),
+            continue_tokens: Default::default(),
             _types: PhantomData,
         }
     }
@@ -363,9 +366,28 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         source: Option<&V>,
     ) -> Outcome {
         let key = *ctx.key();
-        let slot = self.index.find_or_create(key.hash());
+        let hash = key.hash();
+        let slot = self.index.find_or_create(hash);
         if slot.entry.address() != observed {
             return self.internal_rmw(slot_id, ctx, mode);
+        }
+        // The request released any checkpoint lock when it went pending, so
+        // apply the CPR rules again before appending: a v+1 copy must not
+        // overtake a still-pending v request on the same key.
+        let (gate, _guard) = if mode.phase == Phase::Rest {
+            (Gate::Normal, LockGuard::none())
+        } else {
+            let head = self.hlog.head.load();
+            self.cpr_gate(mode, hash, self.latest_version(observed, head))
+        };
+        match gate {
+            Gate::Normal | Gate::ForceRcu => {}
+            Gate::Shift => return Outcome::Shift,
+            Gate::RetryLater => {
+                return Outcome::RetryLater {
+                    marked: mode.holds_old,
+                };
+            }
         }
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);

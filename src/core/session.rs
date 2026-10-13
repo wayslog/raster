@@ -100,14 +100,18 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
-        self.serial = serial;
-        loop {
+        // Like FASTER, record the serial only after the operation ran: a CPR
+        // shift moves this session to v+1 first, and the checkpoint must not
+        // count this operation as part of version v.
+        let status = loop {
             match self.store.internal_read(ctx, self.mode()) {
-                Outcome::Done(status) => return status,
+                Outcome::Done(status) => break status,
                 Outcome::Shift => self.shift(),
-                outcome => return self.suspend(outcome, PendingRead { ctx: ctx.clone() }),
+                outcome => break self.suspend(outcome, PendingRead { ctx: ctx.clone() }),
             }
-        }
+        };
+        self.serial = serial;
+        status
     }
 
     #[inline]
@@ -115,14 +119,18 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: UpsertContext<K, V> + Clone + 'static,
     {
-        self.serial = serial;
-        loop {
+        // Like FASTER, record the serial only after the operation ran: a CPR
+        // shift moves this session to v+1 first, and the checkpoint must not
+        // count this operation as part of version v.
+        let status = loop {
             match self.store.internal_upsert(self.slot(), ctx, self.mode()) {
-                Outcome::Done(status) => return status,
+                Outcome::Done(status) => break status,
                 Outcome::Shift => self.shift(),
-                outcome => return self.suspend(outcome, PendingUpsert { ctx: ctx.clone() }),
+                outcome => break self.suspend(outcome, PendingUpsert { ctx: ctx.clone() }),
             }
-        }
+        };
+        self.serial = serial;
+        status
     }
 
     #[inline]
@@ -130,10 +138,12 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: RmwContext<K, V> + Clone + 'static,
     {
-        self.serial = serial;
-        loop {
+        // Like FASTER, record the serial only after the operation ran: a CPR
+        // shift moves this session to v+1 first, and the checkpoint must not
+        // count this operation as part of version v.
+        let status = loop {
             match self.store.internal_rmw(self.slot(), ctx, self.mode()) {
-                Outcome::Done(status) => return status,
+                Outcome::Done(status) => break status,
                 Outcome::Shift => self.shift(),
                 outcome => {
                     let observed = match outcome {
@@ -144,10 +154,12 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                         ctx: ctx.clone(),
                         observed,
                     };
-                    return self.suspend(outcome, op);
+                    break self.suspend(outcome, op);
                 }
             }
-        }
+        };
+        self.serial = serial;
+        status
     }
 
     #[inline]
@@ -155,14 +167,18 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: DeleteContext<K> + Clone + 'static,
     {
-        self.serial = serial;
-        loop {
+        // Like FASTER, record the serial only after the operation ran: a CPR
+        // shift moves this session to v+1 first, and the checkpoint must not
+        // count this operation as part of version v.
+        let status = loop {
             match self.store.internal_delete(self.slot(), ctx, self.mode()) {
-                Outcome::Done(status) => return status,
+                Outcome::Done(status) => break status,
                 Outcome::Shift => self.shift(),
-                outcome => return self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
+                outcome => break self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
             }
-        }
+        };
+        self.serial = serial;
+        status
     }
 
     /// A CPR shift means the global state already reached v+1: catch up.

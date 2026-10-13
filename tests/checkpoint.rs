@@ -122,3 +122,221 @@ fn full_checkpoint_completes_under_concurrent_rmw() {
     drop(store);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[derive(Clone)]
+struct Get {
+    key: u64,
+    out: std::rc::Rc<std::cell::Cell<Option<u64>>>,
+}
+impl ReadContext<u64, AtomicU64> for Get {
+    fn key(&self) -> &u64 {
+        &self.key
+    }
+    fn get(&mut self, value: &AtomicU64) {
+        self.out.set(Some(value.load(Ordering::Relaxed)));
+    }
+    fn on_complete(&mut self, status: Status) {
+        match status {
+            Status::Ok => {}
+            Status::NotFound => self.out.set(Some(0)),
+            other => panic!("pending read of key {} finished with {other:?}", self.key),
+        }
+    }
+}
+
+fn read_all(store: &Store, keys: u64) -> Vec<u64> {
+    let mut session = store.start_session();
+    let cells: Vec<_> = (0..keys)
+        .map(|_| std::rc::Rc::new(std::cell::Cell::new(None)))
+        .collect();
+    for key in 0..keys {
+        let mut get = Get {
+            key,
+            out: cells[key as usize].clone(),
+        };
+        match session.read(&mut get, key) {
+            Status::Ok | Status::Pending => {}
+            Status::NotFound => cells[key as usize].set(Some(0)),
+            other => panic!("read {other:?}"),
+        }
+        if key % 256 == 0 {
+            session.complete_pending(false);
+        }
+    }
+    assert!(session.complete_pending(true));
+    cells
+        .iter()
+        .map(|c| c.get().expect("every read completes"))
+        .collect()
+}
+
+fn key_of(t: u64, i: u64, keys: u64) -> u64 {
+    (i * 7 + t) % keys
+}
+
+#[test]
+fn recovery_restores_exactly_each_session_prefix() {
+    recover_prefix(4, "ckpt-recover-4");
+}
+
+#[test]
+fn recovery_restores_exactly_one_session_prefix() {
+    recover_prefix(1, "ckpt-recover-1");
+}
+
+fn recover_prefix(threads: u64, name: &str) {
+    let dir = temp_dir(name);
+    const KEYS: u64 = 60_000;
+    let (token, guids) = {
+        let store = store(&dir);
+        let stop = AtomicBool::new(false);
+        let started = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads)
+                .map(|t| {
+                    let (store, stop, started) = (&store, &stop, &started);
+                    scope.spawn(move || {
+                        let mut session = store.start_session();
+                        started.fetch_add(1, Ordering::SeqCst);
+                        let mut i = 0u64;
+                        while !stop.load(Ordering::SeqCst) || i < 200_000 {
+                            i += 1;
+                            let status = session.rmw(
+                                &mut Incr {
+                                    key: key_of(t, i, KEYS),
+                                },
+                                i,
+                            );
+                            assert!(matches!(status, Status::Ok | Status::Pending));
+                            if i.is_multiple_of(128) {
+                                session.complete_pending(false);
+                            }
+                        }
+                        assert!(session.complete_pending(true));
+                        session.guid()
+                    })
+                })
+                .collect();
+            while started.load(Ordering::SeqCst) != threads as usize {
+                std::thread::yield_now();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            let token = store.checkpoint(None, None).expect("checkpoint starts");
+            while store.system_state().phase != Phase::Rest {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            // Keep running past the checkpoint; recovery must drop this work.
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            stop.store(true, Ordering::SeqCst);
+            let guids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+            (token, guids)
+        })
+    };
+
+    let store = store(&dir);
+    let info = store.recover(token, token).expect("recovery succeeds");
+    assert_eq!(info.version, 1);
+    assert_eq!(store.system_state().version, 2);
+    let mut expected = vec![0u64; KEYS as usize];
+    let mut serials = Vec::new();
+    for (t, guid) in guids.iter().enumerate() {
+        assert!(info.sessions.contains(guid));
+        let (_session, serial) = store.continue_session(*guid).expect("session recovered");
+        serials.push(serial);
+        assert!(
+            serial > 0,
+            "session {t} made progress before the checkpoint"
+        );
+        for i in 1..=serial {
+            expected[key_of(t as u64, i, KEYS) as usize] += 1;
+        }
+    }
+    assert!(store.continue_session(guids[0]).is_none(), "resumed once");
+    let actual = read_all(&store, KEYS);
+    let wrong = (0..KEYS as usize)
+        .filter(|&k| actual[k] != expected[k])
+        .count();
+    if wrong > 0 {
+        let more = (0..KEYS as usize)
+            .filter(|&k| actual[k] > expected[k])
+            .count();
+        let samples: Vec<_> = (0..KEYS as usize)
+            .filter(|&k| actual[k] != expected[k])
+            .take(8)
+            .map(|k| (k, expected[k], actual[k]))
+            .collect();
+        eprintln!(
+            "wrong={wrong} more={more} less={} samples(key,exp,act)={samples:?}",
+            wrong - more
+        );
+        dump_key(&dir, token, samples[0].0 as u64, &guids, &serials, KEYS);
+    }
+    assert_eq!(wrong, 0, "keys whose value is not the recovered prefix");
+
+    // The recovered store keeps working.
+    {
+        let mut session = store.start_session();
+        for key in 0..1000 {
+            let _ = session.rmw(&mut Incr { key }, key + 1);
+        }
+        assert!(session.complete_pending(true));
+    }
+    let after = read_all(&store, 1000);
+    assert!((0..1000).all(|k| after[k] == expected[k] + 1));
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Diagnostic: prints every log record of `key` from the segment file.
+fn dump_key(
+    dir: &std::path::Path,
+    token: raster::core::guid::Guid,
+    key: u64,
+    guids: &[raster::core::guid::Guid],
+    serials: &[u64],
+    keys: u64,
+) {
+    use raster::core::checkpoint::{CheckpointDirs, IndexMetadata, LogMetadata};
+    let dirs = CheckpointDirs {
+        root: dir.join("checkpoints"),
+    };
+    let index = IndexMetadata::read(&dirs.index(token)).unwrap();
+    let log = LogMetadata::read(&dirs.log(token)).unwrap();
+    let addr = |a: raster::core::address::Address| (a.page(), a.offset());
+    eprintln!(
+        "start={:?} final={:?} serials={serials:?}",
+        addr(index.checkpoint_start_address),
+        addr(log.final_address)
+    );
+    for (t, &serial) in serials.iter().enumerate().take(guids.len()) {
+        let ops: Vec<u64> = (1..=serial + 20_000)
+            .filter(|&i| key_of(t as u64, i, keys) == key)
+            .collect();
+        eprintln!("  thread {t} ops on key {key}: {ops:?}");
+    }
+    let bytes = std::fs::read(dir.join("log").join("log.0")).unwrap();
+    let page_size = 1usize << 16;
+    for page in 0..bytes.len() / page_size + 1 {
+        let mut offset = if page == 0 { 64 } else { 0 };
+        while offset + 24 <= page_size && page * page_size + offset + 24 <= bytes.len() {
+            let at = page * page_size + offset;
+            let header = u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
+            if header == 0 {
+                break;
+            }
+            let k = u64::from_le_bytes(bytes[at + 8..at + 16].try_into().unwrap());
+            if k == key {
+                let value = u64::from_le_bytes(bytes[at + 16..at + 24].try_into().unwrap());
+                let prev = header & ((1 << 48) - 1);
+                eprintln!(
+                    "  record ({page},{offset}) v={} invalid={} prev=({},{}) value={value}",
+                    (header >> 48) & 0x1fff,
+                    (header >> 61) & 1,
+                    prev >> 25,
+                    prev & ((1 << 25) - 1)
+                );
+            }
+            offset += 24;
+        }
+    }
+}
