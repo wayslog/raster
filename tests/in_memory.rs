@@ -222,3 +222,142 @@ fn rmw_in_fuzzy_region_retries_after_every_session_refreshes() {
     assert!(session.complete_pending(true));
     assert_eq!(read(&mut session, 0), Some(15));
 }
+mod common;
+use common::varlen::{VarKey, VarRequest, VarValue};
+
+fn variable_store<const C: bool>() -> FasterKv<VarKey<C>, VarValue> {
+    FasterKv::new(StoreConfig {
+        index_buckets: 256,
+        checkpoint_dir: None,
+        log: LogConfig {
+            page_bits: 16,
+            memory_pages: 256,
+            mutable_fraction: 0.9,
+        },
+    })
+}
+
+fn variable_keys<const C: bool>() {
+    let store = variable_store::<C>();
+    let mut session = store.start_session();
+    for id in 0..500 {
+        let mut op = VarRequest::<C>::new(id, 8 + id as usize % 701, id as usize % 513);
+        assert_eq!(session.upsert(&mut op, id), Status::Ok);
+    }
+    for id in 0..500 {
+        let mut op = VarRequest::<C>::new(id, 8 + id as usize % 701, 0);
+        let (status, bytes, pending) = op.read(&mut session, id);
+        assert_eq!(status, Status::Ok);
+        assert_eq!(bytes, vec![88; id as usize % 513]);
+        assert!(!pending);
+    }
+}
+
+#[test]
+fn upsert_read_variable_length_keys() {
+    variable_keys::<false>();
+}
+#[test]
+fn upsert_read_variable_keys_with_dummy_hash() {
+    variable_keys::<true>();
+}
+
+#[test]
+fn upsert_read_resize_value_concurrent() {
+    let store = variable_store::<false>();
+    std::thread::scope(|scope| {
+        for worker in 0..4 {
+            let store = &store;
+            scope.spawn(move || {
+                let mut session = store.start_session();
+                for round in 0..8 {
+                    for id in 0..100 {
+                        let len = [7, 11, 0, 257, 19, 513, 2, 127][round];
+                        let mut op = VarRequest::new(id + worker * 100, 11 + id as usize % 31, len);
+                        op.data.fill((round + 1) as u8);
+                        assert_eq!(
+                            session.upsert(&mut op, (round as u64 * 100 + id) * 2),
+                            Status::Ok
+                        );
+                        let (status, bytes, pending) =
+                            op.read(&mut session, (round as u64 * 100 + id) * 2 + 1);
+                        assert_eq!(status, Status::Ok);
+                        assert_eq!(bytes, vec![(round + 1) as u8; len]);
+                        assert!(!pending);
+                    }
+                    session.refresh();
+                }
+            });
+        }
+    });
+}
+
+fn variable_rmw(grow_string: bool) {
+    let store = variable_store::<false>();
+    const THREADS: usize = 4;
+    const ROUNDS: usize = 20;
+    const KEYS: usize = 40;
+    std::thread::scope(|scope| {
+        for worker in 0..THREADS {
+            let store = &store;
+            scope.spawn(move || {
+                let mut session = store.start_session();
+                for round in 0..ROUNDS {
+                    for id in 0..KEYS {
+                        let mut op = VarRequest::new(id as u64, 8 + id % 19, 0);
+                        op.increment = u64::from(!grow_string);
+                        op.suffix = if grow_string {
+                            vec![b'a' + worker as u8]
+                        } else {
+                            vec![88; 8]
+                        };
+                        let status = session.rmw(&mut op, (round * KEYS + id) as u64);
+                        assert!(matches!(status, Status::Ok | Status::Pending));
+                    }
+                    session.complete_pending(false);
+                }
+                assert!(session.complete_pending(true));
+            });
+        }
+    });
+    let mut session = store.start_session();
+    for id in 0..KEYS {
+        let (status, bytes, pending) =
+            VarRequest::new(id as u64, 8 + id % 19, 0).read(&mut session, id as u64);
+        assert_eq!(status, Status::Ok);
+        assert!(!pending);
+        if grow_string {
+            assert_eq!(bytes.len(), THREADS * ROUNDS);
+            for worker in 0..THREADS {
+                assert_eq!(
+                    bytes.iter().filter(|&&b| b == b'a' + worker as u8).count(),
+                    ROUNDS
+                );
+            }
+        } else {
+            assert_eq!(
+                u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+                (THREADS * ROUNDS) as u64
+            );
+            assert_eq!(bytes.len(), 8 + 8 * THREADS * ROUNDS);
+        }
+    }
+}
+#[test]
+fn rmw_resize_value_concurrent() {
+    variable_rmw(false);
+}
+#[test]
+fn rmw_grow_string_concurrent() {
+    variable_rmw(true);
+}
+
+#[test]
+fn variable_record_larger_than_page_is_rejected() {
+    let store = variable_store::<false>();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut session = store.start_session();
+        let _ = session.upsert(&mut VarRequest::new(0, 8, 1 << 16), 0);
+    }));
+    assert!(result.is_err());
+}
