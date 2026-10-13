@@ -4,6 +4,7 @@ pub mod checkpoint_locks;
 pub mod cpr;
 pub mod device;
 pub mod epoch;
+pub mod gc;
 pub mod guid;
 pub mod hlog;
 pub mod index;

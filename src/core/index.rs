@@ -196,6 +196,46 @@ impl HashIndex {
     }
 }
 
+/// Buckets per garbage-collection or growth chunk (FASTER `kHashTableChunkSize`).
+pub const CHUNK_BUCKETS: u64 = 16_384;
+
+impl HashIndex {
+    /// Number of chunks a whole-table pass is split into.
+    pub fn chunks(&self) -> u64 {
+        self.buckets().div_ceil(CHUNK_BUCKETS)
+    }
+
+    /// Clears entries of chunk `chunk` that point below `begin`
+    /// (FASTER `GarbageCollect`). An entry a writer replaced meanwhile is
+    /// left alone; entries being created or still tentative are skipped.
+    pub fn garbage_collect_chunk(&self, chunk: u64, begin: Address) {
+        let start = (chunk * CHUNK_BUCKETS) as usize;
+        let end = (start + CHUNK_BUCKETS as usize).min(self.buckets.len());
+        for bucket in &self.buckets[start..end] {
+            let mut current = Some(bucket);
+            while let Some(bucket) = current {
+                for atomic in &bucket.entries {
+                    let entry = Entry(atomic.load(Ordering::Acquire));
+                    let address = entry.address();
+                    if !entry.unused()
+                        && !entry.tentative()
+                        && address != Address::INVALID
+                        && address < begin
+                    {
+                        let _ = atomic.compare_exchange(
+                            entry.0,
+                            0,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        );
+                    }
+                }
+                current = Self::next(bucket);
+            }
+        }
+    }
+}
+
 const CHECKPOINT_MAGIC: u64 = 0x5241_5354_4552_4854; // "RASTERHT"
 
 impl HashIndex {

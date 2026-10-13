@@ -20,6 +20,13 @@ pub trait Device: Send + Sync + 'static {
     /// `data..data + len` must stay valid and unmodified until `done` runs.
     unsafe fn write_async(&self, offset: u64, data: *const u8, len: usize, done: WriteCallback);
     fn read_async(&self, offset: u64, len: usize, done: ReadCallback);
+    /// Drops storage below `offset`; `done` receives the offset actually
+    /// truncated to (it may be lower, e.g. a segment boundary). Callers must
+    /// ensure no I/O below `offset` is in flight.
+    fn truncate(&self, offset: u64, done: Box<dyn FnOnce(u64) + Send>) {
+        let _ = offset;
+        done(0);
+    }
 }
 
 /// Discards writes; reads complete with an error because nothing was stored.
@@ -256,6 +263,19 @@ impl Device for FileDevice {
                 file.write_all_at(&bytes[from..from + piece], at)
             }));
         }));
+    }
+
+    fn truncate(&self, offset: u64, done: Box<dyn FnOnce(u64) + Send>) {
+        let first_kept = offset >> self.inner.segment_bits;
+        let mut segments = self.inner.segments.lock().unwrap();
+        let mut index = 0;
+        while index < first_kept {
+            segments.remove(&index);
+            let _ = std::fs::remove_file(self.inner.directory.join(format!("log.{index}")));
+            index += 1;
+        }
+        drop(segments);
+        done(first_kept << self.inner.segment_bits);
     }
 
     fn read_async(&self, offset: u64, len: usize, done: ReadCallback) {

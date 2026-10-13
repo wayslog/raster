@@ -44,6 +44,8 @@ pub struct Session<'a, K: Key, V: Value> {
     responses: Arc<Mutex<Vec<Response>>>,
     /// Pending operations to re-run after the next refresh.
     retry: Vec<u64>,
+    /// Requests with smaller ids were issued before the current GC started.
+    gc_barrier: u64,
 }
 
 impl<'a, K: Key, V: Value> Session<'a, K, V> {
@@ -64,6 +66,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             pending: HashMap::new(),
             responses: Arc::default(),
             retry: Vec::new(),
+            gc_barrier: 0,
         }
     }
 
@@ -335,6 +338,19 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                         serial: self.checkpoint_serial,
                         version: current.version - 1,
                     });
+                    finish(store);
+                }
+                Phase::GcIoPending if !finished => {
+                    if entering {
+                        self.gc_barrier = self.next_id;
+                    }
+                    // No I/O issued before the shift may still be in flight.
+                    if !self.pending.keys().any(|&id| id < self.gc_barrier) {
+                        finish(store);
+                    }
+                }
+                Phase::GcInProgress if !finished => {
+                    store.gc_collect_all();
                     finish(store);
                 }
                 Phase::PersistenceCallback if !finished => {
