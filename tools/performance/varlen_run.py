@@ -6,6 +6,7 @@ Only benchmark-local paths are supplied by the caller; no host information is sa
 """
 import hashlib
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -16,6 +17,11 @@ out, cpp, rust, log_root = map(Path, sys.argv[1:5])
 out.mkdir(parents=True, exist_ok=False)
 binaries = {"cpp": cpp.resolve(), "rust": rust.resolve()}
 (out / "hashes.json").write_text(json.dumps({name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in binaries.items()}, indent=2))
+preload = os.environ.get("LD_PRELOAD", "")
+if preload:
+    libraries = [Path(name) for name in preload.replace(":", " ").split()]
+    (out / "preload-hashes.json").write_text(json.dumps(
+        {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in libraries}, indent=2))
 selected = sys.argv[5] if len(sys.argv) > 5 else None
 summary = []
 for scene, keys in (("resident", 8192), ("disk", 16_000_000)):

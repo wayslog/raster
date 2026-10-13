@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReadCacheConfig {
+    /// Allocation hint; cache frames are currently always allocated eagerly.
+    pub pre_allocate: bool,
     /// Geometry of the cache log. Records in its read-only part are copied
     /// to its tail when read again, so hot records survive eviction.
     pub log: LogConfig,
@@ -27,6 +29,7 @@ impl Default for ReadCacheConfig {
     /// FASTER's defaults: 256 MiB, 90% mutable.
     fn default() -> Self {
         Self {
+            pre_allocate: true,
             log: LogConfig {
                 page_bits: 25,
                 memory_pages: 8,

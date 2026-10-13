@@ -57,6 +57,10 @@ fn small_store(index_buckets: u64) -> Store {
     Store::new(StoreConfig {
         index_buckets,
         log_size_budget: 0,
+        filepath: None,
+        pre_allocate: true,
+        read_cache: None,
+        auto_compaction: None,
         checkpoint_dir: None,
         log: LogConfig {
             page_bits: 16,
@@ -199,6 +203,10 @@ fn concurrent_upserts_on_new_keys_keep_one_chain_per_key() {
 fn rmw_in_fuzzy_region_retries_after_every_session_refreshes() {
     let store = Store::new(StoreConfig {
         index_buckets: 1 << 10,
+        filepath: None,
+        pre_allocate: true,
+        read_cache: None,
+        auto_compaction: None,
         log_size_budget: 0,
         checkpoint_dir: None,
         log: LogConfig {
@@ -230,6 +238,10 @@ use common::varlen::{VarKey, VarRequest, VarValue};
 fn variable_store<const C: bool>() -> FasterKv<VarKey<C>, VarValue> {
     FasterKv::new(StoreConfig {
         index_buckets: 256,
+        filepath: None,
+        pre_allocate: true,
+        read_cache: None,
+        auto_compaction: None,
         log_size_budget: 0,
         checkpoint_dir: None,
         log: LogConfig {

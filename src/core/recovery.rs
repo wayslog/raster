@@ -105,11 +105,17 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         end: Address,
         version: u32,
     ) -> Result<(), Status> {
-        let bytes = self.read_page_prefix(page, end)?;
-        let mut aligned =
-            AlignedBuffer::new(bytes.len().next_multiple_of(super::device::SECTOR as usize));
-        aligned.as_mut()[..bytes.len()].copy_from_slice(&bytes);
-        let bytes = &mut aligned.as_mut()[..bytes.len()];
+        let mut input = self.read_page_prefix(page, end)?;
+        let mut aligned = None;
+        let bytes = if input.as_ptr().cast::<u64>().is_aligned() {
+            input.as_mut_slice()
+        } else {
+            let buffer = aligned.insert(AlignedBuffer::new(
+                input.len().next_multiple_of(super::device::SECTOR as usize),
+            ));
+            buffer.as_mut()[..input.len()].copy_from_slice(&input);
+            &mut buffer.as_mut()[..input.len()]
+        };
         let mut offset = if start.page() == page {
             start.offset() as usize
         } else {
