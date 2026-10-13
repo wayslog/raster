@@ -164,6 +164,24 @@ impl<K, V> Record<K, V> {
         };
         self.header_word().store(info.0, Ordering::Release);
     }
+    /// Initializes an unpublished record as a copy of `source` with header `info`.
+    ///
+    /// # Safety
+    /// Same as [`Record::initialize`]; `source` must be a complete record
+    /// whose value is not being updated.
+    #[inline]
+    pub unsafe fn initialize_copy(&self, info: RecordInfo, source: &Record<K, V>) {
+        // SAFETY: both records span `Layout::SIZE` aligned bytes; exclusive
+        // destination per contract.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                source.ptr.add(8),
+                self.ptr.add(8),
+                Layout::<K, V>::SIZE - 8,
+            )
+        };
+        self.header_word().store(info.0, Ordering::Release);
+    }
     /// Initializes an unpublished record whose value is never read.
     ///
     /// # Safety

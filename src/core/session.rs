@@ -128,10 +128,15 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
                 outcome => {
+                    let observed = match outcome {
+                        Outcome::Disk { observed, .. } => observed,
+                        _ => Address::default(),
+                    };
                     return self.suspend(
                         outcome,
                         PendingRead {
                             ctx: ctx.clone(),
+                            observed,
                             truncations: self
                                 .store
                                 .truncations

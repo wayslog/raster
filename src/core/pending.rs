@@ -114,6 +114,9 @@ fn lookup<'r, K: Key, V: Value>(
 
 pub(crate) struct PendingRead<C> {
     pub ctx: C,
+    /// Index entry seen when the read went to the device; the record found
+    /// is cached only if the entry is still unchanged.
+    pub observed: Address,
     /// Begin-address shifts seen when the read was issued. If the chain walk
     /// runs off the log after a shift, compaction may have moved the record
     /// to the tail, so the read restarts from the index.
@@ -147,6 +150,11 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
             Lookup::Found(_, true) | Lookup::Missing => Status::NotFound,
             Lookup::Found(value, false) => {
                 self.ctx.get(value);
+                if store.read_cache.is_some()
+                    && let Some(record) = disk.as_mut().and_then(DiskRecord::record::<K, V>)
+                {
+                    let _ = store.insert_cached(self.observed, &record);
+                }
                 Status::Ok
             }
             Lookup::Previous(address) => {
@@ -163,6 +171,9 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
 
     fn retry(&mut self, store: &FasterKv<K, V>, _: &SlotId, mode: OpMode) -> Step {
         let outcome = store.internal_read(&mut self.ctx, mode);
+        if let Outcome::Disk { observed, .. } = outcome {
+            self.observed = observed;
+        }
         Step::from_outcome(outcome, |status| self.ctx.on_complete(status))
     }
 }

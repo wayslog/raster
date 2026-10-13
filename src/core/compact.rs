@@ -35,7 +35,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let hash = request.key.hash();
         loop {
             let slot = self.index.find_or_create(hash);
-            let entry = slot.entry.address();
+            let entry = self.skip_and_invalidate(slot.entry.address(), &request.key);
             let head = self.hlog.head.load();
             let (gate, _guard) = if mode.phase == super::state::Phase::Rest {
                 (super::store::Gate::Normal, super::store::LockGuard::none())

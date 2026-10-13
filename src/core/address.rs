@@ -1,7 +1,9 @@
 //! Logical hybrid-log addresses (FASTER `address.h`).
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 48-bit logical address: `page:23 | offset:25`.
+/// 48-bit logical address: `page:23 | offset:25`. The top bit of the page
+/// field marks a read-cache address (FASTER `kReadCacheMask`), so hybrid-log
+/// pages stay below 2^22.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Address(u64);
@@ -11,8 +13,11 @@ impl Address {
     pub const PAGE_BITS: u32 = 23;
     pub const ADDRESS_BITS: u32 = Self::OFFSET_BITS + Self::PAGE_BITS;
     pub const MAX_OFFSET: u64 = (1 << Self::OFFSET_BITS) - 1;
-    pub const MAX_PAGE: u64 = (1 << Self::PAGE_BITS) - 1;
-    pub const MAX: Address = Address((1 << Self::ADDRESS_BITS) - 1);
+    pub const MAX_PAGE: u64 = (1 << (Self::PAGE_BITS - 1)) - 1;
+    /// Largest hybrid-log address.
+    pub const MAX: Address = Address(Self::READ_CACHE - 1);
+    /// Set on index entries and addresses that point into the read cache.
+    pub const READ_CACHE: u64 = 1 << (Self::ADDRESS_BITS - 1);
     /// Marks an index slot that is in use but has no record yet.
     pub const INVALID: Address = Address(1);
 
@@ -23,7 +28,7 @@ impl Address {
     }
     #[inline(always)]
     pub const fn from_control(control: u64) -> Self {
-        Address(control & Self::MAX.0)
+        Address(control & ((1 << Self::ADDRESS_BITS) - 1))
     }
     #[inline(always)]
     pub const fn control(self) -> u64 {
@@ -36,6 +41,20 @@ impl Address {
     #[inline(always)]
     pub const fn offset(self) -> u64 {
         self.0 & Self::MAX_OFFSET
+    }
+    #[inline(always)]
+    pub const fn in_read_cache(self) -> bool {
+        self.0 & Self::READ_CACHE != 0
+    }
+    /// The read-cache log address this entry address refers to.
+    #[inline(always)]
+    pub const fn read_cache_address(self) -> Self {
+        Address(self.0 & !Self::READ_CACHE)
+    }
+    /// Tags a read-cache log address for use in index entries.
+    #[inline(always)]
+    pub const fn to_read_cache(self) -> Self {
+        Address(self.0 | Self::READ_CACHE)
     }
     #[inline(always)]
     pub const fn add(self, delta: u64) -> Self {
@@ -78,6 +97,10 @@ mod tests {
         let a = Address::new(5, 1234);
         assert_eq!((a.page(), a.offset()), (5, 1234));
         assert_eq!(Address::from_control(a.control() | (1 << 60)), a);
+        let cached = a.to_read_cache();
+        assert!(cached.in_read_cache() && !a.in_read_cache());
+        assert_eq!(cached.read_cache_address(), a);
+        assert!(!Address::new(Address::MAX_PAGE, Address::MAX_OFFSET).in_read_cache());
     }
 
     #[test]

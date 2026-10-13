@@ -63,6 +63,15 @@ impl Slot<'_> {
         self.atomic.store(entry.0, Ordering::Release);
     }
 
+    /// The slot with its current entry.
+    #[inline]
+    pub fn reload(&self) -> Self {
+        Self {
+            atomic: self.atomic,
+            entry: Entry(self.atomic.load(Ordering::Acquire)),
+        }
+    }
+
     /// Publishes `address` if the slot still holds the observed entry.
     #[inline(always)]
     pub fn try_update(&self, address: Address) -> bool {
@@ -208,7 +217,8 @@ impl Table {
     /// Clears entries of chunk `chunk` that point below `begin`
     /// (FASTER `GarbageCollect`). An entry a writer replaced meanwhile is
     /// left alone; entries being created or still tentative are skipped.
-    pub fn garbage_collect_chunk(&self, chunk: u64, begin: Address) {
+    /// `resolve` maps a read-cache address to the log address behind it.
+    pub fn garbage_collect_chunk(&self, chunk: u64, begin: Address, resolve: Resolve<'_>) {
         let start = (chunk * CHUNK_BUCKETS) as usize;
         let end = (start + CHUNK_BUCKETS as usize).min(self.buckets.len());
         for bucket in &self.buckets[start..end] {
@@ -216,7 +226,10 @@ impl Table {
             while let Some(bucket) = current {
                 for atomic in &bucket.entries {
                     let entry = Entry(atomic.load(Ordering::Acquire));
-                    let address = entry.address();
+                    let mut address = entry.address();
+                    if address.in_read_cache() {
+                        address = resolve(address);
+                    }
                     if !entry.unused()
                         && !entry.tentative()
                         && address != Address::INVALID
@@ -236,6 +249,20 @@ impl Table {
     }
 }
 
+/// Maps a read-cache entry address to the hybrid-log address behind it. Only
+/// called with read-cache addresses, under epoch protection.
+pub type Resolve<'a> = &'a dyn Fn(Address) -> Address;
+
+/// `entry` with any read-cache address replaced by the log address behind it.
+#[inline(always)]
+fn resolved(entry: Entry, resolve: Resolve<'_>) -> Entry {
+    if entry.address().in_read_cache() {
+        Entry::new(resolve(entry.address()), entry.tag(), entry.tentative())
+    } else {
+        entry
+    }
+}
+
 const CHECKPOINT_MAGIC: u64 = 0x5241_5354_4552_4854; // "RASTERHT"
 
 impl Table {
@@ -248,8 +275,9 @@ impl Table {
     /// `<ofb stem>.<part>.dat`, with links stored as 1-based positions in that
     /// file. Concurrent updates may or may not
     /// be captured; recovery replays the log from the checkpoint start to
-    /// repair the difference. Returns the number of overflow buckets written.
-    pub fn write_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<u64> {
+    /// repair the difference. Read-cache entries are written as the log
+    /// address behind them. Returns the number of overflow buckets written.
+    pub fn write_checkpoint(&self, ht: &Path, ofb: &Path, resolve: Resolve<'_>) -> io::Result<u64> {
         use std::os::unix::fs::FileExt;
         let parts = self.checkpoint_parts();
         let ht = File::create(ht)?;
@@ -259,7 +287,7 @@ impl Table {
         }
         ht.write_all_at(&header, 0)?;
         let total = (0..parts)
-            .map(|part| self.write_part(&ht, &Self::overflow_path(ofb, part), part, parts))
+            .map(|part| self.write_part(&ht, &Self::overflow_path(ofb, part), part, parts, resolve))
             .sum::<io::Result<u64>>()?;
         ht.sync_all()?;
         Ok(total)
@@ -279,21 +307,27 @@ impl Table {
         ofb.with_file_name(format!("{stem}.{part}.dat"))
     }
 
-    fn write_part(&self, ht: &File, ofb: &Path, part: usize, parts: usize) -> io::Result<u64> {
+    fn write_part(
+        &self,
+        ht: &File,
+        ofb: &Path,
+        part: usize,
+        parts: usize,
+        resolve: Resolve<'_>,
+    ) -> io::Result<u64> {
         use std::os::unix::fs::FileExt;
         const CHUNK_BUCKETS: usize = 1 << 14;
-        #[inline(always)]
-        fn push(out: &mut Vec<u64>, bucket: &Bucket, has_next: bool, count: &mut u64) {
+        let push = |out: &mut Vec<u64>, bucket: &Bucket, has_next: bool, count: &mut u64| {
             let mut words = [0u64; ENTRIES + 1];
             for (word, atomic) in words.iter_mut().zip(&bucket.entries) {
-                *word = atomic.load(Ordering::Relaxed);
+                *word = resolved(Entry(atomic.load(Ordering::Relaxed)), resolve).0;
             }
             if has_next {
                 *count += 1;
                 words[ENTRIES] = *count;
             }
             out.extend_from_slice(&words);
-        }
+        };
         let mut ofb_out = File::create(ofb)?;
         let range = self.part_range(part, parts);
         let mut main = Vec::with_capacity(CHUNK_BUCKETS * 8);
@@ -419,7 +453,14 @@ pub(crate) enum Route {
 impl Table {
     /// Splits chunk `chunk` of this table into `new`, which has twice as many
     /// buckets (FASTER `Grow`). No operation may use either table meanwhile.
-    pub(crate) fn split_chunk(&self, new: &Table, chunk: u64, route: &dyn Fn(Address) -> Route) {
+    /// Read-cache entries are replaced by the log address behind them.
+    pub(crate) fn split_chunk(
+        &self,
+        new: &Table,
+        chunk: u64,
+        route: &dyn Fn(Address) -> Route,
+        resolve: Resolve<'_>,
+    ) {
         let old_len = self.buckets.len();
         let start = (chunk * CHUNK_BUCKETS) as usize;
         let end = (start + CHUNK_BUCKETS as usize).min(old_len);
@@ -429,7 +470,11 @@ impl Table {
             while let Some(bucket) = current {
                 for atomic in &bucket.entries {
                     let entry = Entry(atomic.load(Ordering::Acquire));
-                    if entry.unused() || entry.tentative() || entry.address() == Address::INVALID {
+                    if entry.unused() || entry.tentative() {
+                        continue;
+                    }
+                    let entry = resolved(entry, resolve);
+                    if entry.address() == Address::INVALID {
                         continue;
                     }
                     match route(entry.address()) {
@@ -564,12 +609,12 @@ impl HashIndex {
         self.table().chunks()
     }
 
-    pub fn garbage_collect_chunk(&self, chunk: u64, begin: Address) {
-        self.table().garbage_collect_chunk(chunk, begin)
+    pub fn garbage_collect_chunk(&self, chunk: u64, begin: Address, resolve: Resolve<'_>) {
+        self.table().garbage_collect_chunk(chunk, begin, resolve)
     }
 
-    pub fn write_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<u64> {
-        self.table().write_checkpoint(ht, ofb)
+    pub fn write_checkpoint(&self, ht: &Path, ofb: &Path, resolve: Resolve<'_>) -> io::Result<u64> {
+        self.table().write_checkpoint(ht, ofb, resolve)
     }
 
     /// Loads a checkpoint, first resizing the (empty) table to the
@@ -672,7 +717,7 @@ mod checkpoint_tests {
         index.table().buckets[0].entries[0]
             .store(Entry::new(Address::INVALID, 99, true).0, Ordering::Release);
         let (ht, ofb) = (dir.join("ht.dat"), dir.join("ofb.dat"));
-        assert!(index.write_checkpoint(&ht, &ofb).unwrap() > 0);
+        assert!(index.write_checkpoint(&ht, &ofb, &|a| a).unwrap() > 0);
         let restored = HashIndex::new(2);
         restored.read_checkpoint(&ht, &ofb).unwrap();
         for tag in 1..40u64 {
@@ -707,7 +752,7 @@ mod parallel_checkpoint_tests {
             }
         }
         let (ht, ofb) = (dir.join("ht.dat"), dir.join("ofb.dat"));
-        assert_eq!(index.write_checkpoint(&ht, &ofb).unwrap(), 4);
+        assert_eq!(index.write_checkpoint(&ht, &ofb, &|a| a).unwrap(), 4);
         let restored = HashIndex::new(1 << 17);
         restored.read_checkpoint(&ht, &ofb).unwrap();
         for &bucket in &buckets {
@@ -741,7 +786,7 @@ mod checkpoint_timing {
         let (ht, ofb) = (dir.join("ht.dat"), dir.join("ofb.dat"));
         for _ in 0..3 {
             let started = std::time::Instant::now();
-            index.write_checkpoint(&ht, &ofb).unwrap();
+            index.write_checkpoint(&ht, &ofb, &|a| a).unwrap();
             eprintln!("write_checkpoint: {:?}", started.elapsed());
         }
         std::fs::remove_dir_all(dir).unwrap();

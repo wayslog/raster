@@ -47,6 +47,7 @@ impl Default for StoreConfig {
 pub struct FasterKv<K: Key, V: Value> {
     // Declared before `epoch` so the log drops while pending actions are inert.
     pub hlog: HybridLog,
+    pub(crate) read_cache: Option<super::read_cache::ReadCache>,
     pub(crate) index: HashIndex,
     pub(crate) epoch: Arc<LightEpoch>,
     pub(crate) state: AtomicSystemState,
@@ -104,9 +105,28 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     pub fn with_device(config: StoreConfig, device: Arc<dyn super::device::Device>) -> Self {
+        Self::with_options(config, device, None)
+    }
+
+    /// A store that caches records read from the device in memory.
+    pub fn with_read_cache(
+        config: StoreConfig,
+        device: Arc<dyn super::device::Device>,
+        read_cache: super::read_cache::ReadCacheConfig,
+    ) -> Self {
+        Self::with_options(config, device, Some(read_cache))
+    }
+
+    fn with_options(
+        config: StoreConfig,
+        device: Arc<dyn super::device::Device>,
+        read_cache: Option<super::read_cache::ReadCacheConfig>,
+    ) -> Self {
         let epoch = Arc::new(LightEpoch::new());
         Self {
             hlog: HybridLog::new(config.log, epoch.clone(), device),
+            read_cache: read_cache
+                .map(|config| super::read_cache::ReadCache::new(config, epoch.clone())),
             index: HashIndex::new(config.index_buckets),
             epoch,
             state: AtomicSystemState::new(SystemState::rest(1)),
@@ -163,7 +183,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                         self.epoch.protect_and_drain(slot);
                     }
                 }
-                Allocation::Retry => {
+                Allocation::Retry(_) => {
                     self.epoch.protect_and_drain(slot);
                 }
             }
@@ -245,17 +265,21 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let Some(slot) = self.index.find(hash) else {
             return Outcome::Done(Status::NotFound);
         };
+        let mut entry = slot.entry.address();
+        if entry.in_read_cache() {
+            match self.read_cached(ctx, slot, entry) {
+                Ok(status) => return Outcome::Done(status),
+                Err(address) => entry = address,
+            }
+        }
         let head = self.hlog.head.load();
         if mode.phase == Phase::Prepare
             && !mode.holds_old
-            && record_newer(
-                self.latest_version(slot.entry.address(), head),
-                mode.version,
-            )
+            && record_newer(self.latest_version(entry, head), mode.version)
         {
             return Outcome::Shift;
         }
-        let address = self.trace_back(&key, slot.entry.address(), head);
+        let address = self.trace_back(&key, entry, head);
         if address >= head {
             let record = self.record(address);
             if record.info().tombstone() {
@@ -320,10 +344,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         // Load both boundaries before touching the record, as FASTER does.
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
+        let entry = self.skip_and_invalidate(slot.entry.address(), &key);
         let (gate, _guard) = if REST {
             (Gate::Normal, LockGuard::none())
         } else {
-            self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
+            self.cpr_gate(mode, hash, self.latest_version(entry, head))
         };
         match gate {
             Gate::Normal => {}
@@ -331,7 +356,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Gate::Shift => return Attempt::Shift,
             Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
         }
-        let address = self.trace_back(&key, slot.entry.address(), head);
+        let address = self.trace_back(&key, entry, head);
         if gate == Gate::Normal && address >= read_only {
             let record = self.record(address);
             // SAFETY: published record in the mutable region.
@@ -339,7 +364,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 return Attempt::Done(Status::Ok);
             }
         }
-        self.upsert_append(slot_id, ctx, slot, key, mode.version)
+        self.upsert_append(slot_id, ctx, slot, entry, key, mode.version)
     }
 
     /// Appends a new record for an upsert. Kept out of line so the in-place
@@ -351,12 +376,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         slot_id: &SlotId,
         ctx: &mut C,
         slot: super::index::Slot<'_>,
+        previous: Address,
         key: K,
         version: u32,
     ) -> Attempt {
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
-        let info = RecordInfo::new(slot.entry.address(), version, false);
+        let info = RecordInfo::new(previous, version, false);
         // SAFETY: freshly allocated and not yet published.
         unsafe { record.initialize(info, key, ctx.put()) };
         if slot.try_update(new_address) {
@@ -409,7 +435,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let key = *ctx.key();
         let hash = key.hash();
         let slot = self.index.find_or_create(hash);
-        if slot.entry.address() != observed {
+        if self.skip_and_invalidate(slot.entry.address(), &key) != observed {
             return self.internal_rmw(slot_id, ctx, mode);
         }
         // The request released any checkpoint lock when it went pending, so
@@ -460,17 +486,18 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
+        let entry = self.skip_and_invalidate(slot.entry.address(), &key);
         let (gate, guard) = if REST {
             (Gate::Normal, LockGuard::none())
         } else {
-            self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
+            self.cpr_gate(mode, hash, self.latest_version(entry, head))
         };
         match gate {
             Gate::Normal | Gate::ForceRcu => {}
             Gate::Shift => return Attempt::Shift,
             Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
         }
-        let address = self.trace_back(&key, slot.entry.address(), head);
+        let address = self.trace_back(&key, entry, head);
         if address >= read_only {
             if gate == Gate::Normal {
                 let record = self.record(address);
@@ -488,13 +515,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             };
         } else if address >= self.hlog.begin.load() && address < head {
             return match self.mark_pending(mode, hash, guard) {
-                Some(marked) => Attempt::Disk(address, slot.entry.address(), marked),
+                Some(marked) => Attempt::Disk(address, entry, marked),
                 None => Attempt::Shift,
             };
         }
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
-        let info = RecordInfo::new(slot.entry.address(), mode.version, false);
+        let info = RecordInfo::new(entry, mode.version, false);
         let value = if address >= self.hlog.head.load() {
             let old = self.record(address);
             if old.info().tombstone() {
@@ -537,10 +564,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             };
             let head = self.hlog.head.load();
             let read_only = self.hlog.read_only.load();
+            let entry = self.skip_and_invalidate(slot.entry.address(), &key);
             let (gate, _guard) = if mode.phase == Phase::Rest {
                 (Gate::Normal, LockGuard::none())
             } else {
-                self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
+                self.cpr_gate(mode, hash, self.latest_version(entry, head))
             };
             match gate {
                 Gate::Normal | Gate::ForceRcu => {}
@@ -551,7 +579,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     };
                 }
             }
-            let address = self.trace_back(&key, slot.entry.address(), head);
+            let address = self.trace_back(&key, entry, head);
             if gate == Gate::Normal && address >= read_only {
                 self.record(address).set_tombstone();
                 return Outcome::Done(Status::Ok);
@@ -561,7 +589,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             }
             let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
             let record = self.record(new_address);
-            let info = RecordInfo::new(slot.entry.address(), mode.version, true);
+            let info = RecordInfo::new(entry, mode.version, true);
             // SAFETY: freshly allocated and not yet published.
             unsafe { record.initialize_tombstone(info, key) };
             if slot.try_update(new_address) {

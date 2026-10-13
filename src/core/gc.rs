@@ -84,7 +84,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             if chunk >= chunks {
                 return;
             }
-            self.index.garbage_collect_chunk(chunk, begin);
+            self.index
+                .garbage_collect_chunk(chunk, begin, &|entry| self.skip_read_cache(entry));
         }
     }
 

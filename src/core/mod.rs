@@ -13,6 +13,7 @@ pub mod hlog;
 pub mod index;
 pub mod kv;
 mod pending;
+pub mod read_cache;
 pub mod record;
 pub mod recovery;
 pub mod scan;
@@ -21,5 +22,6 @@ pub mod state;
 pub mod store;
 
 pub use kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};
+pub use read_cache::ReadCacheConfig;
 pub use session::Session;
 pub use store::{FasterKv, Status, StoreConfig};
