@@ -36,6 +36,9 @@ pub struct Session<'a, K: Key, V: Value> {
     guid: Guid,
     serial: u64,
     phase: Phase,
+    /// In REST and the store has no read cache: operations take the fully
+    /// specialized fast path.
+    plain: bool,
     version: u32,
     /// Serial at the switch to version v+1; persisted by the checkpoint.
     checkpoint_serial: u64,
@@ -72,6 +75,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             guid,
             serial,
             phase: Phase::Rest,
+            plain: store.read_cache.is_none(),
             version: state.version,
             checkpoint_serial: serial,
             next_id: 0,
@@ -106,6 +110,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     fn mode(&self) -> OpMode {
         OpMode {
             phase: self.phase,
+            plain: self.plain,
             version: self.version,
             holds_old: false,
         }
@@ -345,6 +350,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         } else {
             OpMode {
                 phase: Phase::Prepare,
+                plain: false,
                 version: entry.version,
                 holds_old: entry.marked,
             }
@@ -363,6 +369,11 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
 
     #[cold]
     fn handle_special_phases(&mut self) {
+        self.follow_state_machine();
+        self.plain = self.phase == Phase::Rest && self.store.read_cache.is_none();
+    }
+
+    fn follow_state_machine(&mut self) {
         let store = self.store;
         let final_state = store.state.load();
         if final_state.phase == Phase::Rest {

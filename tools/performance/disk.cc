@@ -68,18 +68,29 @@ void completed(IAsyncContext* ctxt, Status status) {
 }
 void require(bool condition) { if (!condition) throw std::runtime_error("benchmark contract failed"); }
 uint64_t next(uint64_t& state) { state ^= state << 13; state ^= state >> 7; state ^= state << 17; return state; }
+// hotread sends 9 of 10 reads to the first keys / 32, which were loaded first
+// and so live on the device.
+uint64_t pick(uint64_t& state, uint64_t keys, bool hot) {
+  uint64_t r = next(state);
+  if (hot && r % 10 != 0) return next(state) % (keys / 32);
+  return r % keys;
+}
 uint64_t nanoseconds(Clock::duration duration) {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
 }
 
 int main(int argc, char** argv) {
-  require(argc == 7);
+  require(argc == 7 || argc == 8);
   std::string operation = argv[1];
+  uint64_t read_cache_mb = argc == 8 ? std::stoull(argv[7]) : 0;
+  bool hot = operation == "hotread";
   size_t threads = std::stoull(argv[2]), keys = std::stoull(argv[3]), count = std::stoull(argv[4]);
   size_t stride = std::stoull(argv[5]);
   std::string dir = argv[6];
-  require((operation == "read" || operation == "rmw") && count % threads == 0 && !(stride & (stride - 1)));
-  Store store{1ULL << 22, 256ULL << 20, dir, 0.5};
+  require((operation == "read" || operation == "hotread" || operation == "rmw") && count % threads == 0 &&
+          !(stride & (stride - 1)));
+  ReadCacheConfig read_cache{read_cache_mb << 20, 0.9, false, read_cache_mb > 0};
+  Store store{1ULL << 22, 256ULL << 20, dir, 0.5, read_cache};
   uint64_t ignored = 0;
   store.StartSession();
   for (uint64_t key = 0; key < keys; ++key) {
@@ -104,10 +115,10 @@ int main(int argc, char** argv) {
       while (enrolled.load() != threads) std::this_thread::yield();
       auto started = Clock::now();
       for (size_t i = 0; i < count / threads; ++i) {
-        Request context{next(state) % keys, 1, &result.sum};
+        Request context{pick(state, keys, hot), 1, &result.sum};
         bool sampled = (i & (stride - 1)) == ((i / stride) & (stride - 1));
         auto clock = sampled ? Clock::now() : Clock::time_point{};
-        Status status = operation == "read" ? store.Read(context, completed, i) : store.Rmw(context, completed, i);
+        Status status = operation != "rmw" ? store.Read(context, completed, i) : store.Rmw(context, completed, i);
         if (status == Status::Ok) {
           result.sum += context.output;
           if (sampled) result.samples.push_back(nanoseconds(Clock::now() - clock));

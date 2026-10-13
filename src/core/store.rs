@@ -47,7 +47,8 @@ impl Default for StoreConfig {
 pub struct FasterKv<K: Key, V: Value> {
     // Declared before `epoch` so the log drops while pending actions are inert.
     pub hlog: HybridLog,
-    pub(crate) read_cache: Option<super::read_cache::ReadCache>,
+    /// Boxed so that a store without a read cache keeps its hot fields packed.
+    pub(crate) read_cache: Option<Box<super::read_cache::ReadCache>>,
     pub(crate) index: HashIndex,
     pub(crate) epoch: Arc<LightEpoch>,
     pub(crate) state: AtomicSystemState,
@@ -126,7 +127,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         Self {
             hlog: HybridLog::new(config.log, epoch.clone(), device),
             read_cache: read_cache
-                .map(|config| super::read_cache::ReadCache::new(config, epoch.clone())),
+                .map(|config| Box::new(super::read_cache::ReadCache::new(config, epoch.clone()))),
             index: HashIndex::new(config.index_buckets),
             epoch,
             state: AtomicSystemState::new(SystemState::rest(1)),
@@ -258,15 +259,36 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         locks.try_lock_old(hash).then_some(true)
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn internal_read<C: ReadContext<K, V>>(&self, ctx: &mut C, mode: OpMode) -> Outcome {
+        if mode.plain {
+            self.read_attempt::<false, C>(ctx, mode)
+        } else {
+            self.read_general(ctx, mode)
+        }
+    }
+
+    /// Reads outside the plain fast path, kept out of line so the fast path
+    /// stays small enough to inline fully.
+    #[inline(never)]
+    fn read_general<C: ReadContext<K, V>>(&self, ctx: &mut C, mode: OpMode) -> Outcome {
+        self.read_attempt::<true, C>(ctx, mode)
+    }
+
+    /// `RC`: index entries may point into the read cache.
+    #[inline(always)]
+    fn read_attempt<const RC: bool, C: ReadContext<K, V>>(
+        &self,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
         let key = *ctx.key();
         let hash = key.hash();
         let Some(slot) = self.index.find(hash) else {
             return Outcome::Done(Status::NotFound);
         };
         let mut entry = slot.entry.address();
-        if entry.in_read_cache() {
+        if RC && entry.in_read_cache() {
             match self.read_cached(ctx, slot, entry) {
                 Ok(status) => return Outcome::Done(status),
                 Err(address) => entry = address,
@@ -307,20 +329,44 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn internal_upsert<C: UpsertContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
+        if mode.plain {
+            self.upsert_loop::<true, false, C>(slot_id, ctx, mode)
+        } else {
+            self.upsert_general(slot_id, ctx, mode)
+        }
+    }
+
+    /// Upserts outside the plain fast path, kept out of line.
+    #[inline(never)]
+    fn upsert_general<C: UpsertContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
+        if mode.phase == Phase::Rest {
+            self.upsert_loop::<true, true, C>(slot_id, ctx, mode)
+        } else {
+            self.upsert_loop::<false, true, C>(slot_id, ctx, mode)
+        }
+    }
+
+    #[inline(always)]
+    fn upsert_loop<const REST: bool, const RC: bool, C: UpsertContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
         loop {
-            let attempt = if mode.phase == Phase::Rest {
-                self.upsert_attempt::<true, C>(slot_id, ctx, mode)
-            } else {
-                self.upsert_attempt::<false, C>(slot_id, ctx, mode)
-            };
-            match attempt {
+            match self.upsert_attempt::<REST, RC, C>(slot_id, ctx, mode) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Retry => {}
                 Attempt::Shift => return Outcome::Shift,
@@ -331,7 +377,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    fn upsert_attempt<const REST: bool, C: UpsertContext<K, V>>(
+    fn upsert_attempt<const REST: bool, const RC: bool, C: UpsertContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -344,7 +390,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         // Load both boundaries before touching the record, as FASTER does.
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
-        let entry = self.skip_and_invalidate(slot.entry.address(), &key);
+        let entry = if RC {
+            self.skip_and_invalidate(slot.entry.address(), &key)
+        } else {
+            slot.entry.address()
+        };
         let (gate, _guard) = if REST {
             (Gate::Normal, LockGuard::none())
         } else {
@@ -393,20 +443,44 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn internal_rmw<C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
+        if mode.plain {
+            self.rmw_loop::<true, false, C>(slot_id, ctx, mode)
+        } else {
+            self.rmw_general(slot_id, ctx, mode)
+        }
+    }
+
+    /// RMWs outside the plain fast path, kept out of line.
+    #[inline(never)]
+    fn rmw_general<C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
+        if mode.phase == Phase::Rest {
+            self.rmw_loop::<true, true, C>(slot_id, ctx, mode)
+        } else {
+            self.rmw_loop::<false, true, C>(slot_id, ctx, mode)
+        }
+    }
+
+    #[inline(always)]
+    fn rmw_loop<const REST: bool, const RC: bool, C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
         loop {
-            let attempt = if mode.phase == Phase::Rest {
-                self.rmw_attempt::<true, C>(slot_id, ctx, mode)
-            } else {
-                self.rmw_attempt::<false, C>(slot_id, ctx, mode)
-            };
-            match attempt {
+            match self.rmw_attempt::<REST, RC, C>(slot_id, ctx, mode) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Disk(address, observed, marked) => {
                     return Outcome::Disk {
@@ -474,7 +548,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    fn rmw_attempt<const REST: bool, C: RmwContext<K, V>>(
+    fn rmw_attempt<const REST: bool, const RC: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -486,7 +560,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
-        let entry = self.skip_and_invalidate(slot.entry.address(), &key);
+        let entry = if RC {
+            self.skip_and_invalidate(slot.entry.address(), &key)
+        } else {
+            slot.entry.address()
+        };
         let (gate, guard) = if REST {
             (Gate::Normal, LockGuard::none())
         } else {
@@ -604,6 +682,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OpMode {
     pub phase: Phase,
+    /// REST without a read cache: no CPR rules and no cached entries.
+    pub plain: bool,
     /// Version stamped on new records and compared with existing ones.
     pub version: u32,
     /// The request already holds the old-side lock for its key: it was

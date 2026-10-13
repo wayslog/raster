@@ -113,12 +113,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let record = self.cache_record(entry);
         let info = record.info();
         let previous = info.previous();
-        // A copy of a truncated record must not outlive the truncation.
         // SAFETY: cache records are fully written before being linked.
-        if info.invalid()
-            || previous < self.hlog.begin.load()
-            || unsafe { record.key() } != ctx.key()
-        {
+        let matches = unsafe { record.key() } == ctx.key();
+        // A copy of a truncated record must not outlive the truncation.
+        if !matches || info.invalid() || previous < self.hlog.begin.load() {
             return Err(previous);
         }
         // SAFETY: as above; cache records are never updated in place.
