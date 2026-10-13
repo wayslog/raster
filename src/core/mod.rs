@@ -1,6 +1,7 @@
 pub mod address;
 pub mod device;
 pub mod epoch;
+pub mod guid;
 pub mod hlog;
 pub mod index;
 pub mod kv;
