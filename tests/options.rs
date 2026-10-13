@@ -108,3 +108,31 @@ fn pending_read_retains_abort_if_tombstone() {
     assert_eq!(deleted.out.borrow_mut().take().unwrap().0, Status::NotFound);
     assert_eq!(store.hlog.tail(), tail);
 }
+
+#[test]
+fn diagnostics_count_sessions_and_primary_bucket_chains() {
+    let dir = TestDirectory::new("diagnostics");
+    let store = variable::store(&dir, false, false);
+    assert_eq!(store.num_active_sessions(), 0);
+    assert_eq!(store.index_distribution().get(&0), Some(&256));
+    let mut session = store.start_session();
+    let second = store.start_session();
+    assert_eq!(store.num_active_sessions(), 2);
+    drop(second);
+    for id in 0..400 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 8), id),
+            Status::Ok
+        );
+    }
+    let histogram = store.index_distribution();
+    assert_eq!(histogram.values().sum::<usize>(), 256);
+    assert_eq!(
+        histogram
+            .iter()
+            .map(|(entries, buckets)| entries * buckets)
+            .sum::<usize>(),
+        400
+    );
+    assert_eq!(store.num_active_sessions(), 1);
+}
