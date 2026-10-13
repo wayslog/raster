@@ -1,13 +1,18 @@
-//! Store and internal operations (FASTER `faster.h`), REST phase, in memory.
+//! Store and internal operations (FASTER `faster.h`).
 use super::address::Address;
+use super::checkpoint::CheckpointDirs;
+use super::checkpoint_locks::CheckpointLocks;
+use super::cpr::CprRun;
 use super::epoch::{LightEpoch, SlotId};
 use super::hlog::{Allocation, HybridLog, LogConfig};
 use super::index::HashIndex;
 use super::kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};
 use super::record::{Layout, Record, RecordInfo};
 use super::session::Session;
+use super::state::{AtomicSystemState, Phase, SystemState, record_newer};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::AtomicPtr;
 
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,10 +26,12 @@ pub enum Status {
     Corruption,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct StoreConfig {
     pub index_buckets: u64,
     pub log: LogConfig,
+    /// Root directory for checkpoints; required to checkpoint or recover.
+    pub checkpoint_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for StoreConfig {
@@ -32,6 +39,7 @@ impl Default for StoreConfig {
         Self {
             index_buckets: 1 << 20,
             log: LogConfig::default(),
+            checkpoint_dir: None,
         }
     }
 }
@@ -41,6 +49,11 @@ pub struct FasterKv<K: Key, V: Value> {
     pub(crate) hlog: HybridLog,
     pub(crate) index: HashIndex,
     pub(crate) epoch: Arc<LightEpoch>,
+    pub(crate) state: AtomicSystemState,
+    /// Allocated while a checkpoint runs; freed by an epoch action at REST.
+    pub(crate) checkpoint_locks: AtomicPtr<CheckpointLocks>,
+    pub(crate) cpr: std::sync::Mutex<CprRun>,
+    pub(crate) dirs: Option<CheckpointDirs>,
     _types: PhantomData<Types<K, V>>,
 }
 
@@ -51,8 +64,12 @@ type Types<K, V> = fn(K, V) -> (K, V);
 enum Attempt {
     Done(Status),
     Retry,
-    Disk(Address, Address),
-    RetryLater,
+    /// Read from the device: address, observed entry, old lock marked.
+    Disk(Address, Address, bool),
+    /// Retry after refresh; the flag says whether the old lock is marked.
+    RetryLater(bool),
+    /// CPR shift detected: the session must move to v+1 and retry.
+    Shift,
 }
 
 /// Result of an operation that may need a record read from the device.
@@ -62,9 +79,15 @@ pub(crate) enum Outcome {
     Disk {
         address: Address,
         observed: Address,
+        /// The request holds the old-side checkpoint lock for its key.
+        marked: bool,
     },
-    /// The source is in the fuzzy region; retry after the session refreshes.
-    RetryLater,
+    /// Retry after the session refreshes (fuzzy region or CPR lock conflict).
+    RetryLater {
+        marked: bool,
+    },
+    /// CPR shift detected: refresh into version v+1 and retry.
+    Shift,
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
@@ -78,13 +101,17 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             hlog: HybridLog::new(config.log, epoch.clone(), device),
             index: HashIndex::new(config.index_buckets),
             epoch,
+            state: AtomicSystemState::new(SystemState::rest(1)),
+            checkpoint_locks: AtomicPtr::new(std::ptr::null_mut()),
+            cpr: Default::default(),
+            dirs: config.checkpoint_dir.map(|root| CheckpointDirs { root }),
             _types: PhantomData,
         }
     }
 
     /// Starts a session; panics if all epoch slots are in use.
     pub fn start_session(&self) -> Session<'_, K, V> {
-        Session::new(self)
+        Session::new(self, super::guid::Guid::new(), 0)
     }
 
     #[inline(always)]
@@ -124,13 +151,91 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         }
     }
 
+    /// Version of the newest in-memory record at the index entry, or 0.
+    #[inline(always)]
+    fn latest_version(&self, entry: Address, head: Address) -> u32 {
+        if entry >= head {
+            self.record(entry).info().version()
+        } else {
+            0
+        }
+    }
+
+    /// CPR rules for an update outside REST (FASTER InternalUpsert/Rmw/Delete).
+    #[cold]
+    fn cpr_gate(&self, mode: OpMode, hash: u64, latest: u32) -> (Gate, LockGuard<'_>) {
+        // The table exists from checkpoint start until every session has left
+        // PERSISTENCE_CALLBACK, the only phase that needs no locks.
+        let locks = || {
+            self.locks()
+                .expect("checkpoint locks exist before WAIT_FLUSH")
+        };
+        let older = record_newer(mode.version, latest);
+        match mode.phase {
+            Phase::Prepare if mode.holds_old => (Gate::Normal, LockGuard::none()),
+            Phase::Prepare => {
+                if !locks().try_lock_old(hash) {
+                    return (Gate::Shift, LockGuard::none());
+                }
+                let guard = LockGuard::old(locks(), hash);
+                if record_newer(latest, mode.version) {
+                    (Gate::Shift, guard)
+                } else {
+                    (Gate::Normal, guard)
+                }
+            }
+            Phase::InProgress if older => {
+                if locks().try_lock_new(hash) {
+                    (Gate::ForceRcu, LockGuard::new(locks(), hash))
+                } else {
+                    (Gate::RetryLater, LockGuard::none())
+                }
+            }
+            Phase::WaitPending if older => {
+                if locks().old_locked(hash) {
+                    (Gate::RetryLater, LockGuard::none())
+                } else {
+                    (Gate::ForceRcu, LockGuard::none())
+                }
+            }
+            Phase::WaitFlush | Phase::PersistenceCallback if older => {
+                (Gate::ForceRcu, LockGuard::none())
+            }
+            _ => (Gate::Normal, LockGuard::none()),
+        }
+    }
+
+    /// Takes the old-side lock for a request about to go pending in PREPARE.
+    /// Returns `Some(marked)`, or `None` if the session must shift to v+1.
     #[inline]
-    pub(crate) fn internal_read<C: ReadContext<K, V>>(&self, ctx: &mut C) -> Outcome {
+    fn mark_pending(&self, mode: OpMode, hash: u64, guard: LockGuard<'_>) -> Option<bool> {
+        if mode.phase != Phase::Prepare {
+            return Some(mode.holds_old);
+        }
+        if mode.holds_old || guard.keep_old() {
+            return Some(true);
+        }
+        let locks = self.locks().expect("checkpoint locks exist outside REST");
+        locks.try_lock_old(hash).then_some(true)
+    }
+
+    #[inline]
+    pub(crate) fn internal_read<C: ReadContext<K, V>>(&self, ctx: &mut C, mode: OpMode) -> Outcome {
         let key = *ctx.key();
-        let Some(slot) = self.index.find(key.hash()) else {
+        let hash = key.hash();
+        let Some(slot) = self.index.find(hash) else {
             return Outcome::Done(Status::NotFound);
         };
         let head = self.hlog.head.load();
+        if mode.phase == Phase::Prepare
+            && !mode.holds_old
+            && record_newer(
+                self.latest_version(slot.entry.address(), head),
+                mode.version,
+            )
+        {
+            return Outcome::Shift;
+        }
         let address = self.trace_back(&key, slot.entry.address(), head);
         if address >= head {
             let record = self.record(address);
@@ -148,9 +253,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         } else if address < self.hlog.begin.load() {
             Outcome::Done(Status::NotFound)
         } else {
-            Outcome::Disk {
-                address,
-                observed: slot.entry.address(),
+            match self.mark_pending(mode, hash, LockGuard::none()) {
+                Some(marked) => Outcome::Disk {
+                    address,
+                    observed: slot.entry.address(),
+                    marked,
+                },
+                None => Outcome::Shift,
             }
         }
     }
@@ -160,28 +269,46 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
-    ) -> Status {
+        mode: OpMode,
+    ) -> Outcome {
         loop {
-            match self.upsert_attempt(slot_id, ctx) {
-                Attempt::Done(status) => return status,
+            match self.upsert_attempt(slot_id, ctx, mode) {
+                Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Retry => {}
-                Attempt::Disk(..) | Attempt::RetryLater => {
-                    unreachable!("blind upserts never read the device")
-                }
+                Attempt::Shift => return Outcome::Shift,
+                Attempt::RetryLater(marked) => return Outcome::RetryLater { marked },
+                Attempt::Disk(..) => unreachable!("blind upserts never read the device"),
             }
         }
     }
 
     #[inline(always)]
-    fn upsert_attempt<C: UpsertContext<K, V>>(&self, slot_id: &SlotId, ctx: &mut C) -> Attempt {
+    fn upsert_attempt<C: UpsertContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Attempt {
         let key = *ctx.key();
-        let slot = self.index.find_or_create(key.hash());
+        let hash = key.hash();
+        let slot = self.index.find_or_create(hash);
         self.hlog.prefetch_for_write(slot.entry.address());
         // Load both boundaries before touching the record, as FASTER does.
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
+        let (gate, _guard) = if mode.phase == Phase::Rest {
+            (Gate::Normal, LockGuard::none())
+        } else {
+            self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
+        };
+        match gate {
+            Gate::Normal => {}
+            Gate::ForceRcu => {}
+            Gate::Shift => return Attempt::Shift,
+            Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
+        }
         let address = self.trace_back(&key, slot.entry.address(), head);
-        if address >= read_only {
+        if gate == Gate::Normal && address >= read_only {
             let record = self.record(address);
             // SAFETY: published record in the mutable region.
             if !record.info().tombstone() && ctx.put_atomic(unsafe { record.value() }) {
@@ -190,7 +317,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         }
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
-        let info = RecordInfo::new(slot.entry.address(), 0, false);
+        let info = RecordInfo::new(slot.entry.address(), mode.version, false);
         // SAFETY: freshly allocated and not yet published.
         unsafe { record.initialize(info, key, ctx.put()) };
         if slot.try_update(new_address) {
@@ -206,12 +333,20 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
+        mode: OpMode,
     ) -> Outcome {
         loop {
-            match self.rmw_attempt(slot_id, ctx) {
+            match self.rmw_attempt(slot_id, ctx, mode) {
                 Attempt::Done(status) => return Outcome::Done(status),
-                Attempt::Disk(address, observed) => return Outcome::Disk { address, observed },
-                Attempt::RetryLater => return Outcome::RetryLater,
+                Attempt::Disk(address, observed, marked) => {
+                    return Outcome::Disk {
+                        address,
+                        observed,
+                        marked,
+                    };
+                }
+                Attempt::RetryLater(marked) => return Outcome::RetryLater { marked },
+                Attempt::Shift => return Outcome::Shift,
                 Attempt::Retry => {}
             }
         }
@@ -223,13 +358,14 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
+        mode: OpMode,
         observed: Address,
         source: Option<&V>,
     ) -> Outcome {
         let key = *ctx.key();
         let slot = self.index.find_or_create(key.hash());
         if slot.entry.address() != observed {
-            return self.internal_rmw(slot_id, ctx);
+            return self.internal_rmw(slot_id, ctx, mode);
         }
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
@@ -237,40 +373,65 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Some(old) => ctx.rmw_copy(old),
             None => ctx.rmw_initial(),
         };
+        let info = RecordInfo::new(observed, mode.version, false);
         // SAFETY: freshly allocated and not yet published.
-        unsafe { record.initialize(RecordInfo::new(observed, 0, false), key, value) };
+        unsafe { record.initialize(info, key, value) };
         if slot.try_update(new_address) {
             Outcome::Done(Status::Ok)
         } else {
             record.set_invalid();
-            self.internal_rmw(slot_id, ctx)
+            self.internal_rmw(slot_id, ctx, mode)
         }
     }
 
     #[inline(always)]
-    fn rmw_attempt<C: RmwContext<K, V>>(&self, slot_id: &SlotId, ctx: &mut C) -> Attempt {
+    fn rmw_attempt<C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Attempt {
         let key = *ctx.key();
-        let slot = self.index.find_or_create(key.hash());
+        let hash = key.hash();
+        let slot = self.index.find_or_create(hash);
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
+        let (gate, guard) = if mode.phase == Phase::Rest {
+            (Gate::Normal, LockGuard::none())
+        } else {
+            self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
+        };
+        match gate {
+            Gate::Normal | Gate::ForceRcu => {}
+            Gate::Shift => return Attempt::Shift,
+            Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
+        }
         let address = self.trace_back(&key, slot.entry.address(), head);
         if address >= read_only {
-            let record = self.record(address);
-            // SAFETY: published record in the mutable region.
-            if !record.info().tombstone() && ctx.rmw_atomic(unsafe { record.value() }) {
-                return Attempt::Done(Status::Ok);
+            if gate == Gate::Normal {
+                let record = self.record(address);
+                // SAFETY: published record in the mutable region.
+                if !record.info().tombstone() && ctx.rmw_atomic(unsafe { record.value() }) {
+                    return Attempt::Done(Status::Ok);
+                }
             }
         } else if address >= self.hlog.safe_read_only.load() {
             // Fuzzy region: another session may still update in place, so a
             // copy could lose its update. Retry once safe_read_only advances.
-            return Attempt::RetryLater;
+            return match self.mark_pending(mode, hash, guard) {
+                Some(marked) => Attempt::RetryLater(marked),
+                None => Attempt::Shift,
+            };
         } else if address >= self.hlog.begin.load() && address < head {
-            return Attempt::Disk(address, slot.entry.address());
+            return match self.mark_pending(mode, hash, guard) {
+                Some(marked) => Attempt::Disk(address, slot.entry.address(), marked),
+                None => Attempt::Shift,
+            };
         }
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
-        let info = RecordInfo::new(slot.entry.address(), 0, false);
+        let info = RecordInfo::new(slot.entry.address(), mode.version, false);
         let value = if address >= self.hlog.head.load() {
             let old = self.record(address);
             if old.info().tombstone() {
@@ -299,30 +460,121 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline]
-    pub(crate) fn internal_delete<C: DeleteContext<K>>(&self, slot_id: &SlotId, ctx: &C) -> Status {
+    pub(crate) fn internal_delete<C: DeleteContext<K>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &C,
+        mode: OpMode,
+    ) -> Outcome {
         loop {
             let key = *ctx.key();
-            let Some(slot) = self.index.find(key.hash()) else {
-                return Status::NotFound;
+            let hash = key.hash();
+            let Some(slot) = self.index.find(hash) else {
+                return Outcome::Done(Status::NotFound);
             };
             let head = self.hlog.head.load();
+            let read_only = self.hlog.read_only.load();
+            let (gate, _guard) = if mode.phase == Phase::Rest {
+                (Gate::Normal, LockGuard::none())
+            } else {
+                self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
+            };
+            match gate {
+                Gate::Normal | Gate::ForceRcu => {}
+                Gate::Shift => return Outcome::Shift,
+                Gate::RetryLater => {
+                    return Outcome::RetryLater {
+                        marked: mode.holds_old,
+                    };
+                }
+            }
             let address = self.trace_back(&key, slot.entry.address(), head);
-            if address >= self.hlog.read_only.load() {
+            if gate == Gate::Normal && address >= read_only {
                 self.record(address).set_tombstone();
-                return Status::Ok;
+                return Outcome::Done(Status::Ok);
             }
             if address < self.hlog.begin.load() {
-                return Status::NotFound;
+                return Outcome::Done(Status::NotFound);
             }
             let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
             let record = self.record(new_address);
-            let info = RecordInfo::new(slot.entry.address(), 0, true);
+            let info = RecordInfo::new(slot.entry.address(), mode.version, true);
             // SAFETY: freshly allocated and not yet published.
             unsafe { record.initialize_tombstone(info, key) };
             if slot.try_update(new_address) {
-                return Status::Ok;
+                return Outcome::Done(Status::Ok);
             }
             record.set_invalid();
+        }
+    }
+}
+
+/// How an operation runs relative to the checkpoint state machine.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OpMode {
+    pub phase: Phase,
+    /// Version stamped on new records and compared with existing ones.
+    pub version: u32,
+    /// The request already holds the old-side lock for its key: it was
+    /// marked in PREPARE and must still complete as a version-v operation.
+    pub holds_old: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gate {
+    Normal,
+    ForceRcu,
+    Shift,
+    RetryLater,
+}
+
+/// Releases a checkpoint lock side at the end of an attempt.
+struct LockGuard<'a> {
+    locks: Option<&'a CheckpointLocks>,
+    hash: u64,
+    new_side: bool,
+}
+
+impl<'a> LockGuard<'a> {
+    fn none() -> Self {
+        Self {
+            locks: None,
+            hash: 0,
+            new_side: false,
+        }
+    }
+    fn old(locks: &'a CheckpointLocks, hash: u64) -> Self {
+        Self {
+            locks: Some(locks),
+            hash,
+            new_side: false,
+        }
+    }
+    fn new(locks: &'a CheckpointLocks, hash: u64) -> Self {
+        Self {
+            locks: Some(locks),
+            hash,
+            new_side: true,
+        }
+    }
+    /// Hands a held old-side lock over to a pending request.
+    fn keep_old(mut self) -> bool {
+        let kept = self.locks.is_some() && !self.new_side;
+        if kept {
+            self.locks = None;
+        }
+        kept
+    }
+}
+
+impl Drop for LockGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(locks) = self.locks {
+            if self.new_side {
+                locks.unlock_new(self.hash);
+            } else {
+                locks.unlock_old(self.hash);
+            }
         }
     }
 }

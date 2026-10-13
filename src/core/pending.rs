@@ -1,10 +1,10 @@
-//! Pending operations that wait for record reads (FASTER `AsyncIOContext` and
+//! Pending operations (FASTER `AsyncIOContext`, retry requests and
 //! `InternalContinuePending*`). They run only on the owning session thread.
 use super::address::Address;
 use super::epoch::SlotId;
-use super::kv::{Key, ReadContext, RmwContext, Value};
+use super::kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};
 use super::record::{Layout, Record};
-use super::store::{FasterKv, Outcome, Status};
+use super::store::{FasterKv, OpMode, Outcome, Status};
 
 /// A record read from the device, copied into 8-byte aligned memory.
 pub(crate) struct DiskRecord {
@@ -33,19 +33,45 @@ impl DiskRecord {
 pub(crate) enum Step {
     Done,
     /// Read the record at this address next.
-    Read(Address),
+    Read {
+        address: Address,
+        marked: bool,
+    },
     /// Re-run the operation after the session refreshes.
-    RetryLater,
+    RetryLater {
+        marked: bool,
+    },
+}
+
+impl Step {
+    fn from_outcome(outcome: Outcome, done: impl FnOnce(Status)) -> Self {
+        match outcome {
+            Outcome::Done(status) => {
+                done(status);
+                Step::Done
+            }
+            Outcome::Disk {
+                address, marked, ..
+            } => Step::Read { address, marked },
+            Outcome::RetryLater { marked } => Step::RetryLater { marked },
+            // Marked requests never shift; be conservative if one does.
+            Outcome::Shift => Step::RetryLater { marked: false },
+        }
+    }
 }
 
 pub(crate) trait PendingOp<K: Key, V: Value> {
+    fn hash(&self) -> u64;
     /// Continues with the record read at the requested address, or `None` on I/O failure.
-    fn resume(&mut self, store: &FasterKv<K, V>, slot: &SlotId, record: Option<DiskRecord>)
-    -> Step;
+    fn resume(
+        &mut self,
+        store: &FasterKv<K, V>,
+        slot: &SlotId,
+        mode: OpMode,
+        record: Option<DiskRecord>,
+    ) -> Step;
     /// Re-runs an operation queued with `Step::RetryLater`.
-    fn retry(&mut self, _store: &FasterKv<K, V>, _slot: &SlotId) -> Step {
-        unreachable!("only RMW is retried later")
-    }
+    fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step;
 }
 
 /// Where a disk lookup for `key` landed.
@@ -91,7 +117,17 @@ pub(crate) struct PendingRead<C> {
 }
 
 impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> {
-    fn resume(&mut self, store: &FasterKv<K, V>, _: &SlotId, mut disk: Option<DiskRecord>) -> Step {
+    fn hash(&self) -> u64 {
+        self.ctx.key().hash()
+    }
+
+    fn resume(
+        &mut self,
+        store: &FasterKv<K, V>,
+        _: &SlotId,
+        mode: OpMode,
+        mut disk: Option<DiskRecord>,
+    ) -> Step {
         let key = *self.ctx.key();
         let status = match lookup(store, &key, &mut disk) {
             Lookup::Found(_, true) | Lookup::Missing => Status::NotFound,
@@ -99,11 +135,21 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
                 self.ctx.get(value);
                 Status::Ok
             }
-            Lookup::Previous(address) => return Step::Read(address),
+            Lookup::Previous(address) => {
+                return Step::Read {
+                    address,
+                    marked: mode.holds_old,
+                };
+            }
             Lookup::Failed(status) => status,
         };
         self.ctx.on_complete(status);
         Step::Done
+    }
+
+    fn retry(&mut self, store: &FasterKv<K, V>, _: &SlotId, mode: OpMode) -> Step {
+        let outcome = store.internal_read(&mut self.ctx, mode);
+        Step::from_outcome(outcome, |status| self.ctx.on_complete(status))
     }
 }
 
@@ -113,27 +159,37 @@ pub(crate) struct PendingRmw<C> {
 }
 
 impl<K: Key, V: Value, C: RmwContext<K, V>> PendingOp<K, V> for PendingRmw<C> {
+    fn hash(&self) -> u64 {
+        self.ctx.key().hash()
+    }
+
     fn resume(
         &mut self,
         store: &FasterKv<K, V>,
         slot: &SlotId,
+        mode: OpMode,
         mut disk: Option<DiskRecord>,
     ) -> Step {
         let key = *self.ctx.key();
         let outcome = match lookup(store, &key, &mut disk) {
             Lookup::Found(value, tombstone) => {
                 let source = (!tombstone).then_some(value);
-                store.rmw_from_disk(slot, &mut self.ctx, self.observed, source)
+                store.rmw_from_disk(slot, &mut self.ctx, mode, self.observed, source)
             }
-            Lookup::Missing => store.rmw_from_disk(slot, &mut self.ctx, self.observed, None),
-            Lookup::Previous(address) => return Step::Read(address),
+            Lookup::Missing => store.rmw_from_disk(slot, &mut self.ctx, mode, self.observed, None),
+            Lookup::Previous(address) => {
+                return Step::Read {
+                    address,
+                    marked: mode.holds_old,
+                };
+            }
             Lookup::Failed(status) => Outcome::Done(status),
         };
         self.step(outcome)
     }
 
-    fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId) -> Step {
-        let outcome = store.internal_rmw(slot, &mut self.ctx);
+    fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
+        let outcome = store.internal_rmw(slot, &mut self.ctx, mode);
         self.step(outcome)
     }
 }
@@ -143,16 +199,47 @@ impl<C> PendingRmw<C> {
     where
         C: RmwContext<K, V>,
     {
-        match outcome {
-            Outcome::Done(status) => {
-                self.ctx.on_complete(status);
-                Step::Done
-            }
-            Outcome::Disk { address, observed } => {
-                self.observed = observed;
-                Step::Read(address)
-            }
-            Outcome::RetryLater => Step::RetryLater,
+        if let Outcome::Disk { observed, .. } = outcome {
+            self.observed = observed;
         }
+        Step::from_outcome(outcome, |status| self.ctx.on_complete(status))
+    }
+}
+
+pub(crate) struct PendingUpsert<C> {
+    pub ctx: C,
+}
+
+impl<K: Key, V: Value, C: UpsertContext<K, V>> PendingOp<K, V> for PendingUpsert<C> {
+    fn hash(&self) -> u64 {
+        self.ctx.key().hash()
+    }
+
+    fn resume(&mut self, _: &FasterKv<K, V>, _: &SlotId, _: OpMode, _: Option<DiskRecord>) -> Step {
+        unreachable!("blind upserts never read the device")
+    }
+
+    fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
+        let outcome = store.internal_upsert(slot, &mut self.ctx, mode);
+        Step::from_outcome(outcome, |status| self.ctx.on_complete(status))
+    }
+}
+
+pub(crate) struct PendingDelete<C> {
+    pub ctx: C,
+}
+
+impl<K: Key, V: Value, C: DeleteContext<K>> PendingOp<K, V> for PendingDelete<C> {
+    fn hash(&self) -> u64 {
+        self.ctx.key().hash()
+    }
+
+    fn resume(&mut self, _: &FasterKv<K, V>, _: &SlotId, _: OpMode, _: Option<DiskRecord>) -> Step {
+        unreachable!("deletes never read the device")
+    }
+
+    fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
+        let outcome = store.internal_delete(slot, &self.ctx, mode);
+        Step::from_outcome(outcome, |status| self.ctx.on_complete(status))
     }
 }

@@ -32,6 +32,8 @@ pub trait UpsertContext<K: Key, V: Value> {
     fn put(&mut self) -> V;
     /// In-place update in the mutable region; `false` falls back to append.
     fn put_atomic(&mut self, value: &V) -> bool;
+    /// Called on the session thread when a `Pending` operation finishes.
+    fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
 pub trait RmwContext<K: Key, V: Value> {
@@ -48,6 +50,8 @@ pub trait RmwContext<K: Key, V: Value> {
 
 pub trait DeleteContext<K: Key> {
     fn key(&self) -> &K;
+    /// Called on the session thread when a `Pending` operation finishes.
+    fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
 /// FNV-1a over the eight little-endian bytes, matching the C++ benchmark key.

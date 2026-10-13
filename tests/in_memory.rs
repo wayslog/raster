@@ -64,6 +64,7 @@ impl DeleteContext<u64> for Op {
 fn small_store(index_buckets: u64) -> Store {
     Store::new(StoreConfig {
         index_buckets,
+        checkpoint_dir: None,
         log: LogConfig {
             page_bits: 16,
             memory_pages: 64,
@@ -205,6 +206,7 @@ fn concurrent_upserts_on_new_keys_keep_one_chain_per_key() {
 fn rmw_in_fuzzy_region_retries_after_every_session_refreshes() {
     let store = Store::new(StoreConfig {
         index_buckets: 1 << 10,
+        checkpoint_dir: None,
         log: LogConfig {
             page_bits: 12,
             memory_pages: 8,
