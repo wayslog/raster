@@ -1,5 +1,81 @@
 # C++ 实现的功能与 API 契约
 
+## 当前 RasterKV API
+
+Rust 入口为 `raster::core::*`。这部分描述当前实现；后面的 C++ API 调查保留历史证据，不代表 Rust 已提供 F2 或全部设备后端。
+
+### 键、值和上下文
+
+- `Key: Eq + Send + Sync + 'static`：`hash()` 必需；`size()` 默认返回固定头大小。键不再要求 `Copy`。尺寸和字节在发布后不可变。
+- `Value: Send + Sync + 'static`：`size()` 默认返回固定头大小；`initialize_empty(ValueSlot)` 必需，为墓碑和放弃的分配写入合法、尺寸等于 slot 的值。常用整数、浮点数及 32/64 位原子整数有显式实现；不再提供 blanket implementation。
+- Key/Value 是可按字节搬移的日志数据，不会执行 Drop，不得持有堆资源、引用或恢复后失效的指针。size 方法只读取固定头，不能依赖尾部已到齐。当前对齐上限为 8 字节，完整记录必须不超过一页。
+- `KeyContext<K>` 提供 `key()`、`key_hash()`、`key_size()`、`key_equals()` 和 unsafe `write_key(dst)`。默认 deep copy 要求 key 引用后确有 key_size 字节；浅键必须覆盖 deep write、hash 和 equality。请求完成前，键、哈希和等值判断必须保持一致，包括重试和 Pending 副本。Pending 的 Clone 必须拥有全部请求数据。
+- `ValueSlot<'_,V>` 提供 `write(V)`、`len()`、`as_mut_ptr()`。原地初始化必须写入全部会被读取的字节，且初始化后的 `V::size()` 必须等于预留长度。
+
+| 上下文 | 新记录初始化 | 现有记录访问 |
+| --- | --- | --- |
+| `ReadContext<K,V>` | 无 | `get(&V)` / `get_atomic(&V)` |
+| `UpsertContext<K,V>` | `value_size()`、`put(ValueSlot<V>)` | `put_atomic(&V) -> bool` |
+| `RmwContext<K,V>` | `initial_value_size()`、`copy_value_size(&V)`、`rmw_initial(slot)`、`rmw_copy(&V,slot)` | `rmw_atomic(&V) -> bool` |
+| `DeleteContext<K>` | `value_size() -> Option<u32>`；None 使用 V 固定头大小 | 由引擎写墓碑 |
+
+DeleteContext 不携带 V 参数，因此用 None 表达固定头默认值。变长上下文可返回 Some；Value::initialize_empty 负责写入准确的分配尺寸。所有上下文均继承 KeyContext，并有 `on_complete(Status)`。
+
+`put_atomic` / `rmw_atomic` 返回 false 时追加记录。并发的可变长值应在尺寸不足时用 replaced 位冻结旧值，再允许其他线程复制；仅返回 false 而继续允许原地更新会丢失更新。示例见测试共用的 generation lock。缩短逻辑长度不能缩小记录的分配尺寸。
+
+### 会话和维护
+
+默认 `read/upsert/rmw/delete` 保持原契约；Pending 请求复制上下文并由 `complete_pending` 完成，原上下文不会自动得到副本的输出。
+
+上下文回调必须正常返回，不能 panic。当前不提供回调展开后的会话恢复；在 Pending 回调中 panic 可能使析构等待无法结束。
+
+| 入口 | 行为 |
+| --- | --- |
+| `read_with_options(ctx, serial, ReadOptions)` | `abort_if_tombstone=true` 时匹配墓碑返回 Aborted；真正不存在仍为 NotFound |
+| `rmw_with_options(ctx, serial, RmwOptions)` | `create_if_not_exists=false` 时不创建缺失或已删除键 |
+| `delete_with_options(ctx, serial, DeleteOptions)` | `force_tombstone=true` 时为索引中不存在的键也追加墓碑 |
+| `compact(until, shift_begin, threads, checkpoint)` | 查找式压缩；checkpoint=true 时随后完成完整检查点；错误不允许被当成成功截断 |
+| `num_active_sessions()` | 观察活跃业务会话数量，不计扫描等内部 helper |
+| `index_distribution()` | 统计每个主桶及溢出链中已发布且地址有效的链头条目，返回直方图；这是并发观测值，不是逻辑键数 |
+
+`StoreConfig::log_size_budget=0` 默认关闭写侧协作；非零时，超过预算的 Upsert/RMW 会参与正在进行的压缩。它不是无条件拒绝写入的硬容量上限，未启动压缩时不会自动删除数据。旧的扫描版 C++ Compact 不实现，采用 CompactWithLookup 的存活判断。
+
+### TOML 配置
+
+`StoreConfig::from_toml_str` / `from_toml_file` 返回 Result；接受 `[faster.hlog]` 等带 faster 前缀的格式，也接受顶层 `[hlog]`。未知字段、F2、越界尺寸和非法索引/日志几何配置会返回错误。
+
+```toml
+[faster]
+filepath = "store-data"
+checkpoint_dir = "checkpoints"
+[faster.index]
+table_size = 1024
+[faster.hlog]
+in_mem_size_mb = 256
+mutable_fraction = 0.9
+pre_allocate = true
+[faster.hlog.compaction]
+enabled = true
+hlog_size_budget_mb = 1024
+trigger_pct = 0.8
+compact_pct = 0.2
+max_compacted_size_mb = 512
+check_interval_ms = 250
+num_threads = 4
+[faster.read_cache]
+enabled = false
+in_mem_size_mb = 256
+mutable_fraction = 0.9
+pre_allocate = true
+```
+
+`FasterKv::open(config)` 使用 filepath 打开本地 buffered 文件设备，空路径选择 NullDevice；`new` 和 `with_device` 保留显式设备选择。配置中的 read_cache 自动应用。后台压缩采用显式生命周期：构造 Arc<Store>，将解析所得的 auto_compaction 配置传给 spawn_auto_compaction 并保存返回的句柄；丢弃句柄会停止并等待后台线程。
+
+配置文件的内存尺寸为 MiB，页为 32 MiB；窗口必须为至少 128 MiB 的二次幂。pre_allocate 目前作为配置提示保留，两个取值都在构造时分配全部页帧，未实现惰性页分配。Rust 拒绝未知字段，区别于 C++ 的警告后忽略行为。配置解析用法依据 [toml 官方 API](https://docs.rs/toml/latest/toml/fn.from_str.html)。
+
+## 历史 C++ API 调查
+
+
 本文面向将 `FASTER/cc` 改写为 Rust 的前期调查。依据是当前工作区源代码的静态阅读；未编译、未运行测试、未验证崩溃恢复或性能。文中 API 标识符保留原文，解释使用中文；行号对应本次调查快照。这里的“公共 API”指 C++ 模板与头文件接口，不是 HTTP API、RPC 或稳定 C ABI。
 
 ## 1. 能力清单与实现边界
