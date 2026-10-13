@@ -10,6 +10,7 @@ use super::checkpoint::SessionRecord;
 use super::epoch::SlotId;
 use super::guid::Guid;
 use super::kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};
+use super::options::{DeleteOptions, ReadOptions, RmwOptions};
 use super::pending::{
     DiskRecord, PendingDelete, PendingOp, PendingRead, PendingRmw, PendingUpsert, Step,
 };
@@ -122,6 +123,25 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
+        self.read_configured::<false, C>(ctx, serial)
+    }
+
+    pub fn read_with_options<C>(&mut self, ctx: &mut C, serial: u64, options: ReadOptions) -> Status
+    where
+        C: ReadContext<K, V> + Clone + 'static,
+    {
+        if options.abort_if_tombstone {
+            self.read_configured::<true, C>(ctx, serial)
+        } else {
+            self.read_configured::<false, C>(ctx, serial)
+        }
+    }
+
+    #[inline]
+    fn read_configured<const ABORT: bool, C>(&mut self, ctx: &mut C, serial: u64) -> Status
+    where
+        C: ReadContext<K, V> + Clone + 'static,
+    {
         if self.phase != Phase::Rest {
             self.heavy_enter();
         }
@@ -130,7 +150,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         // while the session switches versions.
         let previous = std::mem::replace(&mut self.serial, serial);
         loop {
-            match self.store.internal_read(ctx, self.mode()) {
+            match self.store.internal_read::<ABORT, C>(ctx, self.mode()) {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
                 outcome => {
@@ -140,7 +160,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     };
                     return self.suspend(
                         outcome,
-                        PendingRead {
+                        PendingRead::<C, ABORT> {
                             ctx: ctx.clone(),
                             observed,
                             truncations: self
@@ -180,6 +200,25 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: RmwContext<K, V> + Clone + 'static,
     {
+        self.rmw_configured::<true, C>(ctx, serial)
+    }
+
+    pub fn rmw_with_options<C>(&mut self, ctx: &mut C, serial: u64, options: RmwOptions) -> Status
+    where
+        C: RmwContext<K, V> + Clone + 'static,
+    {
+        if options.create_if_not_exists {
+            self.rmw_configured::<true, C>(ctx, serial)
+        } else {
+            self.rmw_configured::<false, C>(ctx, serial)
+        }
+    }
+
+    #[inline]
+    fn rmw_configured<const CREATE: bool, C>(&mut self, ctx: &mut C, serial: u64) -> Status
+    where
+        C: RmwContext<K, V> + Clone + 'static,
+    {
         if self.phase != Phase::Rest {
             self.heavy_enter();
         }
@@ -188,7 +227,10 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         // while the session switches versions.
         let previous = std::mem::replace(&mut self.serial, serial);
         loop {
-            match self.store.internal_rmw(self.slot(), ctx, self.mode()) {
+            match self
+                .store
+                .internal_rmw::<CREATE, C>(self.slot(), ctx, self.mode())
+            {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
                 outcome => {
@@ -196,7 +238,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                         Outcome::Disk { observed, .. } => observed,
                         _ => Address::default(),
                     };
-                    let op = PendingRmw {
+                    let op = PendingRmw::<C, CREATE> {
                         ctx: ctx.clone(),
                         observed,
                     };
@@ -211,6 +253,25 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: DeleteContext<K> + Clone + 'static,
     {
+        self.delete_configured::<false, C>(ctx, serial)
+    }
+
+    pub fn delete_with_options<C>(&mut self, ctx: &C, serial: u64, options: DeleteOptions) -> Status
+    where
+        C: DeleteContext<K> + Clone + 'static,
+    {
+        if options.force_tombstone {
+            self.delete_configured::<true, C>(ctx, serial)
+        } else {
+            self.delete_configured::<false, C>(ctx, serial)
+        }
+    }
+
+    #[inline]
+    fn delete_configured<const FORCE: bool, C>(&mut self, ctx: &C, serial: u64) -> Status
+    where
+        C: DeleteContext<K> + Clone + 'static,
+    {
         if self.phase != Phase::Rest {
             self.heavy_enter();
         }
@@ -219,10 +280,15 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         // while the session switches versions.
         let previous = std::mem::replace(&mut self.serial, serial);
         loop {
-            match self.store.internal_delete(self.slot(), ctx, self.mode()) {
+            match self
+                .store
+                .internal_delete::<FORCE, C>(self.slot(), ctx, self.mode())
+            {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
-                outcome => return self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
+                outcome => {
+                    return self.suspend(outcome, PendingDelete::<C, FORCE> { ctx: ctx.clone() });
+                }
             }
         }
     }

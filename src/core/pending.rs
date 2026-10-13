@@ -144,7 +144,7 @@ fn lookup<'r, K: Key, V: Value, C: KeyContext<K>>(
     }
 }
 
-pub(crate) struct PendingRead<C> {
+pub(crate) struct PendingRead<C, const ABORT: bool> {
     pub ctx: C,
     /// Index entry seen when the read went to the device; the record found
     /// is cached only if the entry is still unchanged.
@@ -155,7 +155,9 @@ pub(crate) struct PendingRead<C> {
     pub truncations: u64,
 }
 
-impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> {
+impl<K: Key, V: Value, C: ReadContext<K, V>, const ABORT: bool> PendingOp<K, V>
+    for PendingRead<C, ABORT>
+{
     fn hash(&self) -> u64 {
         self.ctx.key_hash()
     }
@@ -179,7 +181,14 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
             }
         }
         let status = match lookup {
-            Lookup::Found(_, true) | Lookup::Missing => Status::NotFound,
+            Lookup::Found(_, true) => {
+                if ABORT {
+                    Status::Aborted
+                } else {
+                    Status::NotFound
+                }
+            }
+            Lookup::Missing => Status::NotFound,
             Lookup::Found(value, false) => {
                 self.ctx.get(value);
                 if store.read_cache.is_some()
@@ -212,7 +221,7 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
     }
 
     fn retry(&mut self, store: &FasterKv<K, V>, _: &SlotId, mode: OpMode) -> Step {
-        let outcome = store.internal_read(&mut self.ctx, mode);
+        let outcome = store.internal_read::<ABORT, C>(&mut self.ctx, mode);
         if let Outcome::Disk { observed, .. } = outcome {
             self.observed = observed;
         }
@@ -220,12 +229,14 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
     }
 }
 
-pub(crate) struct PendingRmw<C> {
+pub(crate) struct PendingRmw<C, const CREATE: bool> {
     pub ctx: C,
     pub observed: Address,
 }
 
-impl<K: Key, V: Value, C: RmwContext<K, V>> PendingOp<K, V> for PendingRmw<C> {
+impl<K: Key, V: Value, C: RmwContext<K, V>, const CREATE: bool> PendingOp<K, V>
+    for PendingRmw<C, CREATE>
+{
     fn hash(&self) -> u64 {
         self.ctx.key_hash()
     }
@@ -241,9 +252,11 @@ impl<K: Key, V: Value, C: RmwContext<K, V>> PendingOp<K, V> for PendingRmw<C> {
         let outcome = match lookup(store, &self.ctx, &mut disk) {
             Lookup::Found(value, tombstone) => {
                 let source = (!tombstone).then_some(value);
-                store.rmw_from_disk(slot, &mut self.ctx, mode, self.observed, source)
+                store.rmw_from_disk::<CREATE, C>(slot, &mut self.ctx, mode, self.observed, source)
             }
-            Lookup::Missing => store.rmw_from_disk(slot, &mut self.ctx, mode, self.observed, None),
+            Lookup::Missing => {
+                store.rmw_from_disk::<CREATE, C>(slot, &mut self.ctx, mode, self.observed, None)
+            }
             Lookup::Previous(address) => {
                 return Step::Read {
                     address,
@@ -264,12 +277,12 @@ impl<K: Key, V: Value, C: RmwContext<K, V>> PendingOp<K, V> for PendingRmw<C> {
     }
 
     fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
-        let outcome = store.internal_rmw(slot, &mut self.ctx, mode);
+        let outcome = store.internal_rmw::<CREATE, C>(slot, &mut self.ctx, mode);
         self.step(outcome)
     }
 }
 
-impl<C> PendingRmw<C> {
+impl<C, const CREATE: bool> PendingRmw<C, CREATE> {
     fn step<K: Key, V: Value>(&mut self, outcome: Outcome) -> Step
     where
         C: RmwContext<K, V>,
@@ -300,11 +313,13 @@ impl<K: Key, V: Value, C: UpsertContext<K, V>> PendingOp<K, V> for PendingUpsert
     }
 }
 
-pub(crate) struct PendingDelete<C> {
+pub(crate) struct PendingDelete<C, const FORCE: bool> {
     pub ctx: C,
 }
 
-impl<K: Key, V: Value, C: DeleteContext<K>> PendingOp<K, V> for PendingDelete<C> {
+impl<K: Key, V: Value, C: DeleteContext<K>, const FORCE: bool> PendingOp<K, V>
+    for PendingDelete<C, FORCE>
+{
     fn hash(&self) -> u64 {
         self.ctx.key_hash()
     }
@@ -314,7 +329,7 @@ impl<K: Key, V: Value, C: DeleteContext<K>> PendingOp<K, V> for PendingDelete<C>
     }
 
     fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
-        let outcome = store.internal_delete(slot, &self.ctx, mode);
+        let outcome = store.internal_delete::<FORCE, C>(slot, &self.ctx, mode);
         Step::from_outcome::<K, V>(outcome, |status| self.ctx.on_complete(status))
     }
 }

@@ -266,24 +266,32 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    pub(crate) fn internal_read<C: ReadContext<K, V>>(&self, ctx: &mut C, mode: OpMode) -> Outcome {
+    pub(crate) fn internal_read<const ABORT: bool, C: ReadContext<K, V>>(
+        &self,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
         if mode.plain {
-            self.read_attempt::<false, C>(ctx, mode)
+            self.read_attempt::<false, ABORT, C>(ctx, mode)
         } else {
-            self.read_general(ctx, mode)
+            self.read_general::<ABORT, C>(ctx, mode)
         }
     }
 
     /// Reads outside the plain fast path, kept out of line so the fast path
     /// stays small enough to inline fully.
     #[inline(never)]
-    fn read_general<C: ReadContext<K, V>>(&self, ctx: &mut C, mode: OpMode) -> Outcome {
-        self.read_attempt::<true, C>(ctx, mode)
+    fn read_general<const ABORT: bool, C: ReadContext<K, V>>(
+        &self,
+        ctx: &mut C,
+        mode: OpMode,
+    ) -> Outcome {
+        self.read_attempt::<true, ABORT, C>(ctx, mode)
     }
 
     /// `RC`: index entries may point into the read cache.
     #[inline(always)]
-    fn read_attempt<const RC: bool, C: ReadContext<K, V>>(
+    fn read_attempt<const RC: bool, const ABORT: bool, C: ReadContext<K, V>>(
         &self,
         ctx: &mut C,
         mode: OpMode,
@@ -310,7 +318,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         if address >= head {
             let record = self.record(address);
             if record.info().tombstone() {
-                return Outcome::Done(Status::NotFound);
+                return Outcome::Done(if ABORT {
+                    Status::Aborted
+                } else {
+                    Status::NotFound
+                });
             }
             // SAFETY: published record; the value lives while we are protected.
             let value = unsafe { record.value() };
@@ -455,43 +467,43 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    pub(crate) fn internal_rmw<C: RmwContext<K, V>>(
+    pub(crate) fn internal_rmw<const CREATE: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
         if mode.plain {
-            self.rmw_loop::<true, false, C>(slot_id, ctx, mode)
+            self.rmw_loop::<true, false, CREATE, C>(slot_id, ctx, mode)
         } else {
-            self.rmw_general(slot_id, ctx, mode)
+            self.rmw_general::<CREATE, C>(slot_id, ctx, mode)
         }
     }
 
     /// RMWs outside the plain fast path, kept out of line.
     #[inline(never)]
-    fn rmw_general<C: RmwContext<K, V>>(
+    fn rmw_general<const CREATE: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
         if mode.phase == Phase::Rest {
-            self.rmw_loop::<true, true, C>(slot_id, ctx, mode)
+            self.rmw_loop::<true, true, CREATE, C>(slot_id, ctx, mode)
         } else {
-            self.rmw_loop::<false, true, C>(slot_id, ctx, mode)
+            self.rmw_loop::<false, true, CREATE, C>(slot_id, ctx, mode)
         }
     }
 
     #[inline(always)]
-    fn rmw_loop<const REST: bool, const RC: bool, C: RmwContext<K, V>>(
+    fn rmw_loop<const REST: bool, const RC: bool, const CREATE: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
         loop {
-            match self.rmw_attempt::<REST, RC, C>(slot_id, ctx, mode) {
+            match self.rmw_attempt::<REST, RC, CREATE, C>(slot_id, ctx, mode) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Disk(address, observed, marked) => {
                     return Outcome::Disk {
@@ -509,7 +521,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// Continues an RMW whose source came from the device (`None` if the key
     /// was not found there). Restarts if a newer record was published meanwhile.
-    pub(crate) fn rmw_from_disk<C: RmwContext<K, V>>(
+    pub(crate) fn rmw_from_disk<const CREATE: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -520,7 +532,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
         if self.skip_and_invalidate(slot.entry.address(), ctx) != observed {
-            return self.internal_rmw(slot_id, ctx, mode);
+            return self.internal_rmw::<CREATE, C>(slot_id, ctx, mode);
         }
         // The request released any checkpoint lock when it went pending, so
         // apply the CPR rules again before appending: a v+1 copy must not
@@ -539,6 +551,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     marked: mode.holds_old,
                 };
             }
+        }
+        if !CREATE && source.is_none() {
+            return Outcome::Done(Status::NotFound);
         }
         let value_size =
             source.map_or_else(|| ctx.initial_value_size(), |old| ctx.copy_value_size(old));
@@ -561,12 +576,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Outcome::Done(Status::Ok)
         } else {
             record.set_invalid();
-            self.internal_rmw(slot_id, ctx, mode)
+            self.internal_rmw::<CREATE, C>(slot_id, ctx, mode)
         }
     }
 
     #[inline(always)]
-    fn rmw_attempt<const REST: bool, const RC: bool, C: RmwContext<K, V>>(
+    fn rmw_attempt<const REST: bool, const RC: bool, const CREATE: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -617,6 +632,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let source = (address >= head)
             .then(|| self.record(address))
             .filter(|record| !record.info().tombstone());
+        if !CREATE && source.is_none() {
+            return Attempt::Done(Status::NotFound);
+        }
         let value_size = source.as_ref().map_or_else(
             || ctx.initial_value_size(),
             |old| {
@@ -656,7 +674,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline]
-    pub(crate) fn internal_delete<C: DeleteContext<K>>(
+    pub(crate) fn internal_delete<const FORCE: bool, C: DeleteContext<K>>(
         &self,
         slot_id: &SlotId,
         ctx: &C,
@@ -664,7 +682,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     ) -> Outcome {
         loop {
             let hash = ctx.key_hash();
-            let Some(slot) = self.index.find(hash) else {
+            let Some(slot) = (if FORCE {
+                Some(self.index.find_or_create(hash))
+            } else {
+                self.index.find(hash)
+            }) else {
                 return Outcome::Done(Status::NotFound);
             };
             let head = self.hlog.head.load();
@@ -689,7 +711,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 self.record(address).set_tombstone();
                 return Outcome::Done(Status::Ok);
             }
-            if address < self.hlog.begin.load() {
+            if !FORCE && address < self.hlog.begin.load() {
                 return Outcome::Done(Status::NotFound);
             }
             let value_size = ctx.value_size().unwrap_or(size_of::<V>() as u32);
