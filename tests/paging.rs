@@ -89,6 +89,7 @@ fn store(name: &str) -> (Store, std::path::PathBuf) {
     let device = Arc::new(FileDevice::open(&dir, 20, 4).unwrap());
     let config = StoreConfig {
         index_buckets: 1 << 14,
+        checkpoint_dir: None,
         log: LogConfig {
             page_bits: 12,
             memory_pages: 8,

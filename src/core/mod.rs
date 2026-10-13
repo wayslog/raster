@@ -1,5 +1,7 @@
 pub mod address;
+pub mod checkpoint;
 pub mod checkpoint_locks;
+pub mod cpr;
 pub mod device;
 pub mod epoch;
 pub mod guid;

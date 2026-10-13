@@ -179,6 +179,28 @@ impl LightEpoch {
         next
     }
 
+    /// Runs every registered action regardless of epochs. Only for teardown,
+    /// when no session can still be protected.
+    pub fn drain_all(&self) {
+        for entry in self.drain.iter() {
+            let epoch = entry.epoch.load(Ordering::Acquire);
+            if epoch < LOCKED
+                && entry
+                    .epoch
+                    .compare_exchange(epoch, LOCKED, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+            {
+                // SAFETY: this thread holds the entry lock.
+                let action = unsafe { (*entry.action.get()).take() };
+                entry.epoch.store(FREE, Ordering::Release);
+                self.drain_count.0.fetch_sub(1, Ordering::AcqRel);
+                if let Some(action) = action {
+                    action();
+                }
+            }
+        }
+    }
+
     /// Forgets every slot's finished phase before a new state-machine run.
     pub fn reset_phase_finished(&self) {
         for slot in self.slots.iter() {
