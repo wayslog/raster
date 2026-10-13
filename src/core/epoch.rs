@@ -92,6 +92,16 @@ impl LightEpoch {
         self.reserve_slot(false)
     }
 
+    /// A point-in-time count of user sessions, excluding internal helpers.
+    pub fn num_active_sessions(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|slot| {
+                slot.used.load(Ordering::Acquire) && slot.session.load(Ordering::Acquire)
+            })
+            .count()
+    }
+
     fn reserve_slot(&self, session: bool) -> Option<SlotId> {
         let index = self.slots.iter().position(|slot| {
             slot.used

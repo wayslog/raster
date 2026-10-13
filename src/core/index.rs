@@ -88,6 +88,31 @@ pub struct Table {
 }
 
 impl Table {
+    /// Histogram of occupied, non-tentative entries per primary bucket,
+    /// including its overflow chain. Callers protect the table's epoch.
+    pub(crate) fn distribution(&self) -> std::collections::BTreeMap<usize, usize> {
+        let mut histogram = std::collections::BTreeMap::new();
+        for primary in &self.buckets {
+            let mut bucket = primary;
+            let mut count = 0;
+            loop {
+                count += bucket
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        let entry = Entry(entry.load(Ordering::Acquire));
+                        !entry.unused() && !entry.tentative() && entry.address() != Address::INVALID
+                    })
+                    .count();
+                match Self::next(bucket) {
+                    Some(next) => bucket = next,
+                    None => break,
+                }
+            }
+            *histogram.entry(count).or_insert(0) += 1;
+        }
+        histogram
+    }
     pub fn new(buckets: u64) -> Self {
         let len = buckets.max(1).next_power_of_two();
         Self {

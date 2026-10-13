@@ -105,6 +105,23 @@ pub(crate) enum Outcome {
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
+    /// Active user sessions; internal scanner helpers are excluded.
+    pub fn num_active_sessions(&self) -> usize {
+        self.epoch.num_active_sessions()
+    }
+
+    /// Histogram: chain-head entries per primary bucket, including overflow.
+    /// This is a concurrent snapshot of entries, not a count of live keys.
+    pub fn index_distribution(&self) -> std::collections::BTreeMap<usize, usize> {
+        let slot = self
+            .epoch
+            .reserve_helper()
+            .expect("all epoch slots are in use");
+        self.epoch.protect_and_drain(&slot);
+        let distribution = self.index.table().distribution();
+        self.epoch.release(slot);
+        distribution
+    }
     pub fn new(config: StoreConfig) -> Self {
         Self::with_device(config, Arc::new(super::device::NullDevice))
     }
