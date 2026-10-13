@@ -55,6 +55,8 @@ pub struct FasterKv<K: Key, V: Value> {
     pub(crate) cpr: std::sync::Mutex<CprRun>,
     pub(crate) gc: std::sync::Mutex<super::gc::GcRun>,
     pub(crate) gc_next_chunk: std::sync::atomic::AtomicU64,
+    pub(crate) grow: std::sync::Mutex<super::grow::GrowRun>,
+    pub(crate) grow_next_chunk: std::sync::atomic::AtomicU64,
     pub(crate) dirs: Option<CheckpointDirs>,
     /// Persisted serial numbers of recovered sessions, by session GUID.
     pub(crate) continue_tokens: std::sync::Mutex<std::collections::HashMap<super::guid::Guid, u64>>,
@@ -110,6 +112,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             cpr: Default::default(),
             gc: Default::default(),
             gc_next_chunk: Default::default(),
+            grow: Default::default(),
+            grow_next_chunk: Default::default(),
             dirs: config.checkpoint_dir.map(|root| CheckpointDirs { root }),
             continue_tokens: Default::default(),
             _types: PhantomData,
