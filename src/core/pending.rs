@@ -6,23 +6,41 @@ use super::kv::{DeleteContext, Key, KeyContext, ReadContext, RmwContext, UpsertC
 use super::record::{Layout, Record};
 use super::store::{FasterKv, OpMode, Outcome, Status};
 
-/// A record read from the device, copied into 8-byte aligned memory.
+/// Owned device bytes with enough initialized padding for record copies.
+struct DiskBuffer(Vec<u8>);
+
+impl DiskBuffer {
+    fn from_bytes(mut bytes: Vec<u8>) -> Self {
+        let padded = bytes.len().next_multiple_of(8);
+        bytes.resize(padded, 0);
+        if !bytes.as_ptr().cast::<u64>().is_aligned() {
+            // Reserve enough initialized space to align within the same allocation.
+            bytes.resize(padded + 7, 0);
+            let offset = bytes.as_ptr().align_offset(8);
+            bytes.copy_within(..padded, offset);
+        }
+        Self(bytes)
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        let ptr = self.0.as_mut_ptr();
+        ptr.wrapping_add(ptr.align_offset(8))
+    }
+}
+
+/// A record read from the device, owned in 8-byte aligned, padded memory.
 pub(crate) struct DiskRecord {
-    words: Vec<u64>,
+    buffer: DiskBuffer,
     len: usize,
     pub address: Address,
 }
 
 impl DiskRecord {
-    pub fn new(bytes: &[u8], address: Address) -> Self {
-        let mut words = vec![0u64; bytes.len().div_ceil(8)];
-        // SAFETY: `words` has at least `bytes.len()` bytes and does not overlap.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast(), bytes.len())
-        };
+    pub fn new(bytes: Vec<u8>, address: Address) -> Self {
+        let len = bytes.len();
         Self {
-            words,
-            len: bytes.len(),
+            buffer: DiskBuffer::from_bytes(bytes),
+            len,
             address,
         }
     }
@@ -36,7 +54,7 @@ impl DiskRecord {
             return Err(DiskError::Corruption);
         }
         // SAFETY: the aligned buffer owns len bytes; subsequent access is staged.
-        let record = unsafe { Record::<K, V>::from_ptr(self.words.as_mut_ptr().cast()) };
+        let record = unsafe { Record::<K, V>::from_ptr(self.buffer.as_mut_ptr()) };
         if record.info().is_null() {
             return Err(DiskError::Corruption);
         }
@@ -331,5 +349,49 @@ impl<K: Key, V: Value, C: DeleteContext<K>, const FORCE: bool> PendingOp<K, V>
     fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
         let outcome = store.internal_delete::<FORCE, C>(slot, &self.ctx, mode);
         Step::from_outcome::<K, V>(outcome, |status| self.ctx.on_complete(status))
+    }
+}
+
+#[cfg(test)]
+mod disk_record_tests {
+    use super::*;
+
+    fn short_record() -> Vec<u8> {
+        let mut bytes = vec![0xff; 24];
+        bytes[..8].copy_from_slice(&(1u64 << 48).to_le_bytes());
+        bytes[8..16].copy_from_slice(&42u64.to_le_bytes());
+        bytes[16] = 7;
+        bytes.truncate(17);
+        bytes
+    }
+
+    #[test]
+    fn owned_device_bytes_zero_padding_before_full_record_copy() {
+        let mut disk = DiskRecord::new(short_record(), Address::new(0, 64));
+        let record = match disk.record::<u64, u8>(4096) {
+            Ok(record) => record,
+            Err(_) => panic!("complete device record must be accepted"),
+        };
+        // SAFETY: record() verified all headers and payload, with initialized padding.
+        unsafe {
+            assert_eq!(*record.key(), 42);
+            assert_eq!(*record.value(), 7);
+            assert_eq!(record.size(), 24);
+            assert_eq!(*disk.buffer.as_mut_ptr().cast::<u64>().add(2), 7);
+        }
+    }
+
+    #[test]
+    fn initialized_padding_does_not_count_as_received_device_bytes() {
+        let mut disk = DiskRecord::new(short_record(), Address::new(0, 64));
+        assert!(matches!(
+            disk.record::<u64, u32>(4096),
+            Err(DiskError::NeedMore(20))
+        ));
+        let mut empty = DiskRecord::new(Vec::new(), Address::new(0, 64));
+        assert!(matches!(
+            empty.record::<u64, u8>(4096),
+            Err(DiskError::Corruption)
+        ));
     }
 }

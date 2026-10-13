@@ -85,6 +85,10 @@ fn store(name: &str) -> (Store, std::path::PathBuf) {
     let device = Arc::new(FileDevice::open(&dir, 20, 4).unwrap());
     let config = StoreConfig {
         index_buckets: 1 << 14,
+        filepath: None,
+        pre_allocate: true,
+        read_cache: None,
+        auto_compaction: None,
         log_size_budget: 0,
         checkpoint_dir: None,
         log: LogConfig {

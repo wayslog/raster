@@ -296,6 +296,10 @@ impl Drop for TestDirectory {
 pub fn config(dir: &TestDirectory, resident: bool) -> StoreConfig {
     StoreConfig {
         index_buckets: 256,
+        filepath: None,
+        pre_allocate: true,
+        read_cache: None,
+        auto_compaction: None,
         log_size_budget: 0,
         log: raster::core::hlog::LogConfig {
             page_bits: 12,
@@ -314,6 +318,7 @@ pub fn store(dir: &TestDirectory, resident: bool, cache: bool) -> VarStore {
             config(dir, resident),
             device,
             ReadCacheConfig {
+                pre_allocate: true,
                 log: raster::core::hlog::LogConfig {
                     page_bits: 12,
                     memory_pages: 4,

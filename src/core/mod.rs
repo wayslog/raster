@@ -3,6 +3,7 @@ pub mod auto_compact;
 pub mod checkpoint;
 pub mod checkpoint_locks;
 mod compact;
+pub mod config;
 pub mod cpr;
 pub mod device;
 pub mod epoch;

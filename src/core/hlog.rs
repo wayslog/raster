@@ -151,9 +151,9 @@ impl HybridLog {
 
     /// Hints that the record at `address` is about to be updated, so its cache
     /// line is fetched once in exclusive state instead of shared then upgraded.
-    /// Prefetches never fault, so any address is acceptable. The asm is a
-    /// compiler memory barrier on purpose: if the record's loads were hoisted
-    /// above it, the line would arrive shared first and need an upgrade.
+    /// Prefetches never fault, so any address is acceptable. A compiler fence
+    /// keeps record loads after the hint without declaring that the hint
+    /// modifies unrelated context memory.
     #[inline(always)]
     pub fn prefetch_for_write(&self, address: Address) {
         let ptr = self.get(address);
@@ -161,13 +161,14 @@ impl HybridLog {
         // SAFETY: PREFETCHW only hints the cache and never faults; it decodes
         // as a NOP on CPUs without PRFCHW.
         unsafe {
-            std::arch::asm!("prefetchw [{0}]", in(reg) ptr, options(nostack, preserves_flags));
+            std::arch::asm!("prefetchw [{0}]", in(reg) ptr, options(readonly, nostack, preserves_flags));
         }
         #[cfg(target_arch = "aarch64")]
         // SAFETY: PRFM only hints the cache and never faults.
         unsafe {
-            std::arch::asm!("prfm pstl1keep, [{0}]", in(reg) ptr, options(nostack, preserves_flags));
+            std::arch::asm!("prfm pstl1keep, [{0}]", in(reg) ptr, options(readonly, nostack, preserves_flags));
         }
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let _ = ptr;
     }

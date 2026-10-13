@@ -196,7 +196,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn rmw<C>(&mut self, ctx: &mut C, serial: u64) -> Status
     where
         C: RmwContext<K, V> + Clone + 'static,
@@ -215,7 +215,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn rmw_configured<const CREATE: bool, C>(&mut self, ctx: &mut C, serial: u64) -> Status
     where
         C: RmwContext<K, V> + Clone + 'static,
@@ -301,14 +301,18 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
 
     /// Copies a record to the tail if it is still the newest version of its
     /// key; used by compaction. Returns Ok (copied), Aborted or Pending.
-    pub(crate) fn copy_record(&mut self, mut request: super::compact::CopyRequest<K, V>) -> Status {
+    pub(crate) fn copy_record(
+        &mut self,
+        request: super::compact::CopyRequest<'_, K, V>,
+        failure: &std::rc::Rc<std::cell::Cell<Option<Status>>>,
+    ) -> Status {
         if self.phase != Phase::Rest {
             self.heavy_enter();
         }
         loop {
             match self
                 .store
-                .conditional_insert(self.slot(), &mut request, self.mode())
+                .conditional_insert(self.slot(), &request, self.mode())
             {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(self.serial, self.serial),
@@ -317,7 +321,13 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                         Outcome::Disk { observed, .. } => observed,
                         _ => Address::default(),
                     };
-                    let op = super::compact::PendingCopy { request, observed };
+                    let op = super::compact::PendingCopy {
+                        words: request.words.to_vec(),
+                        types: std::marker::PhantomData,
+                        failure: failure.clone(),
+                        search_min: request.search_min,
+                        observed,
+                    };
                     return self.suspend(outcome, op);
                 }
             }
@@ -584,7 +594,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             for (id, result) in batch {
                 let disk = result
                     .ok()
-                    .map(|bytes| DiskRecord::new(&bytes, self.pending[&id].address));
+                    .map(|bytes| DiskRecord::new(bytes, self.pending[&id].address));
                 let mode = self.entry_mode(&self.pending[&id]);
                 let slot = self.slot.as_ref().expect("live session");
                 let entry = self.pending.get_mut(&id).expect("pending entry");

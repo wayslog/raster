@@ -34,6 +34,10 @@ fn store(dir: &std::path::Path) -> Store {
     Store::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            filepath: None,
+            pre_allocate: true,
+            read_cache: None,
+            auto_compaction: None,
             log_size_budget: 0,
             log: LogConfig {
                 page_bits: 16,

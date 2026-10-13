@@ -112,6 +112,10 @@ fn main() {
     let device = Arc::new(FileDevice::open_with(&args[5], 30, 8, false).unwrap());
     let config = StoreConfig {
         index_buckets: 1 << 22,
+        filepath: None,
+        pre_allocate: true,
+        read_cache: None,
+        auto_compaction: None,
         log_size_budget: 0,
         checkpoint_dir: None,
         log: LogConfig {
@@ -126,7 +130,14 @@ fn main() {
             memory_pages: read_cache_mb >> 5,
             mutable_fraction: 0.9,
         };
-        FasterKv::<u64, AtomicU64>::with_read_cache(config, device, ReadCacheConfig { log })
+        FasterKv::<u64, AtomicU64>::with_read_cache(
+            config,
+            device,
+            ReadCacheConfig {
+                log,
+                pre_allocate: true,
+            },
+        )
     } else {
         FasterKv::<u64, AtomicU64>::with_device(config, device)
     };

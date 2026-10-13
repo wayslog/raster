@@ -73,6 +73,10 @@ fn store(dir: &std::path::Path, buckets: u64) -> Store {
     FasterKv::with_read_cache(
         StoreConfig {
             index_buckets: buckets,
+            filepath: None,
+            pre_allocate: true,
+            read_cache: None,
+            auto_compaction: None,
             log_size_budget: 0,
             checkpoint_dir: Some(dir.join("checkpoints")),
             log: LogConfig {
@@ -83,6 +87,7 @@ fn store(dir: &std::path::Path, buckets: u64) -> Store {
         },
         device,
         ReadCacheConfig {
+            pre_allocate: true,
             log: LogConfig {
                 page_bits: 12,
                 memory_pages: 4,

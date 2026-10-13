@@ -29,6 +29,14 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct StoreConfig {
     pub index_buckets: u64,
+    /// Device path used by open; new and with_device retain explicit device selection.
+    pub filepath: Option<std::path::PathBuf>,
+    /// Allocation hint. Frames are currently allocated eagerly for either value.
+    pub pre_allocate: bool,
+    pub read_cache: Option<super::read_cache::ReadCacheConfig>,
+    /// Background policy to start explicitly with spawn_auto_compaction.
+    pub auto_compaction: Option<super::auto_compact::AutoCompactionConfig>,
+    /// Zero disables write-side assistance; otherwise writers help active compaction at this budget.
     pub log_size_budget: u64,
     /// Every complete record must fit in one log page; larger records panic.
     pub log: LogConfig,
@@ -40,6 +48,10 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             index_buckets: 1 << 20,
+            filepath: None,
+            pre_allocate: true,
+            read_cache: None,
+            auto_compaction: None,
             log_size_budget: 0,
             log: LogConfig::default(),
             checkpoint_dir: None,
@@ -122,12 +134,23 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.epoch.release(slot);
         distribution
     }
+    /// Opens buffered local storage for a configured filepath, or a memory-only
+    /// store for an empty path. Background compaction is started explicitly.
+    pub fn open(config: StoreConfig) -> std::io::Result<Self> {
+        let device: Arc<dyn super::device::Device> = match config.filepath.as_ref() {
+            Some(path) => Arc::new(super::device::FileDevice::open_with(path, 30, 8, false)?),
+            None => Arc::new(super::device::NullDevice),
+        };
+        Ok(Self::with_device(config, device))
+    }
+
     pub fn new(config: StoreConfig) -> Self {
         Self::with_device(config, Arc::new(super::device::NullDevice))
     }
 
     pub fn with_device(config: StoreConfig, device: Arc<dyn super::device::Device>) -> Self {
-        Self::with_options(config, device, None)
+        let read_cache = config.read_cache;
+        Self::with_options(config, device, read_cache)
     }
 
     /// A store that caches records read from the device in memory.
@@ -329,7 +352,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             }
         }
         let head = self.hlog.head.load();
-        if mode.phase == Phase::Prepare
+        if RC
+            && mode.phase == Phase::Prepare
             && !mode.holds_old
             && record_newer(self.latest_version(entry, head), mode.version)
         {
@@ -355,6 +379,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Outcome::Done(Status::Ok)
         } else if address < self.hlog.begin.load() {
             Outcome::Done(Status::NotFound)
+        } else if !RC {
+            Outcome::Disk {
+                address,
+                observed: slot.entry.address(),
+                marked: mode.holds_old,
+            }
         } else {
             match self.mark_pending(mode, hash, LockGuard::none()) {
                 Some(marked) => Outcome::Disk {
@@ -403,8 +433,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
+        let hash = ctx.key_hash();
         loop {
-            match self.upsert_attempt::<REST, RC, C>(slot_id, ctx, mode) {
+            match self.upsert_attempt::<REST, RC, C>(slot_id, ctx, mode, hash) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Retry => {}
                 Attempt::Shift => return Outcome::Shift,
@@ -420,8 +451,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
+        hash: u64,
     ) -> Attempt {
-        let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
         self.hlog.prefetch_for_write(slot.entry.address());
         // Load both boundaries before touching the record, as FASTER does.
@@ -523,8 +554,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
+        let hash = ctx.key_hash();
         loop {
-            match self.rmw_attempt::<REST, RC, CREATE, C>(slot_id, ctx, mode) {
+            match self.rmw_attempt::<REST, RC, CREATE, C>(slot_id, ctx, mode, hash) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Disk(address, observed, marked) => {
                     return Outcome::Disk {
@@ -607,8 +639,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
+        hash: u64,
     ) -> Attempt {
-        let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
@@ -701,8 +733,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &C,
         mode: OpMode,
     ) -> Outcome {
+        let hash = ctx.key_hash();
         loop {
-            let hash = ctx.key_hash();
             let Some(slot) = (if FORCE {
                 Some(self.index.find_or_create(hash))
             } else {

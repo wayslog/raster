@@ -64,6 +64,10 @@ fn shift_begin_address_truncates_segments_and_index() {
     let store = FasterKv::<u64, AtomicU64>::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            filepath: None,
+            pre_allocate: true,
+            read_cache: None,
+            auto_compaction: None,
             log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
@@ -136,6 +140,10 @@ fn gc_completes_while_sessions_keep_writing() {
     let store = FasterKv::<u64, AtomicU64>::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            filepath: None,
+            pre_allocate: true,
+            read_cache: None,
+            auto_compaction: None,
             log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
@@ -165,10 +173,12 @@ fn gc_completes_while_sessions_keep_writing() {
         }
     }
     let completed = Arc::new(AtomicUsize::new(0));
+    let ready = std::sync::Barrier::new(THREADS as usize + 1);
     std::thread::scope(|scope| {
         for t in 0..THREADS {
             let store = &store;
             let completed = &completed;
+            let ready = &ready;
             scope.spawn(move || {
                 // Another action may already be running; wait for REST.
                 let mut session = loop {
@@ -177,6 +187,7 @@ fn gc_completes_while_sessions_keep_writing() {
                     }
                     std::thread::yield_now();
                 };
+                ready.wait();
                 for round in 0..ROUNDS {
                     for key in 0..KEYS {
                         // Values are the round number; every write appends
@@ -194,6 +205,7 @@ fn gc_completes_while_sessions_keep_writing() {
                 }
             });
         }
+        ready.wait();
         let mut shifted = 0;
         while shifted < 3 {
             std::thread::sleep(std::time::Duration::from_millis(5));
