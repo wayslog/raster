@@ -307,3 +307,114 @@ fn checkpoint_writes_log_addresses_for_cached_entries() {
     drop(store);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod common;
+use common::varlen::{self as variable, TestDirectory};
+
+#[test]
+fn variable_cache_insert_evict_and_invalidate() {
+    let dir = TestDirectory::new("cache-cycle");
+    let store = variable::store(&dir, false, true);
+    let mut session = store.start_session();
+    for id in 0..600 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 17 + id as usize % 811), id),
+            Status::Ok
+        );
+    }
+    let mut first = variable::request(0, 0);
+    assert_eq!(
+        first.read(&mut session, 600),
+        (Status::Ok, vec![88; 17], true)
+    );
+    assert_eq!(
+        first.read(&mut session, 601),
+        (Status::Ok, vec![88; 17], false)
+    );
+    let mut update = variable::request(0, 999);
+    update.data.fill(12);
+    assert_eq!(session.upsert(&mut update, 602), Status::Ok);
+    for id in 1..600 {
+        assert_eq!(
+            variable::request(id, 0).read(&mut session, 603 + id).1,
+            vec![88; 17 + id as usize % 811]
+        );
+    }
+    assert_eq!(first.read(&mut session, 1203).1, vec![12; 999]);
+    let delete = variable::request(1, 0);
+    assert_eq!(session.delete(&delete, 1204), Status::Ok);
+    assert_eq!(
+        variable::request(1, 0).read(&mut session, 1205).0,
+        Status::NotFound
+    );
+}
+
+#[test]
+fn variable_cache_insert_abort_preserves_concurrent_upsert() {
+    let dir = TestDirectory::new("cache-insert-abort");
+    let store = variable::store(&dir, false, true);
+    let mut session = store.start_session();
+    for id in 0..600 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 129), id),
+            Status::Ok
+        );
+    }
+    let mut read = variable::request(0, 0);
+    assert_eq!(session.read(&mut read, 600), Status::Pending);
+    let mut update = variable::request(0, 777);
+    update.data.fill(15);
+    assert_eq!(session.upsert(&mut update, 601), Status::Ok);
+    assert!(session.complete_pending(true));
+    let old = read.out.borrow_mut().take().unwrap();
+    assert_eq!(old, (Status::Ok, vec![88; 129]));
+    assert_eq!(
+        read.read(&mut session, 602),
+        (Status::Ok, vec![15; 777], false)
+    );
+}
+
+#[test]
+fn variable_cache_concurrent_reads_remain_monotonic() {
+    let dir = TestDirectory::new("cache-concurrent");
+    let store = variable::store(&dir, false, true);
+    {
+        let mut session = store.start_session();
+        for id in 0..600 {
+            let mut op = variable::request(id, 128);
+            op.data.fill(0);
+            assert_eq!(session.upsert(&mut op, id), Status::Ok);
+        }
+    }
+    std::thread::scope(|scope| {
+        for worker in 0..4 {
+            let store = &store;
+            scope.spawn(move || {
+                let mut session = store.start_session();
+                let mut seen = vec![0; 600];
+                for round in 0..3 {
+                    for id in 0..600 {
+                        let mut op = variable::request(id, 0);
+                        if worker < 2 {
+                            op.increment = 1;
+                            op.suffix = vec![88; 8];
+                            let status = session.rmw(&mut op, round * 600 + id);
+                            variable::finish_write(&mut session, status);
+                        } else {
+                            let (status, bytes, _) = op.read(&mut session, round * 600 + id);
+                            assert_eq!(status, Status::Ok);
+                            let count = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+                            assert!(count >= seen[id as usize]);
+                            seen[id as usize] = count;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let mut session = store.start_session();
+    for id in 0..600 {
+        let bytes = variable::request(id, 0).read(&mut session, id).1;
+        assert_eq!(u64::from_le_bytes(bytes[..8].try_into().unwrap()), 6);
+    }
+}
