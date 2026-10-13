@@ -29,6 +29,13 @@ pub(crate) struct CprRun {
     pub index_writer: Option<JoinHandle<io::Result<u64>>>,
     /// Set if writing any artifact failed; callbacks then report `IoError`.
     pub failed: bool,
+    pub started: Option<std::time::Instant>,
+}
+
+/// Prints phase transition times when `RASTER_CPR_TRACE` is set.
+fn trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("RASTER_CPR_TRACE").is_some())
 }
 
 struct IndexPtr(*const super::index::HashIndex);
@@ -118,6 +125,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 },
                 index_callback,
                 log_callback,
+                started: Some(std::time::Instant::now()),
                 ..Default::default()
             };
         }
@@ -137,6 +145,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             return false;
         }
         let mut run = self.cpr.lock().unwrap();
+        if trace_enabled() {
+            let elapsed = run.started.map(|t| t.elapsed()).unwrap_or_default();
+            eprintln!("cpr {:?} -> {:?} at {elapsed:?}", current.phase, next.phase);
+        }
         match next.phase {
             Phase::IndexCheckpoint => {
                 let dir = self.dirs.as_ref().expect("checkpoint dir").index(run.token);

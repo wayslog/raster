@@ -301,8 +301,19 @@ impl HashIndex {
     }
 }
 
-fn words_as_bytes(words: &[u64]) -> Vec<u8> {
-    words.iter().flat_map(|w| w.to_le_bytes()).collect()
+/// The little-endian byte image of `words`, without copying on little-endian targets.
+#[cfg(target_endian = "little")]
+fn words_as_bytes(words: &[u64]) -> std::borrow::Cow<'_, [u8]> {
+    // SAFETY: u64 has no padding, any byte pattern is a valid u8, and the
+    // slice covers exactly the words' memory.
+    std::borrow::Cow::Borrowed(unsafe {
+        std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), std::mem::size_of_val(words))
+    })
+}
+
+#[cfg(not(target_endian = "little"))]
+fn words_as_bytes(words: &[u64]) -> std::borrow::Cow<'_, [u8]> {
+    std::borrow::Cow::Owned(words.iter().flat_map(|w| w.to_le_bytes()).collect())
 }
 
 impl Drop for HashIndex {
