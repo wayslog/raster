@@ -80,7 +80,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             if chunk >= old.chunks() {
                 return;
             }
-            old.split_chunk(new, chunk, &route);
+            old.split_chunk(new, chunk, &route, &|entry| self.skip_read_cache(entry));
         }
     }
 

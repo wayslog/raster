@@ -142,9 +142,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             // buffered I/O does, without holding the run lock.
             let dir = self.dirs.as_ref().expect("checkpoint dir").index(run.token);
             drop(run);
-            let result = self
-                .index
-                .write_checkpoint(&dir.join("ht.dat"), &dir.join("ofb.dat"));
+            // This session stays protected, so cache records stay readable.
+            let result =
+                self.index
+                    .write_checkpoint(&dir.join("ht.dat"), &dir.join("ofb.dat"), &|entry| {
+                        self.skip_read_cache(entry)
+                    });
             self.cpr.lock().unwrap().index_result = Some(result);
             return true;
         }

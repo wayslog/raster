@@ -39,8 +39,8 @@ pub enum Allocation {
     Ok(Address),
     /// The tail page is full; this caller must open `page + 1`.
     PageFull(u64),
-    /// Another caller is opening the next page.
-    Retry,
+    /// Another caller is opening `page + 1`.
+    Retry(u64),
 }
 
 #[repr(align(128))]
@@ -200,20 +200,27 @@ impl HybridLog {
             // This caller crossed the boundary and owns opening the next page.
             Allocation::PageFull(page)
         } else {
-            Allocation::Retry
+            Allocation::Retry(page)
         }
     }
 
     /// Opens `old_page + 1` once its frame is free. Returns false if the
     /// caller must refresh its epoch and try again.
     pub fn new_page(&self, old_page: u64) -> bool {
+        self.new_page_with(old_page, |_, _| {})
+    }
+
+    /// [`HybridLog::new_page`] that calls `before_evict(from, to)` before the
+    /// head moves from `from` to `to`, so the read cache can unlink records
+    /// in the closing pages first. Idempotent for a page already opened.
+    pub fn new_page_with(&self, old_page: u64, before_evict: impl Fn(Address, Address)) -> bool {
         let new_page = old_page + 1;
         assert!(
             new_page <= Address::MAX_PAGE,
             "hybrid log address space exhausted"
         );
         if new_page >= self.safe_head.load().page() + self.frames.len() as u64 {
-            self.shift_boundaries(old_page);
+            self.shift_boundaries(old_page, &before_evict);
             return false;
         }
         // Other callers keep bumping the offset of the full page, so retry the
@@ -228,7 +235,7 @@ impl HybridLog {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    self.shift_boundaries(new_page);
+                    self.shift_boundaries(new_page, &before_evict);
                     break;
                 }
                 Err(observed) => current = observed,
@@ -237,7 +244,7 @@ impl HybridLog {
         true
     }
 
-    fn shift_boundaries(&self, tail_page: u64) {
+    fn shift_boundaries(&self, tail_page: u64, before_evict: &impl Fn(Address, Address)) {
         self.shift_read_only_to(Address::new(
             tail_page.saturating_sub(self.mutable_pages),
             0,
@@ -245,6 +252,10 @@ impl HybridLog {
         let frames = self.frames.len() as u64;
         let desired = Address::new((tail_page + 2).saturating_sub(frames), 0);
         let head = desired.min(self.flushed_until.load());
+        let current = self.head.load();
+        if head > current {
+            before_evict(current, head);
+        }
         if self.head.monotonic_update(head) {
             let log = LogPtr(self);
             self.epoch.bump_with_action(move || {
@@ -508,7 +519,7 @@ mod tests {
                             epoch.protect_and_drain(&slot);
                         }
                     }
-                    Allocation::Retry => {
+                    Allocation::Retry(_) => {
                         epoch.protect_and_drain(&slot);
                     }
                 }
@@ -551,7 +562,7 @@ mod flush_tests {
                             epoch.protect_and_drain(&slot);
                         }
                     }
-                    Allocation::Retry => {}
+                    Allocation::Retry(_) => {}
                 }
             };
             // SAFETY: freshly allocated, exclusive, in memory.
