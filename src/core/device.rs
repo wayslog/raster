@@ -235,6 +235,18 @@ impl FileDevice {
 
 impl Device for FileDevice {
     unsafe fn write_async(&self, offset: u64, data: *const u8, len: usize, done: WriteCallback) {
+        if !self.inner.direct {
+            // Like libaio on a buffered file, copy into the page cache on the
+            // caller instead of waking another thread.
+            // SAFETY: the caller keeps the buffer valid until `done` runs.
+            let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+            return done(
+                self.inner
+                    .for_each_piece(offset, len, |file, at, from, piece| {
+                        file.write_all_at(&bytes[from..from + piece], at)
+                    }),
+            );
+        }
         let inner = self.inner.clone();
         let data = SendPtr(data);
         self.submit(Box::new(move || {

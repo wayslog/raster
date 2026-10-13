@@ -12,7 +12,6 @@ use super::store::{FasterKv, Status};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::thread::JoinHandle;
 
 pub type IndexCallback = Box<dyn FnOnce(Status) + Send>;
 /// Called once per participating session with its persisted serial number.
@@ -26,7 +25,8 @@ pub(crate) struct CprRun {
     pub log_meta: LogMetadata,
     pub index_callback: Option<IndexCallback>,
     pub log_callback: Option<LogCallback>,
-    pub index_writer: Option<JoinHandle<io::Result<u64>>>,
+    /// Outcome of the fuzzy index write (overflow bucket count).
+    pub index_result: Option<io::Result<u64>>,
     /// Set if writing any artifact failed; callbacks then report `IoError`.
     pub failed: bool,
     pub started: Option<std::time::Instant>,
@@ -36,18 +36,6 @@ pub(crate) struct CprRun {
 fn trace_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("RASTER_CPR_TRACE").is_some())
-}
-
-struct IndexPtr(*const super::index::HashIndex);
-// SAFETY: the store joins the writer thread before the index is dropped.
-unsafe impl Send for IndexPtr {}
-impl IndexPtr {
-    /// # Safety
-    /// The index must still be alive.
-    unsafe fn get(&self) -> &super::index::HashIndex {
-        // SAFETY: guaranteed by the caller.
-        unsafe { &*self.0 }
-    }
 }
 
 struct LocksPtr(*mut CheckpointLocks);
@@ -149,16 +137,18 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             let elapsed = run.started.map(|t| t.elapsed()).unwrap_or_default();
             eprintln!("cpr {:?} -> {:?} at {elapsed:?}", current.phase, next.phase);
         }
+        if next.phase == Phase::IndexCheckpoint {
+            // Write the fuzzy index on this session thread, as FASTER's
+            // buffered I/O does, without holding the run lock.
+            let dir = self.dirs.as_ref().expect("checkpoint dir").index(run.token);
+            drop(run);
+            let result = self
+                .index
+                .write_checkpoint(&dir.join("ht.dat"), &dir.join("ofb.dat"));
+            self.cpr.lock().unwrap().index_result = Some(result);
+            return true;
+        }
         match next.phase {
-            Phase::IndexCheckpoint => {
-                let dir = self.dirs.as_ref().expect("checkpoint dir").index(run.token);
-                let index = IndexPtr(&self.index);
-                run.index_writer = Some(std::thread::spawn(move || {
-                    // SAFETY: `FasterKv::drop` joins this thread first.
-                    let index = unsafe { index.get() };
-                    index.write_checkpoint(&dir.join("ht.dat"), &dir.join("ofb.dat"))
-                }));
-            }
             Phase::Prepare if current.action == Action::CheckpointFull => {
                 self.finish_index_checkpoint(&mut run);
             }
@@ -190,11 +180,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     fn finish_index_checkpoint(&self, run: &mut CprRun) {
-        let written = run
-            .index_writer
-            .take()
-            .map(|writer| writer.join().expect("index checkpoint writer panicked"));
-        match written {
+        match run.index_result.take() {
             Some(Ok(ofb_count)) => run.index_meta.ofb_count = ofb_count,
             _ => run.failed = true,
         }
@@ -212,9 +198,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     pub(crate) fn index_checkpoint_complete(&self) -> bool {
         let run = self.cpr.lock().unwrap();
-        run.index_writer
-            .as_ref()
-            .is_some_and(JoinHandle::is_finished)
+        run.index_result.is_some()
     }
 
     pub(crate) fn register_session(&self, guid: Guid) {
@@ -260,9 +244,6 @@ impl<K: Key, V: Value> Drop for FasterKv<K, V> {
         // No sessions remain (they borrow the store); run deferred actions
         // such as freeing the lock table while the log is still alive.
         self.epoch.drain_all();
-        if let Some(writer) = self.cpr.get_mut().unwrap().index_writer.take() {
-            let _ = writer.join();
-        }
         let locks = *self.checkpoint_locks.get_mut();
         if !locks.is_null() {
             // SAFETY: no sessions remain; the table is uniquely owned here.
