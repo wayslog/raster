@@ -126,7 +126,13 @@ fn growth_under_concurrent_rmw_loses_no_update() {
         for t in 0..THREADS {
             let store = &store;
             scope.spawn(move || {
-                let mut session = store.start_session();
+                // Another action may already be running; wait for REST.
+                let mut session = loop {
+                    if let Some(session) = store.try_start_session() {
+                        break session;
+                    }
+                    std::thread::yield_now();
+                };
                 for round in 0..ROUNDS {
                     for key in 0..KEYS {
                         rmw(&mut session, key, 1, (round * KEYS + key) * THREADS + t);

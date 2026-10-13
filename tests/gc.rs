@@ -153,7 +153,13 @@ fn gc_completes_while_sessions_keep_writing() {
         for t in 0..THREADS {
             let store = &store;
             scope.spawn(move || {
-                let mut session = store.start_session();
+                // Another action may already be running; wait for REST.
+                let mut session = loop {
+                    if let Some(session) = store.try_start_session() {
+                        break session;
+                    }
+                    std::thread::yield_now();
+                };
                 for round in 0..ROUNDS {
                     for key in 0..KEYS {
                         // Values are the round number; every write appends
