@@ -8,7 +8,7 @@ use super::address::Address;
 use super::index::{Growth, Route};
 use super::kv::{Key, Value};
 use super::record::Record;
-use super::state::{Action, Phase, SystemState};
+use super::state::{Action, Phase};
 use super::store::FasterKv;
 use std::sync::atomic::Ordering;
 
@@ -42,10 +42,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         if rest.phase != Phase::Rest || rest.action != Action::None {
             return false;
         }
-        let started = SystemState {
-            action: Action::GrowIndex,
-            ..rest
-        };
+        let started = rest.start(Action::GrowIndex);
         if !self.state.compare_exchange(rest, started) {
             return false;
         }

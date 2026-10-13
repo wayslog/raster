@@ -35,6 +35,8 @@ pub struct ScannedRecord<'p, K, V> {
     pub key: &'p K,
     /// `None` for tombstones, whose value bytes were never written.
     pub value: Option<&'p V>,
+    /// The record's raw words, header first.
+    pub words: &'p [u64],
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
@@ -153,11 +155,16 @@ impl<K: Key, V: Value> ScanPage<K, V> {
                 // SAFETY: as above.
                 unsafe { &*(record.value() as *const V) }
             });
+            // SAFETY: the record's words lie inside the buffer.
+            let words = unsafe {
+                std::slice::from_raw_parts(ptr.add(offset - size).cast::<u64>(), size / 8)
+            };
             Some(ScannedRecord {
                 address,
                 info,
                 key,
                 value,
+                words,
             })
         })
     }

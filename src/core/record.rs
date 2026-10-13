@@ -145,6 +145,25 @@ impl<K, V> Record<K, V> {
         }
         self.header_word().store(info.0, Ordering::Release);
     }
+    /// Initializes an unpublished record from another record's bytes (the
+    /// first word, the old header, is replaced by `info`). Values are plain
+    /// log data that is never dropped, so a bitwise copy is a valid value.
+    ///
+    /// # Safety
+    /// Same as [`Record::initialize`]; `words` must hold a whole record.
+    #[inline]
+    pub unsafe fn initialize_from(&self, info: RecordInfo, words: &[u64]) {
+        debug_assert!(words.len() * 8 >= Layout::<K, V>::SIZE);
+        // SAFETY: exclusive, aligned, unpublished memory per contract.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                words.as_ptr().cast::<u8>().add(8),
+                self.ptr.add(8),
+                Layout::<K, V>::SIZE - 8,
+            )
+        };
+        self.header_word().store(info.0, Ordering::Release);
+    }
     /// Initializes an unpublished record whose value is never read.
     ///
     /// # Safety

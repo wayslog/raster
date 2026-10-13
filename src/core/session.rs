@@ -46,6 +46,8 @@ pub struct Session<'a, K: Key, V: Value> {
     retry: Vec<u64>,
     /// Requests with smaller ids were issued before the current GC started.
     gc_barrier: u64,
+    /// Generation of the state-machine run this session is following.
+    generation: u16,
 }
 
 impl<'a, K: Key, V: Value> Session<'a, K, V> {
@@ -67,6 +69,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             responses: Arc::default(),
             retry: Vec::new(),
             gc_barrier: 0,
+            generation: state.generation,
         }
     }
 
@@ -114,7 +117,18 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             match self.store.internal_read(ctx, self.mode()) {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
-                outcome => return self.suspend(outcome, PendingRead { ctx: ctx.clone() }),
+                outcome => {
+                    return self.suspend(
+                        outcome,
+                        PendingRead {
+                            ctx: ctx.clone(),
+                            truncations: self
+                                .store
+                                .truncations
+                                .load(std::sync::atomic::Ordering::Acquire),
+                        },
+                    );
+                }
             }
         }
     }
@@ -188,6 +202,35 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
                 outcome => return self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
+            }
+        }
+    }
+
+    pub(crate) fn store(&self) -> &'a FasterKv<K, V> {
+        self.store
+    }
+
+    /// Copies a record to the tail if it is still the newest version of its
+    /// key; used by compaction. Returns Ok (copied), Aborted or Pending.
+    pub(crate) fn copy_record(&mut self, mut request: super::compact::CopyRequest<K>) -> Status {
+        if self.phase != Phase::Rest {
+            self.heavy_enter();
+        }
+        loop {
+            match self
+                .store
+                .conditional_insert(self.slot(), &mut request, self.mode())
+            {
+                Outcome::Done(status) => return status,
+                Outcome::Shift => self.shift(self.serial, self.serial),
+                outcome => {
+                    let observed = match outcome {
+                        Outcome::Disk { observed, .. } => observed,
+                        _ => Address::default(),
+                    };
+                    let op = super::compact::PendingCopy { request, observed };
+                    return self.suspend(outcome, op);
+                }
             }
         }
     }
@@ -310,12 +353,20 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         if final_state.phase == Phase::Rest {
             self.phase = Phase::Rest;
             self.version = final_state.version;
+            self.generation = final_state.generation;
             return;
         }
+        if self.phase != Phase::Rest && self.generation != final_state.generation {
+            // This session missed the REST between the previous action, whose
+            // last phase it still shows, and the current one.
+            self.phase = Phase::Rest;
+        }
+        self.generation = final_state.generation;
         let mut previous = SystemState {
             action: final_state.action,
             phase: self.phase,
             version: self.version,
+            generation: final_state.generation,
         };
         loop {
             let current = if previous == final_state {

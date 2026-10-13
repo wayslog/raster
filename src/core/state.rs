@@ -39,6 +39,9 @@ pub struct SystemState {
     pub action: Action,
     pub phase: Phase,
     pub version: u32,
+    /// Incremented by every action start, so a session can tell that it
+    /// missed the REST between two actions, even of the same kind.
+    pub generation: u16,
 }
 
 impl SystemState {
@@ -47,11 +50,24 @@ impl SystemState {
             action: Action::None,
             phase: Phase::Rest,
             version,
+            generation: 0,
+        }
+    }
+
+    /// The REST state of a new run of `action`.
+    pub fn start(self, action: Action) -> Self {
+        Self {
+            action,
+            generation: self.generation.wrapping_add(1),
+            ..self
         }
     }
 
     fn pack(self) -> u64 {
-        self.action as u64 | (self.phase as u64) << 8 | (self.version as u64) << 32
+        self.action as u64
+            | (self.phase as u64) << 8
+            | (self.generation as u64) << 16
+            | (self.version as u64) << 32
     }
 
     fn unpack(word: u64) -> Self {
@@ -82,6 +98,7 @@ impl SystemState {
             action,
             phase,
             version: (word >> 32) as u32,
+            generation: (word >> 16) as u16,
         }
     }
 
@@ -126,6 +143,7 @@ impl SystemState {
             action,
             phase,
             version: self.version + bump as u32,
+            generation: self.generation,
         }
     }
 }
@@ -209,6 +227,7 @@ mod tests {
             action: Action::CheckpointHybridLog,
             phase: Phase::WaitFlush,
             version: u32::MAX,
+            generation: u16::MAX,
         };
         let atomic = AtomicSystemState::new(state);
         assert_eq!(atomic.load(), state);

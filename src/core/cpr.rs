@@ -86,7 +86,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         if rest.phase != Phase::Rest || rest.action != Action::None {
             return None;
         }
-        let started = SystemState { action, ..rest };
+        let started = rest.start(action);
         if !self.state.compare_exchange(rest, started) {
             return None;
         }

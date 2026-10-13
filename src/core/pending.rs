@@ -21,7 +21,7 @@ impl DiskRecord {
         Self { words }
     }
 
-    fn record<K, V>(&mut self) -> Option<Record<K, V>> {
+    pub(crate) fn record<K, V>(&mut self) -> Option<Record<K, V>> {
         if self.words.len() * 8 < Layout::<K, V>::SIZE {
             return None;
         }
@@ -114,6 +114,10 @@ fn lookup<'r, K: Key, V: Value>(
 
 pub(crate) struct PendingRead<C> {
     pub ctx: C,
+    /// Begin-address shifts seen when the read was issued. If the chain walk
+    /// runs off the log after a shift, compaction may have moved the record
+    /// to the tail, so the read restarts from the index.
+    pub truncations: u64,
 }
 
 impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> {
@@ -129,7 +133,17 @@ impl<K: Key, V: Value, C: ReadContext<K, V>> PendingOp<K, V> for PendingRead<C> 
         mut disk: Option<DiskRecord>,
     ) -> Step {
         let key = *self.ctx.key();
-        let status = match lookup(store, &key, &mut disk) {
+        let lookup = lookup(store, &key, &mut disk);
+        if matches!(lookup, Lookup::Missing | Lookup::Failed(Status::IoError)) {
+            let truncations = store.truncations.load(std::sync::atomic::Ordering::Acquire);
+            if truncations != self.truncations {
+                self.truncations = truncations;
+                return Step::RetryLater {
+                    marked: mode.holds_old,
+                };
+            }
+        }
+        let status = match lookup {
             Lookup::Found(_, true) | Lookup::Missing => Status::NotFound,
             Lookup::Found(value, false) => {
                 self.ctx.get(value);

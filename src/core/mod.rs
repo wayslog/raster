@@ -1,6 +1,7 @@
 pub mod address;
 pub mod checkpoint;
 pub mod checkpoint_locks;
+mod compact;
 pub mod cpr;
 pub mod device;
 pub mod epoch;

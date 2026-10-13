@@ -57,6 +57,8 @@ pub struct FasterKv<K: Key, V: Value> {
     pub(crate) gc_next_chunk: std::sync::atomic::AtomicU64,
     pub(crate) grow: std::sync::Mutex<super::grow::GrowRun>,
     pub(crate) grow_next_chunk: std::sync::atomic::AtomicU64,
+    /// Number of begin-address shifts; pending reads retry if it changes.
+    pub(crate) truncations: std::sync::atomic::AtomicU64,
     pub(crate) dirs: Option<CheckpointDirs>,
     /// Persisted serial numbers of recovered sessions, by session GUID.
     pub(crate) continue_tokens: std::sync::Mutex<std::collections::HashMap<super::guid::Guid, u64>>,
@@ -114,6 +116,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             gc_next_chunk: Default::default(),
             grow: Default::default(),
             grow_next_chunk: Default::default(),
+            truncations: Default::default(),
             dirs: config.checkpoint_dir.map(|root| CheckpointDirs { root }),
             continue_tokens: Default::default(),
             _types: PhantomData,
@@ -126,7 +129,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    fn record(&self, address: Address) -> Record<K, V> {
+    pub(crate) fn record(&self, address: Address) -> Record<K, V> {
         // SAFETY: callers only pass addresses in [head, tail) under epoch
         // protection; such addresses are 8-byte aligned record starts.
         unsafe { Record::from_ptr(self.hlog.get(address)) }
@@ -146,7 +149,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         address
     }
 
-    fn block_allocate(&self, slot: &SlotId, size: u64) -> Address {
+    pub(crate) fn block_allocate(&self, slot: &SlotId, size: u64) -> Address {
         loop {
             match self.hlog.allocate(size) {
                 Allocation::Ok(address) => return address,
@@ -164,7 +167,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// Version of the newest in-memory record at the index entry, or 0.
     #[inline(always)]
-    fn latest_version(&self, entry: Address, head: Address) -> u32 {
+    pub(crate) fn latest_version(&self, entry: Address, head: Address) -> u32 {
         if entry >= head {
             self.record(entry).info().version()
         } else {
@@ -174,7 +177,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// CPR rules for an update outside REST (FASTER InternalUpsert/Rmw/Delete).
     #[cold]
-    fn cpr_gate(&self, mode: OpMode, hash: u64, latest: u32) -> (Gate, LockGuard<'_>) {
+    pub(crate) fn cpr_gate(&self, mode: OpMode, hash: u64, latest: u32) -> (Gate, LockGuard<'_>) {
         // The table exists from checkpoint start until every session has left
         // PERSISTENCE_CALLBACK, the only phase that needs no locks.
         let locks = || {
@@ -576,7 +579,7 @@ pub(crate) struct OpMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Gate {
+pub(crate) enum Gate {
     Normal,
     ForceRcu,
     Shift,
@@ -584,14 +587,14 @@ enum Gate {
 }
 
 /// Releases a checkpoint lock side at the end of an attempt.
-struct LockGuard<'a> {
+pub(crate) struct LockGuard<'a> {
     locks: Option<&'a CheckpointLocks>,
     hash: u64,
     new_side: bool,
 }
 
 impl<'a> LockGuard<'a> {
-    fn none() -> Self {
+    pub(crate) fn none() -> Self {
         Self {
             locks: None,
             hash: 0,

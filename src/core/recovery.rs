@@ -28,10 +28,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     pub fn recover(&self, index_token: Guid, log_token: Guid) -> Result<RecoveryInfo, Status> {
         let dirs = self.dirs.as_ref().ok_or(Status::IoError)?;
         let rest = self.state.load();
-        let recovering = SystemState {
-            action: Action::Recover,
-            ..rest
-        };
+        let recovering = rest.start(Action::Recover);
         if rest.phase != Phase::Rest || !self.state.compare_exchange(rest, recovering) {
             return Err(Status::Aborted);
         }

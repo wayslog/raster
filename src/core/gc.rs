@@ -7,7 +7,7 @@
 //! index entries that point below it chunk by chunk (GC_IN_PROGRESS).
 use super::address::Address;
 use super::kv::{Key, Value};
-use super::state::{Action, Phase, SystemState};
+use super::state::{Action, Phase};
 use super::store::FasterKv;
 use std::sync::atomic::Ordering;
 
@@ -41,14 +41,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         if address < self.hlog.begin.load() || address > self.hlog.safe_read_only.load() {
             return false;
         }
-        let started = SystemState {
-            action: Action::Gc,
-            ..rest
-        };
+        let started = rest.start(Action::Gc);
         if !self.state.compare_exchange(rest, started) {
             return false;
         }
         self.hlog.begin.monotonic_update(address);
+        self.truncations.fetch_add(1, Ordering::AcqRel);
         self.epoch.reset_phase_finished();
         *self.gc.lock().unwrap() = GcRun {
             begin: address,
