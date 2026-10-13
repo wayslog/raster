@@ -323,9 +323,24 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 return Attempt::Done(Status::Ok);
             }
         }
+        self.upsert_append(slot_id, ctx, slot, key, mode.version)
+    }
+
+    /// Appends a new record for an upsert. Kept out of line so the in-place
+    /// update stays on the straight-line hot path.
+    #[cold]
+    #[inline(never)]
+    fn upsert_append<C: UpsertContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        slot: super::index::Slot<'_>,
+        key: K,
+        version: u32,
+    ) -> Attempt {
         let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
         let record = self.record(new_address);
-        let info = RecordInfo::new(slot.entry.address(), mode.version, false);
+        let info = RecordInfo::new(slot.entry.address(), version, false);
         // SAFETY: freshly allocated and not yet published.
         unsafe { record.initialize(info, key, ctx.put()) };
         if slot.try_update(new_address) {
