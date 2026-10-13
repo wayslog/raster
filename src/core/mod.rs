@@ -1,4 +1,5 @@
 pub mod address;
+pub mod checkpoint_locks;
 pub mod device;
 pub mod epoch;
 pub mod guid;
@@ -8,6 +9,7 @@ pub mod kv;
 mod pending;
 pub mod record;
 pub mod session;
+pub mod state;
 pub mod store;
 
 pub use kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};

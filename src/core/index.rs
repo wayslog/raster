@@ -5,6 +5,9 @@
 //! publication is one CAS. Entries are not removed in this phase, so slot
 //! references stay valid for the table's lifetime.
 use super::address::Address;
+use std::fs::File;
+use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
@@ -54,6 +57,12 @@ pub struct Slot<'a> {
 }
 
 impl Slot<'_> {
+    /// Unconditionally points the entry at `address` (recovery replay only).
+    pub fn store(&self, address: Address) {
+        let entry = Entry::new(address, self.entry.tag(), false);
+        self.atomic.store(entry.0, Ordering::Release);
+    }
+
     /// Publishes `address` if the slot still holds the observed entry.
     #[inline(always)]
     pub fn try_update(&self, address: Address) -> bool {
@@ -187,6 +196,89 @@ impl HashIndex {
     }
 }
 
+const CHECKPOINT_MAGIC: u64 = 0x5241_5354_4552_4854; // "RASTERHT"
+
+impl HashIndex {
+    pub fn buckets(&self) -> u64 {
+        self.mask + 1
+    }
+
+    /// Writes a fuzzy copy of the table: `ht` holds the main buckets and `ofb`
+    /// the overflow buckets, with overflow links stored as 1-based positions
+    /// in `ofb`. Concurrent updates may or may not be captured; recovery
+    /// replays the log from the checkpoint start to repair the difference.
+    /// Returns the number of overflow buckets written.
+    pub fn write_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<u64> {
+        let mut ht = BufWriter::new(File::create(ht)?);
+        let mut ofb_out = BufWriter::new(File::create(ofb)?);
+        ht.write_all(&CHECKPOINT_MAGIC.to_le_bytes())?;
+        ht.write_all(&self.buckets().to_le_bytes())?;
+        let mut overflow_count = 0u64;
+        let write_bucket =
+            |out: &mut BufWriter<File>, bucket: &Bucket, has_next: bool, count: &mut u64| {
+                for atomic in &bucket.entries {
+                    out.write_all(&atomic.load(Ordering::Acquire).to_le_bytes())?;
+                }
+                let link = if has_next {
+                    *count += 1;
+                    *count
+                } else {
+                    0
+                };
+                out.write_all(&link.to_le_bytes())
+            };
+        for bucket in self.buckets.iter() {
+            let mut next = Self::next(bucket);
+            write_bucket(&mut ht, bucket, next.is_some(), &mut overflow_count)?;
+            while let Some(overflow) = next {
+                next = Self::next(overflow);
+                write_bucket(&mut ofb_out, overflow, next.is_some(), &mut overflow_count)?;
+            }
+        }
+        ht.into_inner()?.sync_all()?;
+        ofb_out.into_inner()?.sync_all()?;
+        Ok(overflow_count)
+    }
+
+    /// Loads a checkpoint written by [`HashIndex::write_checkpoint`] into this
+    /// empty table and clears tentative entries.
+    pub fn read_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<()> {
+        let invalid = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_string());
+        let mut ht = BufReader::new(File::open(ht)?);
+        let mut ofb = BufReader::new(File::open(ofb)?);
+        let word = |input: &mut BufReader<File>| -> io::Result<u64> {
+            let mut bytes = [0u8; 8];
+            input.read_exact(&mut bytes)?;
+            Ok(u64::from_le_bytes(bytes))
+        };
+        if word(&mut ht)? != CHECKPOINT_MAGIC {
+            return Err(invalid("not an index checkpoint"));
+        }
+        if word(&mut ht)? != self.buckets() {
+            return Err(invalid("index checkpoint has a different bucket count"));
+        }
+        let load = |input: &mut BufReader<File>, bucket: &Bucket| -> io::Result<bool> {
+            for atomic in &bucket.entries {
+                let entry = Entry(word(input)?);
+                atomic.store(
+                    if entry.tentative() { 0 } else { entry.0 },
+                    Ordering::Relaxed,
+                );
+            }
+            Ok(word(input)? != 0)
+        };
+        for bucket in self.buckets.iter() {
+            let mut current = bucket;
+            let mut has_next = load(&mut ht, current)?;
+            while has_next {
+                current = Self::append_bucket(current);
+                has_next = load(&mut ofb, current)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Drop for HashIndex {
     fn drop(&mut self) {
         for bucket in self.buckets.iter() {
@@ -255,5 +347,35 @@ mod tests {
         }
         assert_eq!(seen.len(), 64);
         assert!(seen.values().all(|&n| n == 1));
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_round_trip_with_overflow_and_tentative_entries() {
+        let dir = std::env::temp_dir().join(format!("raster-index-ckpt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let index = HashIndex::new(2);
+        for tag in 0..40u64 {
+            let slot = index.find_or_create(tag << TAG_SHIFT | (tag & 1));
+            slot.try_update(Address::new(3, 64 + tag * 24));
+        }
+        // A leftover tentative entry must not survive recovery.
+        index.buckets[0].entries[0]
+            .store(Entry::new(Address::INVALID, 99, true).0, Ordering::Release);
+        let (ht, ofb) = (dir.join("ht.dat"), dir.join("ofb.dat"));
+        assert!(index.write_checkpoint(&ht, &ofb).unwrap() > 0);
+        let restored = HashIndex::new(2);
+        restored.read_checkpoint(&ht, &ofb).unwrap();
+        for tag in 1..40u64 {
+            let slot = restored.find(tag << TAG_SHIFT | (tag & 1)).unwrap();
+            assert_eq!(slot.entry.address(), Address::new(3, 64 + tag * 24));
+        }
+        assert!(restored.find(99 << TAG_SHIFT).is_none());
+        assert!(HashIndex::new(4).read_checkpoint(&ht, &ofb).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
