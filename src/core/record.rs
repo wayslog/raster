@@ -1,5 +1,6 @@
 //! Record header and inline layout (FASTER `record.h`).
 use super::address::Address;
+use super::kv::{Key, KeyContext, Value, ValueSlot};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -56,22 +57,53 @@ impl RecordInfo {
     }
 }
 
-/// Compile-time record layout for fixed-size keys and values.
+/// Inline record layout; fixed-size trait methods constant-fold at call sites.
 pub struct Layout<K, V>(PhantomData<(K, V)>);
 
 const fn pad(size: usize, align: usize) -> usize {
     (size + align - 1) & !(align - 1)
 }
-const fn max(a: usize, b: usize) -> usize {
-    if a > b { a } else { b }
-}
 
 impl<K, V> Layout<K, V> {
     pub const KEY_OFFSET: usize = pad(8, align_of::<K>());
-    pub const VALUE_OFFSET: usize = pad(Self::KEY_OFFSET + size_of::<K>(), align_of::<V>());
-    pub const SIZE: usize = pad(Self::VALUE_OFFSET + size_of::<V>(), 8);
-    /// Records are placed at 8-byte aligned log offsets.
-    pub const ALIGN_OK: () = assert!(max(align_of::<K>(), align_of::<V>()) <= 8);
+    pub const ALIGN_OK: () = assert!(align_of::<K>() <= 8 && align_of::<V>() <= 8);
+
+    #[inline(always)]
+    pub const fn value_offset(key_size: u32) -> usize {
+        pad(Self::KEY_OFFSET + key_size as usize, align_of::<V>())
+    }
+    #[inline(always)]
+    pub const fn size(key_size: u32, value_size: u32) -> u32 {
+        assert!(
+            key_size as usize >= size_of::<K>(),
+            "key header does not fit"
+        );
+        assert!(
+            value_size as usize >= size_of::<V>(),
+            "value header does not fit"
+        );
+        let size = pad(Self::value_offset(key_size) + value_size as usize, 8);
+        assert!(size <= u32::MAX as usize, "record size exceeds u32");
+        size as u32
+    }
+    #[inline(always)]
+    pub const fn disk_size(key_size: u32, value_size: u32) -> u32 {
+        let size = Self::value_offset(key_size) + value_size as usize;
+        assert!(size <= u32::MAX as usize, "record size exceeds u32");
+        size as u32
+    }
+    #[inline(always)]
+    pub const fn min_disk_key_size() -> usize {
+        Self::KEY_OFFSET + size_of::<K>()
+    }
+    #[inline(always)]
+    pub const fn min_disk_value_size(key_size: u32) -> usize {
+        Self::value_offset(key_size) + size_of::<V>()
+    }
+    #[inline(always)]
+    pub const fn min_io_size() -> usize {
+        Self::min_disk_value_size(size_of::<K>() as u32)
+    }
 }
 
 /// Borrowed view of a record inside a log page.
@@ -87,9 +119,9 @@ impl<K, V> Clone for Record<K, V> {
 }
 impl<K, V> Copy for Record<K, V> {}
 
-impl<K, V> Record<K, V> {
+impl<K: Key, V: Value> Record<K, V> {
     /// # Safety
-    /// `ptr` must be 8-byte aligned, point to `Layout::<K, V>::SIZE` bytes of a
+    /// `ptr` must be 8-byte aligned, point to enough bytes for every accessed header or payload of a
     /// live log page, and stay valid for the caller's epoch protection.
     #[inline(always)]
     pub unsafe fn from_ptr(ptr: *mut u8) -> Self {
@@ -126,72 +158,143 @@ impl<K, V> Record<K, V> {
         unsafe { &*(self.ptr.add(Layout::<K, V>::KEY_OFFSET) as *const K) }
     }
     /// # Safety
-    /// The value must have been initialized before the record was published.
+    /// The key and value header must be initialized and the payload available.
     #[inline(always)]
     pub unsafe fn value(&self) -> &V {
-        // SAFETY: layout offsets are aligned for `V`; initialized per contract.
-        unsafe { &*(self.ptr.add(Layout::<K, V>::VALUE_OFFSET) as *const V) }
-    }
-    /// Initializes an unpublished record.
-    ///
-    /// # Safety
-    /// The record must be freshly allocated and not yet reachable by others.
-    #[inline(always)]
-    pub unsafe fn initialize(&self, info: RecordInfo, key: K, value: V) {
-        // SAFETY: exclusive, aligned, unpublished memory per contract.
+        // SAFETY: initialized key and aligned value offset by contract.
         unsafe {
-            (self.ptr.add(Layout::<K, V>::KEY_OFFSET) as *mut K).write(key);
-            (self.ptr.add(Layout::<K, V>::VALUE_OFFSET) as *mut V).write(value);
+            &*self
+                .ptr
+                .add(Layout::<K, V>::value_offset(self.key().size()))
+                .cast::<V>()
         }
+    }
+    /// # Safety
+    /// The key and value headers must be initialized.
+    #[inline(always)]
+    pub unsafe fn size(&self) -> u32 {
+        // SAFETY: both headers are initialized by contract.
+        unsafe { Layout::<K, V>::size(self.key().size(), self.value().size()) }
+    }
+    /// # Safety
+    /// The key and value headers must be initialized.
+    #[inline(always)]
+    pub unsafe fn disk_size(&self) -> u32 {
+        // SAFETY: both headers are initialized by contract.
+        unsafe { Layout::<K, V>::disk_size(self.key().size(), self.value().size()) }
+    }
+    /// Returns the next required prefix length, validating each available header.
+    /// # Safety
+    /// `available` initialized bytes exist at the aligned record pointer. Size
+    /// methods must inspect only their fixed headers, as required by the traits.
+    pub(crate) unsafe fn required_bytes(
+        &self,
+        available: usize,
+        limit: usize,
+    ) -> Result<usize, ()> {
+        let key_header = Layout::<K, V>::min_disk_key_size();
+        if key_header > limit {
+            return Err(());
+        }
+        if available < key_header {
+            return Ok(key_header);
+        }
+        // SAFETY: the key header is available; size reads only that header.
+        let key_size = unsafe { self.key().size() };
+        if (key_size as usize) < size_of::<K>() || key_size as usize > limit {
+            return Err(());
+        }
+        let value_header = Layout::<K, V>::min_disk_value_size(key_size);
+        if value_header > limit {
+            return Err(());
+        }
+        if available < value_header {
+            return Ok(value_header);
+        }
+        // SAFETY: the full key and value header are now available.
+        let value_size = unsafe { self.value().size() };
+        if (value_size as usize) < size_of::<V>() || value_size as usize > limit {
+            return Err(());
+        }
+        let disk_size = Layout::<K, V>::value_offset(key_size) + value_size as usize;
+        if disk_size > limit {
+            return Err(());
+        }
+        Ok(disk_size)
+    }
+    /// Writes the key and returns exclusive storage for the value.
+    /// # Safety
+    /// This unpublished record owns Layout::size(ctx.key_size(), value_size)
+    /// bytes. The context writes a complete key of the reported size.
+    #[inline(always)]
+    pub unsafe fn initialize_key<C: KeyContext<K>>(
+        &self,
+        ctx: &C,
+        value_size: u32,
+    ) -> ValueSlot<'_, V> {
+        // SAFETY: aligned, exclusively owned allocation per contract.
+        unsafe {
+            ctx.write_key(self.ptr.add(Layout::<K, V>::KEY_OFFSET).cast());
+            ValueSlot::new(
+                self.ptr
+                    .add(Layout::<K, V>::value_offset(ctx.key_size()))
+                    .cast(),
+                value_size,
+            )
+        }
+    }
+    /// # Safety
+    /// The entire key and value must be initialized before publication.
+    #[inline(always)]
+    pub unsafe fn publish(&self, info: RecordInfo) {
         self.header_word().store(info.0, Ordering::Release);
     }
-    /// Initializes an unpublished record from another record's bytes (the
-    /// first word, the old header, is replaced by `info`). Values are plain
-    /// log data that is never dropped, so a bitwise copy is a valid value.
-    ///
+    /// Initializes from a complete, immutable record's raw words.
     /// # Safety
-    /// Same as [`Record::initialize`]; `words` must hold a whole record.
+    /// The destination owns words.len() * 8 exclusive bytes; words contains
+    /// a complete valid record, including trailing alignment padding.
     #[inline]
     pub unsafe fn initialize_from(&self, info: RecordInfo, words: &[u64]) {
-        debug_assert!(words.len() * 8 >= Layout::<K, V>::SIZE);
-        // SAFETY: exclusive, aligned, unpublished memory per contract.
+        // SAFETY: exclusive destination and complete source by contract.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 words.as_ptr().cast::<u8>().add(8),
                 self.ptr.add(8),
-                Layout::<K, V>::SIZE - 8,
-            )
-        };
-        self.header_word().store(info.0, Ordering::Release);
+                words.len() * 8 - 8,
+            );
+            self.publish(info);
+        }
     }
-    /// Initializes an unpublished record as a copy of `source` with header `info`.
-    ///
     /// # Safety
-    /// Same as [`Record::initialize`]; `source` must be a complete record
-    /// whose value is not being updated.
+    /// The destination owns source.size() exclusive bytes; source is complete
+    /// and immutable. Source padding need not be present in a disk buffer.
     #[inline]
     pub unsafe fn initialize_copy(&self, info: RecordInfo, source: &Record<K, V>) {
-        // SAFETY: both records span `Layout::SIZE` aligned bytes; exclusive
-        // destination per contract.
+        // SAFETY: both payloads are in bounds by contract; no overlap.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 source.ptr.add(8),
                 self.ptr.add(8),
-                Layout::<K, V>::SIZE - 8,
-            )
-        };
-        self.header_word().store(info.0, Ordering::Release);
+                source.disk_size() as usize - 8,
+            );
+            self.publish(info);
+        }
     }
-    /// Initializes an unpublished record whose value is never read.
-    ///
+    /// Initializes a tombstone or an allocation that will be marked invalid.
     /// # Safety
-    /// Same as [`Record::initialize`]; `info` must carry the tombstone or the
-    /// record must be marked invalid before anyone can reach it.
+    /// Same allocation contract as initialize_key; unpublished destination.
     #[inline(always)]
-    pub unsafe fn initialize_tombstone(&self, info: RecordInfo, key: K) {
-        // SAFETY: exclusive, aligned, unpublished memory per contract.
-        unsafe { (self.ptr.add(Layout::<K, V>::KEY_OFFSET) as *mut K).write(key) };
-        self.header_word().store(info.0, Ordering::Release);
+    pub unsafe fn initialize_tombstone<C: KeyContext<K>>(
+        &self,
+        info: RecordInfo,
+        ctx: &C,
+        value_size: u32,
+    ) {
+        // SAFETY: exclusive allocation; initialize_empty writes a valid header.
+        unsafe {
+            V::initialize_empty(self.initialize_key(ctx, value_size));
+            self.publish(info);
+        }
     }
 }
 
@@ -201,8 +304,9 @@ mod tests {
 
     #[test]
     fn u64_record_matches_cpp_size() {
-        assert_eq!(Layout::<u64, u64>::SIZE, 24);
-        assert_eq!(Layout::<u32, u64>::VALUE_OFFSET, 16);
+        assert_eq!(Layout::<u64, u64>::size(8, 8), 24);
+        assert_eq!(Layout::<u32, u64>::value_offset(4), 16);
+        assert_eq!(Layout::<u64, u64>::min_io_size(), 24);
     }
 
     #[test]
@@ -215,11 +319,20 @@ mod tests {
 
     #[test]
     fn initialize_and_mark() {
+        struct Context(u64);
+        impl KeyContext<u64> for Context {
+            fn key(&self) -> &u64 {
+                &self.0
+            }
+        }
         let mut page = [0u64; 3];
         // SAFETY: local aligned buffer of the right size, single thread.
         let record = unsafe { Record::<u64, u64>::from_ptr(page.as_mut_ptr().cast()) };
         // SAFETY: freshly zeroed and unpublished.
-        unsafe { record.initialize(RecordInfo::new(Address::INVALID, 0, false), 7, 42) };
+        unsafe {
+            record.initialize_key(&Context(7), 8).write(42);
+            record.publish(RecordInfo::new(Address::INVALID, 0, false));
+        }
         record.set_invalid();
         // SAFETY: initialized above.
         assert_eq!(unsafe { (*record.key(), *record.value()) }, (7, 42));

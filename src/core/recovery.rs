@@ -5,7 +5,7 @@ use super::checkpoint::{IndexMetadata, LogMetadata, SessionRecord};
 use super::device::AlignedBuffer;
 use super::guid::Guid;
 use super::kv::{Key, Value};
-use super::record::{Layout, RecordInfo};
+use super::record::{Record, RecordInfo};
 use super::session::Session;
 use super::state::{Action, Phase, SystemState, record_newer};
 use super::store::{FasterKv, Status};
@@ -105,8 +105,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         end: Address,
         version: u32,
     ) -> Result<(), Status> {
-        let mut bytes = self.read_page_prefix(page, end)?;
-        let size = Layout::<K, V>::SIZE;
+        let bytes = self.read_page_prefix(page, end)?;
+        let mut aligned =
+            AlignedBuffer::new(bytes.len().next_multiple_of(super::device::SECTOR as usize));
+        aligned.as_mut()[..bytes.len()].copy_from_slice(&bytes);
+        let bytes = &mut aligned.as_mut()[..bytes.len()];
         let mut offset = if start.page() == page {
             start.offset() as usize
         } else {
@@ -116,23 +119,26 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         while offset + 8 <= bytes.len() {
             let header = u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("8 bytes"));
             if header == 0 {
-                offset += 8;
-                continue;
+                break;
             }
+            // SAFETY: aligned page storage with a complete header at offset.
+            let record = unsafe { Record::<K, V>::from_ptr(bytes.as_mut_ptr().add(offset)) };
+            // SAFETY: required_bytes checks each header before inspecting it.
+            let required =
+                unsafe { record.required_bytes(bytes.len() - offset, bytes.len() - offset) }
+                    .map_err(|_| Status::Corruption)?;
+            if required > bytes.len() - offset {
+                return Err(Status::Corruption);
+            }
+            // SAFETY: the size headers are available and bounded above.
+            let size = unsafe { record.size() } as usize;
             if offset + size > bytes.len() {
                 return Err(Status::Corruption);
             }
             let info = RecordInfo::from_word(header);
             if !info.invalid() {
-                // SAFETY: `offset + size` is in bounds; the key may be unaligned.
-                let key: K = unsafe {
-                    std::ptr::read_unaligned(
-                        bytes
-                            .as_ptr()
-                            .add(offset + Layout::<K, V>::KEY_OFFSET)
-                            .cast(),
-                    )
-                };
+                // SAFETY: the complete inline key is available in aligned memory.
+                let key = unsafe { record.key() };
                 let address = Address::new(page, offset as u64);
                 let slot = self.index.find_or_create(key.hash());
                 if !record_newer(info.version(), version) {
@@ -149,7 +155,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             offset += size;
         }
         if changed {
-            self.write_page_prefix(page, &bytes)?;
+            self.write_page_prefix(page, bytes)?;
         }
         Ok(())
     }

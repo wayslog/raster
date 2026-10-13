@@ -15,12 +15,14 @@ struct Request {
     input: u64,
     sum: Rc<Cell<u64>>,
 }
-impl UpsertContext<u64, AtomicU64> for Request {
+impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
     }
-    fn put(&mut self) -> AtomicU64 {
-        AtomicU64::new(self.input)
+}
+impl UpsertContext<u64, AtomicU64> for Request {
+    fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(self.input));
     }
     fn put_atomic(&mut self, value: &AtomicU64) -> bool {
         value.store(self.input, Ordering::SeqCst);
@@ -28,9 +30,6 @@ impl UpsertContext<u64, AtomicU64> for Request {
     }
 }
 impl ReadContext<u64, AtomicU64> for Request {
-    fn key(&self) -> &u64 {
-        &self.key
-    }
     fn get(&mut self, value: &AtomicU64) {
         self.input = value.load(Ordering::Relaxed);
     }

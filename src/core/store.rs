@@ -6,7 +6,7 @@ use super::cpr::CprRun;
 use super::epoch::{LightEpoch, SlotId};
 use super::hlog::{Allocation, HybridLog, LogConfig};
 use super::index::HashIndex;
-use super::kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};
+use super::kv::{DeleteContext, Key, KeyContext, ReadContext, RmwContext, UpsertContext, Value};
 use super::record::{Layout, Record, RecordInfo};
 use super::session::Session;
 use super::state::{AtomicSystemState, Phase, SystemState, record_newer};
@@ -29,6 +29,7 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct StoreConfig {
     pub index_buckets: u64,
+    /// Every complete record must fit in one log page; larger records panic.
     pub log: LogConfig,
     /// Root directory for checkpoints; required to checkpoint or recover.
     pub checkpoint_dir: Option<std::path::PathBuf>,
@@ -163,11 +164,16 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// Follows `previous` links from `address` while it is in memory.
     #[inline(always)]
-    fn trace_back(&self, key: &K, mut address: Address, head: Address) -> Address {
+    fn trace_back<C: KeyContext<K>>(
+        &self,
+        ctx: &C,
+        mut address: Address,
+        head: Address,
+    ) -> Address {
         while address >= head {
             let record = self.record(address);
             // SAFETY: published records have initialized keys.
-            if unsafe { record.key() } == key {
+            if ctx.key_equals(unsafe { record.key() }) {
                 break;
             }
             address = record.info().previous();
@@ -282,8 +288,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
-        let key = *ctx.key();
-        let hash = key.hash();
+        let hash = ctx.key_hash();
         let Some(slot) = self.index.find(hash) else {
             return Outcome::Done(Status::NotFound);
         };
@@ -301,7 +306,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         {
             return Outcome::Shift;
         }
-        let address = self.trace_back(&key, entry, head);
+        let address = self.trace_back(ctx, entry, head);
         if address >= head {
             let record = self.record(address);
             if record.info().tombstone() {
@@ -383,15 +388,14 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
         mode: OpMode,
     ) -> Attempt {
-        let key = *ctx.key();
-        let hash = key.hash();
+        let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
         self.hlog.prefetch_for_write(slot.entry.address());
         // Load both boundaries before touching the record, as FASTER does.
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
         let entry = if RC {
-            self.skip_and_invalidate(slot.entry.address(), &key)
+            self.skip_and_invalidate(slot.entry.address(), ctx)
         } else {
             slot.entry.address()
         };
@@ -406,7 +410,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Gate::Shift => return Attempt::Shift,
             Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
         }
-        let address = self.trace_back(&key, entry, head);
+        let address = self.trace_back(ctx, entry, head);
         if gate == Gate::Normal && address >= read_only {
             let record = self.record(address);
             // SAFETY: published record in the mutable region.
@@ -414,7 +418,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 return Attempt::Done(Status::Ok);
             }
         }
-        self.upsert_append(slot_id, ctx, slot, entry, key, mode.version)
+        self.upsert_append(slot_id, ctx, slot, entry, mode.version)
     }
 
     /// Appends a new record for an upsert. Kept out of line so the in-place
@@ -427,14 +431,21 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
         slot: super::index::Slot<'_>,
         previous: Address,
-        key: K,
         version: u32,
     ) -> Attempt {
-        let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
+        let value_size = ctx.value_size();
+        let new_address = self.block_allocate(
+            slot_id,
+            Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
+        );
         let record = self.record(new_address);
         let info = RecordInfo::new(previous, version, false);
         // SAFETY: freshly allocated and not yet published.
-        unsafe { record.initialize(info, key, ctx.put()) };
+        unsafe {
+            let value = record.initialize_key(ctx, value_size);
+            ctx.put(value);
+            record.publish(info);
+        };
         if slot.try_update(new_address) {
             Attempt::Done(Status::Ok)
         } else {
@@ -506,10 +517,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         observed: Address,
         source: Option<&V>,
     ) -> Outcome {
-        let key = *ctx.key();
-        let hash = key.hash();
+        let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
-        if self.skip_and_invalidate(slot.entry.address(), &key) != observed {
+        if self.skip_and_invalidate(slot.entry.address(), ctx) != observed {
             return self.internal_rmw(slot_id, ctx, mode);
         }
         // The request released any checkpoint lock when it went pending, so
@@ -530,15 +540,23 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 };
             }
         }
-        let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
+        let value_size =
+            source.map_or_else(|| ctx.initial_value_size(), |old| ctx.copy_value_size(old));
+        let new_address = self.block_allocate(
+            slot_id,
+            Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
+        );
         let record = self.record(new_address);
-        let value = match source {
-            Some(old) => ctx.rmw_copy(old),
-            None => ctx.rmw_initial(),
-        };
         let info = RecordInfo::new(observed, mode.version, false);
-        // SAFETY: freshly allocated and not yet published.
-        unsafe { record.initialize(info, key, value) };
+        // SAFETY: freshly allocated; disk source remains owned by the caller.
+        unsafe {
+            let value = record.initialize_key(ctx, value_size);
+            match source {
+                Some(old) => ctx.rmw_copy(old, value),
+                None => ctx.rmw_initial(value),
+            }
+            record.publish(info);
+        };
         if slot.try_update(new_address) {
             Outcome::Done(Status::Ok)
         } else {
@@ -554,14 +572,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         ctx: &mut C,
         mode: OpMode,
     ) -> Attempt {
-        let key = *ctx.key();
-        let hash = key.hash();
+        let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
         let entry = if RC {
-            self.skip_and_invalidate(slot.entry.address(), &key)
+            self.skip_and_invalidate(slot.entry.address(), ctx)
         } else {
             slot.entry.address()
         };
@@ -575,7 +592,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Gate::Shift => return Attempt::Shift,
             Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
         }
-        let address = self.trace_back(&key, entry, head);
+        let address = self.trace_back(ctx, entry, head);
         if address >= read_only {
             if gate == Gate::Normal {
                 let record = self.record(address);
@@ -597,28 +614,39 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 None => Attempt::Shift,
             };
         }
-        let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
+        let source = (address >= head)
+            .then(|| self.record(address))
+            .filter(|record| !record.info().tombstone());
+        let value_size = source.as_ref().map_or_else(
+            || ctx.initial_value_size(),
+            |old| {
+                // SAFETY: published source still protected before allocation.
+                ctx.copy_value_size(unsafe { old.value() })
+            },
+        );
+        let new_address = self.block_allocate(
+            slot_id,
+            Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
+        );
         let record = self.record(new_address);
         let info = RecordInfo::new(entry, mode.version, false);
-        let value = if address >= self.hlog.head.load() {
-            let old = self.record(address);
-            if old.info().tombstone() {
-                ctx.rmw_initial()
-            } else {
-                // SAFETY: published record still in memory under protection.
-                ctx.rmw_copy(unsafe { old.value() })
-            }
-        } else if address < self.hlog.begin.load() {
-            ctx.rmw_initial()
-        } else {
-            // The source was evicted while allocating; abandon and retry.
+        if source.is_some() && address < self.hlog.head.load() {
+            // Allocation refreshed the epoch and evicted the source. Write a
+            // valid size header so scans can skip this abandoned allocation.
             // SAFETY: freshly allocated and not yet published.
-            unsafe { record.initialize_tombstone(info, key) };
+            unsafe { record.initialize_tombstone(info, ctx, value_size) };
             record.set_invalid();
             return Attempt::Retry;
+        }
+        // SAFETY: fresh destination; any source is still resident and protected.
+        unsafe {
+            let value = record.initialize_key(ctx, value_size);
+            match source {
+                Some(old) => ctx.rmw_copy(old.value(), value),
+                None => ctx.rmw_initial(value),
+            }
+            record.publish(info);
         };
-        // SAFETY: freshly allocated and not yet published.
-        unsafe { record.initialize(info, key, value) };
         if slot.try_update(new_address) {
             Attempt::Done(Status::Ok)
         } else {
@@ -635,14 +663,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         mode: OpMode,
     ) -> Outcome {
         loop {
-            let key = *ctx.key();
-            let hash = key.hash();
+            let hash = ctx.key_hash();
             let Some(slot) = self.index.find(hash) else {
                 return Outcome::Done(Status::NotFound);
             };
             let head = self.hlog.head.load();
             let read_only = self.hlog.read_only.load();
-            let entry = self.skip_and_invalidate(slot.entry.address(), &key);
+            let entry = self.skip_and_invalidate(slot.entry.address(), ctx);
             let (gate, _guard) = if mode.phase == Phase::Rest {
                 (Gate::Normal, LockGuard::none())
             } else {
@@ -657,7 +684,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     };
                 }
             }
-            let address = self.trace_back(&key, entry, head);
+            let address = self.trace_back(ctx, entry, head);
             if gate == Gate::Normal && address >= read_only {
                 self.record(address).set_tombstone();
                 return Outcome::Done(Status::Ok);
@@ -665,11 +692,15 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             if address < self.hlog.begin.load() {
                 return Outcome::Done(Status::NotFound);
             }
-            let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
+            let value_size = ctx.value_size().unwrap_or(size_of::<V>() as u32);
+            let new_address = self.block_allocate(
+                slot_id,
+                Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
+            );
             let record = self.record(new_address);
             let info = RecordInfo::new(entry, mode.version, true);
             // SAFETY: freshly allocated and not yet published.
-            unsafe { record.initialize_tombstone(info, key) };
+            unsafe { record.initialize_tombstone(info, ctx, value_size) };
             if slot.try_update(new_address) {
                 return Outcome::Done(Status::Ok);
             }

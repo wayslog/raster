@@ -21,7 +21,9 @@ pub mod session;
 pub mod state;
 pub mod store;
 
-pub use kv::{DeleteContext, Key, ReadContext, RmwContext, UpsertContext, Value};
+pub use kv::{
+    DeleteContext, Key, KeyContext, ReadContext, RmwContext, UpsertContext, Value, ValueSlot,
+};
 pub use read_cache::ReadCacheConfig;
 pub use session::Session;
 pub use store::{FasterKv, Status, StoreConfig};

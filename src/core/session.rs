@@ -28,6 +28,7 @@ struct Entry<K, V> {
     version: u32,
     /// Holds the old-side checkpoint lock for its key.
     marked: bool,
+    address: Address,
 }
 
 pub struct Session<'a, K: Key, V: Value> {
@@ -232,7 +233,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
 
     /// Copies a record to the tail if it is still the newest version of its
     /// key; used by compaction. Returns Ok (copied), Aborted or Pending.
-    pub(crate) fn copy_record(&mut self, mut request: super::compact::CopyRequest<K>) -> Status {
+    pub(crate) fn copy_record(&mut self, mut request: super::compact::CopyRequest<K, V>) -> Status {
         if self.phase != Phase::Rest {
             self.heavy_enter();
         }
@@ -293,7 +294,11 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         let step = match outcome {
             Outcome::Disk {
                 address, marked, ..
-            } => Step::Read { address, marked },
+            } => Step::Read {
+                address,
+                len: Layout::<K, V>::min_io_size(),
+                marked,
+            },
             Outcome::RetryLater { marked } => Step::RetryLater { marked },
             Outcome::Done(_) | Outcome::Shift => unreachable!("not a pending outcome"),
         };
@@ -301,17 +306,18 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             op: Box::new(op),
             version: self.version,
             marked: false,
+            address: Address::INVALID,
         };
         self.pending.insert(id, entry);
         self.advance(id, step);
         Status::Pending
     }
 
-    fn issue(&self, id: u64, address: Address) {
+    fn issue(&self, id: u64, address: Address, len: usize) {
         let responses = self.responses.clone();
         self.store.hlog.read_async(
             address,
-            Layout::<K, V>::SIZE,
+            len,
             Box::new(move |result| responses.lock().unwrap().push((id, result))),
         );
     }
@@ -328,9 +334,14 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     locks.unlock_old(entry.op.hash());
                 }
             }
-            Step::Read { address, marked } => {
+            Step::Read {
+                address,
+                len,
+                marked,
+            } => {
                 self.pending.get_mut(&id).expect("pending entry").marked |= marked;
-                self.issue(id, address);
+                self.pending.get_mut(&id).expect("pending entry").address = address;
+                self.issue(id, address, len);
             }
             Step::RetryLater { marked } => {
                 self.pending.get_mut(&id).expect("pending entry").marked |= marked;
@@ -501,7 +512,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             }
             let batch = std::mem::take(&mut *self.responses.lock().unwrap());
             for (id, result) in batch {
-                let disk = result.ok().map(|bytes| DiskRecord::new(&bytes));
+                let disk = result
+                    .ok()
+                    .map(|bytes| DiskRecord::new(&bytes, self.pending[&id].address));
                 let mode = self.entry_mode(&self.pending[&id]);
                 let slot = self.slot.as_ref().expect("live session");
                 let entry = self.pending.get_mut(&id).expect("pending entry");

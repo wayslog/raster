@@ -11,7 +11,7 @@ use super::address::Address;
 use super::epoch::LightEpoch;
 use super::hlog::{Allocation, HybridLog, LogConfig};
 use super::index::Slot;
-use super::kv::{Key, ReadContext, Value};
+use super::kv::{Key, KeyContext, ReadContext, Value};
 use super::record::{Layout, Record, RecordInfo};
 use super::store::{FasterKv, Status};
 use std::sync::{Arc, Mutex};
@@ -82,9 +82,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     /// Like [`FasterKv::skip_read_cache`], also invalidating the cache record
     /// if it holds `key`, before a writer replaces it (FASTER `SkipAndInvalidate`).
     #[inline(always)]
-    pub(crate) fn skip_and_invalidate(&self, entry: Address, key: &K) -> Address {
+    pub(crate) fn skip_and_invalidate<C: KeyContext<K>>(&self, entry: Address, ctx: &C) -> Address {
         if entry.in_read_cache() {
-            self.invalidate_cached(entry, key)
+            self.invalidate_cached(entry, ctx)
         } else {
             entry
         }
@@ -92,10 +92,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     #[cold]
     #[inline(never)]
-    fn invalidate_cached(&self, entry: Address, key: &K) -> Address {
+    fn invalidate_cached<C: KeyContext<K>>(&self, entry: Address, ctx: &C) -> Address {
         let record = self.cache_record(entry);
         // SAFETY: cache records are fully written before being linked.
-        if unsafe { record.key() } == key {
+        if ctx.key_equals(unsafe { record.key() }) {
             record.set_invalid();
         }
         record.info().previous()
@@ -114,7 +114,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let info = record.info();
         let previous = info.previous();
         // SAFETY: cache records are fully written before being linked.
-        let matches = unsafe { record.key() } == ctx.key();
+        let matches = ctx.key_equals(unsafe { record.key() });
         // A copy of a truncated record must not outlive the truncation.
         if !matches || info.invalid() || previous < self.hlog.begin.load() {
             return Err(previous);
@@ -148,7 +148,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         }
         // Still linked, so a cache record at `observed` is not evicted yet.
         let previous = self.skip_read_cache(observed);
-        let size = Layout::<K, V>::SIZE as u64;
+        // SAFETY: the source is complete and immutable.
+        let size = unsafe { source.size() } as u64;
         let address = match cache.log.allocate(size) {
             Allocation::Ok(address) => address,
             Allocation::PageFull(page) | Allocation::Retry(page) => {
@@ -178,11 +179,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let cache = self.cache();
         let mut evicted = cache.evicted_to.lock().unwrap();
         debug_assert!(*evicted >= from);
-        let size = Layout::<K, V>::SIZE as u64;
+        let min_size = Layout::<K, V>::min_io_size() as u64;
         let page_size = cache.log.page_size();
         let mut address = *evicted;
         while address < to {
-            if address.offset() + size > page_size {
+            if address.offset() + min_size > page_size {
                 address = Address::new(address.page() + 1, 0);
                 continue;
             }
@@ -203,7 +204,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     slot = slot.reload();
                 }
             }
-            address = address.add(size);
+            // SAFETY: complete record in the cache region being evicted.
+            address = address.add(unsafe { record.size() } as u64);
         }
         *evicted = (*evicted).max(to);
     }

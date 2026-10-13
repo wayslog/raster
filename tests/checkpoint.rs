@@ -11,15 +11,17 @@ type Store = FasterKv<u64, AtomicU64>;
 struct Incr {
     key: u64,
 }
-impl RmwContext<u64, AtomicU64> for Incr {
+impl KeyContext<u64> for Incr {
     fn key(&self) -> &u64 {
         &self.key
     }
-    fn rmw_initial(&mut self) -> AtomicU64 {
-        AtomicU64::new(1)
+}
+impl RmwContext<u64, AtomicU64> for Incr {
+    fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(1));
     }
-    fn rmw_copy(&mut self, old: &AtomicU64) -> AtomicU64 {
-        AtomicU64::new(old.load(Ordering::Relaxed) + 1)
+    fn rmw_copy(&mut self, old: &AtomicU64, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(old.load(Ordering::Relaxed) + 1));
     }
     fn rmw_atomic(&mut self, value: &AtomicU64) -> bool {
         value.fetch_add(1, Ordering::Relaxed);
@@ -128,10 +130,12 @@ struct Get {
     key: u64,
     out: std::rc::Rc<std::cell::Cell<Option<u64>>>,
 }
-impl ReadContext<u64, AtomicU64> for Get {
+impl KeyContext<u64> for Get {
     fn key(&self) -> &u64 {
         &self.key
     }
+}
+impl ReadContext<u64, AtomicU64> for Get {
     fn get(&mut self, value: &AtomicU64) {
         self.out.set(Some(value.load(Ordering::Relaxed)));
     }

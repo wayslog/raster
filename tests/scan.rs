@@ -10,12 +10,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 struct Put {
     key: u64,
 }
-impl UpsertContext<u64, AtomicU64> for Put {
+impl KeyContext<u64> for Put {
     fn key(&self) -> &u64 {
         &self.key
     }
-    fn put(&mut self) -> AtomicU64 {
-        AtomicU64::new(self.key * 3)
+}
+impl UpsertContext<u64, AtomicU64> for Put {
+    fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(self.key * 3));
     }
     fn put_atomic(&mut self, value: &AtomicU64) -> bool {
         value.store(self.key * 3, Ordering::Relaxed);
