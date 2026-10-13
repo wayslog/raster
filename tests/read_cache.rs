@@ -274,7 +274,7 @@ fn compaction_and_truncation_with_cached_entries() {
     let mut session = store.start_session();
     populate(&mut session, KEYS);
     session
-        .compact(Address::MAX, true, 2)
+        .compact(Address::MAX, true, 2, false)
         .expect("compaction succeeds");
     for key in 0..KEYS {
         assert_eq!(value(&mut session, key), (Status::Ok, key + 1), "key {key}");

@@ -89,7 +89,7 @@ fn main() {
     let size_before = store.log_size();
     let started = Instant::now();
     session
-        .compact(until, true, threads)
+        .compact(until, true, threads, false)
         .expect("compaction succeeds");
     let compact_ns = started.elapsed().as_nanos();
     let size_after = store.log_size();
