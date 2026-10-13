@@ -29,6 +29,7 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct StoreConfig {
     pub index_buckets: u64,
+    pub log_size_budget: u64,
     /// Every complete record must fit in one log page; larger records panic.
     pub log: LogConfig,
     /// Root directory for checkpoints; required to checkpoint or recover.
@@ -39,6 +40,7 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             index_buckets: 1 << 20,
+            log_size_budget: 0,
             log: LogConfig::default(),
             checkpoint_dir: None,
         }
@@ -65,6 +67,7 @@ pub struct FasterKv<K: Key, V: Value> {
     pub(crate) dirs: Option<CheckpointDirs>,
     /// Persisted serial numbers of recovered sessions, by session GUID.
     pub(crate) continue_tokens: std::sync::Mutex<std::collections::HashMap<super::guid::Guid, u64>>,
+    pub(crate) maintenance: Box<super::maintenance::Maintenance>,
     _types: PhantomData<Types<K, V>>,
 }
 
@@ -141,6 +144,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             truncations: Default::default(),
             dirs: config.checkpoint_dir.map(|root| CheckpointDirs { root }),
             continue_tokens: Default::default(),
+            maintenance: Box::new(super::maintenance::Maintenance::new(config.log_size_budget)),
             _types: PhantomData,
         }
     }

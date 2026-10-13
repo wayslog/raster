@@ -34,6 +34,7 @@ fn store(dir: &std::path::Path) -> Store {
     Store::with_device(
         StoreConfig {
             index_buckets: 1 << 12,
+            log_size_budget: 0,
             log: LogConfig {
                 page_bits: 16,
                 memory_pages: 16,

@@ -12,6 +12,7 @@ pub mod guid;
 pub mod hlog;
 pub mod index;
 pub mod kv;
+mod maintenance;
 pub mod options;
 mod pending;
 pub mod read_cache;

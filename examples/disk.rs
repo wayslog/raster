@@ -112,6 +112,7 @@ fn main() {
     let device = Arc::new(FileDevice::open_with(&args[5], 30, 8, false).unwrap());
     let config = StoreConfig {
         index_buckets: 1 << 22,
+        log_size_budget: 0,
         checkpoint_dir: None,
         log: LogConfig {
             page_bits: 25,

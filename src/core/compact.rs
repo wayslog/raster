@@ -16,6 +16,7 @@ use super::store::{FasterKv, OpMode, Outcome, Status};
 pub(crate) struct CopyRequest<K, V> {
     pub words: Vec<u64>,
     pub types: std::marker::PhantomData<(K, V)>,
+    pub failure: std::rc::Rc<std::cell::Cell<Option<Status>>>,
     /// Records above this address may still hide a newer version of the key;
     /// it starts at the address of the record being copied.
     pub search_min: Address,
@@ -118,6 +119,7 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K, V> {
         disk: Option<DiskRecord>,
     ) -> Step {
         let Some(mut disk) = disk else {
+            self.request.failure.set(Some(Status::IoError));
             return Step::Done;
         };
         let record = match disk.record::<K, V>(store.hlog.page_size()) {
@@ -129,7 +131,10 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K, V> {
                     marked: mode.holds_old,
                 };
             }
-            Err(DiskError::Corruption) => return Step::Done,
+            Err(DiskError::Corruption) => {
+                self.request.failure.set(Some(Status::Corruption));
+                return Step::Done;
+            }
         };
         // SAFETY: the record was fully written before it was flushed.
         if record.info().is_null() || self.request.key_equals(unsafe { record.key() }) {
@@ -174,55 +179,74 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K, V> {
 }
 
 impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
-    /// Compacts the log below `until` (capped at the safe read-only address)
-    /// with `threads` workers, this session included, and with `shift_begin`
-    /// truncates the log at `until` afterwards (FASTER `CompactWithLookup`).
-    /// Must start in REST. Returns the address compacted up to.
+    /// Copies live records below until, optionally truncating and checkpointing.
+    /// Workers and budget-limited writers claim disjoint pages. Only one
+    /// compaction may run at a time; the caller must start in REST.
     pub fn compact(
         &mut self,
         until: Address,
         shift_begin: bool,
         threads: usize,
     ) -> Result<Address, Status> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let store = self.store();
-        let scanner = store.scan(store.hlog.begin.load(), until);
-        let until = scanner.until();
-        let scanner = std::sync::Mutex::new(scanner);
-        let finished = std::sync::atomic::AtomicUsize::new(0);
+        if store.system_state().phase != super::state::Phase::Rest {
+            return Err(Status::Aborted);
+        }
+        let _coordinator = store.maintenance.start().ok_or(Status::Aborted)?;
+        let until = until.min(store.hlog.safe_read_only.load());
+        let work = std::sync::Arc::new(super::maintenance::CompactionWork::new(
+            store.hlog.begin.load(),
+            until,
+        ));
+        {
+            let mut active = store.maintenance.work.lock().unwrap();
+            if active.is_some() {
+                return Err(Status::Aborted);
+            }
+            *active = Some(work.clone());
+        }
         let helpers = threads.max(1) - 1;
-        let result = std::thread::scope(|scope| {
+        let finished = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
             let handles: Vec<_> = (0..helpers)
                 .map(|_| {
-                    let (scanner, finished) = (&scanner, &finished);
+                    let (work, finished) = (&work, &finished);
                     scope.spawn(move || {
-                        // An action may be starting; this caller keeps
-                        // refreshing, so it will finish and REST will return.
                         let mut session = loop {
                             if let Some(session) = store.try_start_session() {
                                 break session;
                             }
                             std::thread::yield_now();
                         };
-                        let result = copy_pages(&mut session, scanner);
-                        finished.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                        result
+                        if let Err(status) = copy_pages(&mut session, work, usize::MAX) {
+                            work.fail(status);
+                        }
+                        finished.fetch_add(1, Ordering::AcqRel);
                     })
                 })
                 .collect();
-            let mut result = copy_pages(self, &scanner);
-            // Keep this session refreshing so the helpers are never blocked
-            // on its epoch or on a phase barrier.
-            while finished.load(std::sync::atomic::Ordering::Acquire) < helpers {
+            if let Err(status) = copy_pages(self, &work, usize::MAX) {
+                work.fail(status);
+            }
+            while finished.load(Ordering::Acquire) < helpers {
                 self.refresh();
                 std::thread::yield_now();
             }
             for handle in handles {
-                result = result.and(handle.join().expect("compaction worker panicked"));
+                handle.join().expect("compaction worker panicked");
             }
-            result
         });
-        drop(scanner);
-        result?;
+        // Closing registration under this lock prevents a late assistant from
+        // entering after the final wait and before truncation.
+        store.maintenance.work.lock().unwrap().take();
+        while work.assistants.load(Ordering::Acquire) != 0 {
+            self.refresh();
+            std::thread::yield_now();
+        }
+        if let Some(status) = *work.failure.lock().unwrap() {
+            return Err(status);
+        }
         if shift_begin {
             while !store.shift_begin_address(until, None, None) {
                 self.refresh();
@@ -232,17 +256,52 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
         }
         Ok(until)
     }
+
+    /// Called only from configured maintenance paths, never the plain path.
+    #[cold]
+    pub(crate) fn assist_compaction(&mut self) {
+        use std::sync::atomic::Ordering;
+        let store = self.store();
+        if store.maintenance.budget == 0 || store.log_size() < store.maintenance.budget {
+            return;
+        }
+        let work = {
+            let active = store.maintenance.work.lock().unwrap();
+            let Some(work) = active.as_ref() else {
+                return;
+            };
+            work.assistants.fetch_add(1, Ordering::AcqRel);
+            work.clone()
+        };
+        struct Assistant<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for Assistant<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+        let _assistant = Assistant(&work.assistants);
+        if let Err(status) = copy_pages(self, &work, 4) {
+            work.fail(status);
+        }
+    }
 }
 
-/// Copies live records from pages taken from `scanner` until it runs dry.
+/// Copies a bounded batch of pages; completing pending copies before returning
+/// is essential because truncation waits for page owners, not queued requests.
 fn copy_pages<K: Key, V: Value>(
     session: &mut super::session::Session<'_, K, V>,
-    scanner: &std::sync::Mutex<super::scan::LogScanner<'_, K, V>>,
+    work: &super::maintenance::CompactionWork,
+    limit: usize,
 ) -> Result<(), Status> {
+    let mut scanner = session.store().scan(work.begin, work.until);
+    let failure = std::rc::Rc::new(std::cell::Cell::new(None));
     let mut copies = 0u64;
-    loop {
-        let page = scanner.lock().unwrap().next_page()?;
-        let Some(mut page) = page else {
+    for _ in 0..limit {
+        let Some(start) = work.claim() else {
+            break;
+        };
+        scanner.seek(start);
+        let Some(mut page) = scanner.next_page()? else {
             break;
         };
         for record in page.records() {
@@ -252,16 +311,26 @@ fn copy_pages<K: Key, V: Value>(
             let request = CopyRequest {
                 words: record.words.to_vec(),
                 types: std::marker::PhantomData,
+                failure: failure.clone(),
                 search_min: record.address,
             };
-            let _ = session.copy_record(request);
+            match session.copy_record(request) {
+                Status::Ok | Status::Aborted | Status::Pending => {}
+                status => return Err(status),
+            }
             copies += 1;
             if copies.is_multiple_of(512) {
                 session.complete_pending(false);
             }
         }
+        if let Some(status) = page.error() {
+            return Err(status);
+        }
         session.refresh();
     }
     session.complete_pending(true);
-    Ok(())
+    match failure.get() {
+        Some(status) => Err(status),
+        None => Ok(()),
+    }
 }

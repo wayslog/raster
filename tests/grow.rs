@@ -54,6 +54,7 @@ fn store(dir: &std::path::Path, buckets: u64) -> FasterKv<u64, AtomicU64> {
     FasterKv::with_device(
         StoreConfig {
             index_buckets: buckets,
+            log_size_budget: 0,
             checkpoint_dir: None,
             log: LogConfig {
                 page_bits: 12,

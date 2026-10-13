@@ -25,6 +25,7 @@ pub struct ScanPage<K, V> {
     words: Vec<u64>,
     /// Address of `words[0]`.
     base: Address,
+    error: Option<Status>,
     _types: std::marker::PhantomData<(K, V)>,
 }
 
@@ -33,7 +34,7 @@ pub struct ScannedRecord<'p, K, V> {
     pub address: Address,
     pub info: RecordInfo,
     pub key: &'p K,
-    /// `None` for tombstones, whose value bytes were never written.
+    /// `None` for tombstones, whose initialized value only preserves record size.
     pub value: Option<&'p V>,
     /// The record's raw words, header first.
     pub words: &'p [u64],
@@ -58,6 +59,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 }
 
 impl<K: Key, V: Value> LogScanner<'_, K, V> {
+    /// Selects a claimed page while retaining this scanner's helper slot.
+    pub(crate) fn seek(&mut self, start: Address) {
+        self.next = start;
+    }
     pub fn until(&self) -> Address {
         self.until
     }
@@ -105,6 +110,7 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
         Ok(Some(ScanPage {
             words,
             base: start,
+            error: None,
             _types: std::marker::PhantomData,
         }))
     }
@@ -123,6 +129,11 @@ where
 }
 
 impl<K: Key, V: Value> ScanPage<K, V> {
+    /// Structural decoding error observed while iterating this page.
+    pub fn error(&self) -> Option<Status> {
+        self.error
+    }
+
     pub fn base(&self) -> Address {
         self.base
     }
@@ -135,8 +146,15 @@ impl<K: Key, V: Value> ScanPage<K, V> {
         let base = self.base;
         let ptr = self.words.as_mut_ptr().cast::<u8>();
         let mut offset = 0usize;
+        let error = &mut self.error;
         std::iter::from_fn(move || {
             if offset + min_size > bytes {
+                if offset + 8 <= bytes {
+                    // SAFETY: a full aligned header remains in the owned page.
+                    if unsafe { ptr.add(offset).cast::<u64>().read() } != 0 {
+                        *error = Some(Status::Corruption);
+                    }
+                }
                 return None;
             }
             // SAFETY: the record lies inside our 8-byte aligned buffer, which
@@ -147,13 +165,21 @@ impl<K: Key, V: Value> ScanPage<K, V> {
                 return None;
             }
             // SAFETY: header reads are checked against the remaining page.
-            let required = unsafe { record.required_bytes(bytes - offset, bytes - offset) }.ok()?;
+            let required = match unsafe { record.required_bytes(bytes - offset, bytes - offset) } {
+                Ok(required) => required,
+                Err(()) => {
+                    *error = Some(Status::Corruption);
+                    return None;
+                }
+            };
             if required > bytes - offset {
+                *error = Some(Status::Corruption);
                 return None;
             }
             // SAFETY: the fixed headers were validated above.
             let size = unsafe { record.size() } as usize;
             if offset + size > bytes {
+                *error = Some(Status::Corruption);
                 return None;
             }
             let address = base.add(offset as u64);
