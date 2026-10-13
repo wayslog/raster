@@ -4,13 +4,14 @@
 //! leave the epoch. Deferred actions run once every protected slot has moved
 //! past the epoch in which they were registered.
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 pub const MAX_SLOTS: usize = 128;
 const DRAIN_SLOTS: usize = 256;
 const UNPROTECTED: u64 = 0;
 const FREE: u64 = u64::MAX;
 const LOCKED: u64 = u64::MAX - 1;
+const NO_PHASE: u8 = u8::MAX;
 
 type Action = Box<dyn FnOnce() + Send>;
 
@@ -18,6 +19,8 @@ type Action = Box<dyn FnOnce() + Send>;
 struct Slot {
     local_epoch: AtomicU64,
     used: AtomicBool,
+    /// Last state-machine phase this slot's session finished.
+    phase_finished: AtomicU8,
 }
 
 #[repr(align(64))]
@@ -63,6 +66,7 @@ impl LightEpoch {
                 .map(|_| Slot {
                     local_epoch: AtomicU64::new(UNPROTECTED),
                     used: AtomicBool::new(false),
+                    phase_finished: AtomicU8::new(NO_PHASE),
                 })
                 .collect(),
             drain: (0..DRAIN_SLOTS)
@@ -87,6 +91,9 @@ impl LightEpoch {
 
     pub fn release(&self, id: SlotId) {
         self.unprotect(&id);
+        self.slots[id.0]
+            .phase_finished
+            .store(NO_PHASE, Ordering::Release);
         self.slots[id.0].used.store(false, Ordering::Release);
     }
 
@@ -170,6 +177,29 @@ impl LightEpoch {
         }
         self.drain(next);
         next
+    }
+
+    /// Forgets every slot's finished phase before a new state-machine run.
+    pub fn reset_phase_finished(&self) {
+        for slot in self.slots.iter() {
+            slot.phase_finished.store(NO_PHASE, Ordering::Release);
+        }
+    }
+
+    /// Marks `phase` finished for this slot; returns true if every protected
+    /// slot has finished it, so the caller should advance the global state.
+    pub fn finish_thread_phase(&self, id: &SlotId, phase: u8) -> bool {
+        self.slots[id.0]
+            .phase_finished
+            .store(phase, Ordering::SeqCst);
+        self.slots.iter().all(|slot| {
+            slot.local_epoch.load(Ordering::SeqCst) == UNPROTECTED
+                || slot.phase_finished.load(Ordering::SeqCst) == phase
+        })
+    }
+
+    pub fn has_thread_finished_phase(&self, id: &SlotId, phase: u8) -> bool {
+        self.slots[id.0].phase_finished.load(Ordering::Acquire) == phase
     }
 
     /// Recomputes the safe-to-reclaim epoch from all protected slots.
