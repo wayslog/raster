@@ -109,7 +109,7 @@ fn full_checkpoint_completes_under_concurrent_rmw() {
     assert_eq!(serials.len(), THREADS);
     assert!(serials.iter().all(|&s| s > 0));
     let root = dir.join("checkpoints");
-    for file in ["ht.dat", "ofb.dat", "info.dat"] {
+    for file in ["ht.dat", "ofb.0.dat", "info.dat"] {
         assert!(
             root.join("index-checkpoints")
                 .join(token.to_string())
