@@ -128,6 +128,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         Session::new(self, super::guid::Guid::new(), 0)
     }
 
+    /// Starts a session unless a state-machine action is running.
+    pub fn try_start_session(&self) -> Option<Session<'_, K, V>> {
+        Session::try_new(self, super::guid::Guid::new(), 0)
+    }
+
     #[inline(always)]
     pub(crate) fn record(&self, address: Address) -> Record<K, V> {
         // SAFETY: callers only pass addresses in [head, tail) under epoch

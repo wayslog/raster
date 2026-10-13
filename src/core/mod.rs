@@ -1,4 +1,5 @@
 pub mod address;
+pub mod auto_compact;
 pub mod checkpoint;
 pub mod checkpoint_locks;
 mod compact;

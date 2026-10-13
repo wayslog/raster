@@ -52,11 +52,21 @@ pub struct Session<'a, K: Key, V: Value> {
 
 impl<'a, K: Key, V: Value> Session<'a, K, V> {
     pub(crate) fn new(store: &'a FasterKv<K, V>, guid: Guid, serial: u64) -> Self {
-        let state = store.state.load();
-        assert_eq!(state.phase, Phase::Rest, "sessions start only in REST");
+        Self::try_new(store, guid, serial).expect("sessions start only in REST")
+    }
+
+    /// Starts a session if the store is in REST. The slot is protected before
+    /// the state is checked, so an action that starts afterwards waits for
+    /// this session like any other.
+    pub(crate) fn try_new(store: &'a FasterKv<K, V>, guid: Guid, serial: u64) -> Option<Self> {
         let slot = store.epoch.reserve().expect("all epoch slots are in use");
         store.epoch.protect_and_drain(&slot);
-        Self {
+        let state = store.state.load();
+        if state.phase != Phase::Rest {
+            store.epoch.release(slot);
+            return None;
+        }
+        Some(Self {
             store,
             slot: Some(slot),
             guid,
@@ -70,7 +80,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             retry: Vec::new(),
             gc_barrier: 0,
             generation: state.generation,
-        }
+        })
     }
 
     #[inline(always)]
