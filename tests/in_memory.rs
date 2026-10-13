@@ -72,6 +72,15 @@ fn small_store(index_buckets: u64) -> Store {
     })
 }
 
+/// Runs an RMW to completion; it may legitimately go pending in the fuzzy region.
+fn rmw(session: &mut Session<'_, u64, AtomicU64>, mut op: Op, serial: u64) {
+    match session.rmw(&mut op, serial) {
+        Status::Ok => {}
+        Status::Pending => assert!(session.complete_pending(true)),
+        other => panic!("unexpected rmw status {other:?}"),
+    }
+}
+
 fn read(session: &mut Session<'_, u64, AtomicU64>, key: u64) -> Option<u64> {
     let mut op = Op::new(key, 0);
     match session.read(&mut op, 0) {
@@ -107,7 +116,7 @@ fn records_age_into_read_only_region_and_copy_on_update() {
         session.refresh();
     }
     for key in 0..20_000 {
-        assert_eq!(session.rmw(&mut Op::new(key, 5), key), Status::Ok);
+        rmw(&mut session, Op::new(key, 5), key);
         assert_eq!(read(&mut session, key), Some(6));
     }
 }
@@ -118,7 +127,7 @@ fn rmw_initial_copy_and_in_place() {
     let mut session = store.start_session();
     for _ in 0..3 {
         for key in 0..1000 {
-            assert_eq!(session.rmw(&mut Op::new(key, key + 1), 0), Status::Ok);
+            rmw(&mut session, Op::new(key, key + 1), 0);
         }
     }
     for key in 0..1000 {
@@ -140,7 +149,7 @@ fn delete_in_place_and_reinsert() {
     for key in 0..100 {
         assert_eq!(read(&mut session, key), (key % 2 == 1).then_some(1));
     }
-    assert_eq!(session.rmw(&mut Op::new(0, 9), 0), Status::Ok);
+    rmw(&mut session, Op::new(0, 9), 0);
     assert_eq!(read(&mut session, 0), Some(9));
 }
 
@@ -156,7 +165,7 @@ fn concurrent_rmw_counts_every_increment() {
                 let mut session = store.start_session();
                 for round in 0..ROUNDS {
                     for key in 0..KEYS {
-                        assert_eq!(session.rmw(&mut Op::new(key, 1), round), Status::Ok);
+                        rmw(&mut session, Op::new(key, 1), round);
                     }
                     session.refresh();
                 }
@@ -190,4 +199,32 @@ fn concurrent_upserts_on_new_keys_keep_one_chain_per_key() {
     for key in 0..5000 {
         assert!(read(&mut session, key).is_some_and(|v| v < 4));
     }
+}
+
+#[test]
+fn rmw_in_fuzzy_region_retries_after_every_session_refreshes() {
+    let store = Store::new(StoreConfig {
+        index_buckets: 1 << 10,
+        log: LogConfig {
+            page_bits: 12,
+            memory_pages: 8,
+            mutable_fraction: 0.5,
+        },
+    });
+    // A protected session that never refreshes pins safe_read_only.
+    let mut idle = store.start_session();
+    let mut session = store.start_session();
+    assert_eq!(session.upsert(&mut Op::new(0, 10), 0), Status::Ok);
+    // ~170 records per 4 KiB page: fill five pages so key 0 turns read-only.
+    for key in 1..850 {
+        assert_eq!(session.upsert(&mut Op::new(key, 1), key), Status::Ok);
+    }
+    assert_eq!(session.rmw(&mut Op::new(0, 5), 1000), Status::Pending);
+    assert!(
+        !session.complete_pending(false),
+        "idle session still pins the old epoch"
+    );
+    idle.refresh();
+    assert!(session.complete_pending(true));
+    assert_eq!(read(&mut session, 0), Some(15));
 }
