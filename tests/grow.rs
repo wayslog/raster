@@ -165,3 +165,34 @@ fn growth_under_concurrent_rmw_loses_no_update() {
     drop(store);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod common;
+use common::varlen::{self as variable, TestDirectory};
+
+#[test]
+fn growth_keeps_variable_keys_and_values_reachable() {
+    let dir = TestDirectory::new("grow");
+    let store = variable::store(&dir, false, true);
+    let mut session = store.start_session();
+    for id in 0..800 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 17 + id as usize % 811), id),
+            Status::Ok
+        );
+    }
+    for id in 0..50 {
+        assert_eq!(
+            variable::request(id, 0).read(&mut session, 800 + id).0,
+            Status::Ok
+        );
+    }
+    for _ in 0..3 {
+        assert!(store.grow_index(None));
+        assert!(session.complete_pending(true));
+    }
+    for id in 0..800 {
+        let (status, bytes, _) = variable::request(id, 0).read(&mut session, 850 + id);
+        assert_eq!(status, Status::Ok);
+        assert_eq!(bytes, vec![88; 17 + id as usize % 811]);
+    }
+}
