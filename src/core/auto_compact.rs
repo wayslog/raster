@@ -102,6 +102,6 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let Some(mut session) = self.try_start_session() else {
             return false;
         };
-        session.compact(until, true, config.threads).is_ok()
+        session.compact(until, true, config.threads, false).is_ok()
     }
 }

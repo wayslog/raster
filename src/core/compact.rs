@@ -187,8 +187,9 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
         until: Address,
         shift_begin: bool,
         threads: usize,
+        checkpoint: bool,
     ) -> Result<Address, Status> {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let store = self.store();
         if store.system_state().phase != super::state::Phase::Rest {
             return Err(Status::Aborted);
@@ -253,6 +254,29 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
                 std::thread::yield_now();
             }
             self.complete_pending(true);
+        }
+        if checkpoint {
+            let failed = std::sync::Arc::new(AtomicBool::new(false));
+            let index_failed = failed.clone();
+            let log_failed = failed.clone();
+            store
+                .checkpoint(
+                    Some(Box::new(move |status| {
+                        if status != Status::Ok {
+                            index_failed.store(true, Ordering::Release);
+                        }
+                    })),
+                    Some(std::sync::Arc::new(move |status, _| {
+                        if status != Status::Ok {
+                            log_failed.store(true, Ordering::Release);
+                        }
+                    })),
+                )
+                .ok_or(Status::Aborted)?;
+            self.complete_pending(true);
+            if failed.load(Ordering::Acquire) {
+                return Err(Status::IoError);
+            }
         }
         Ok(until)
     }
