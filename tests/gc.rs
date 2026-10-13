@@ -147,10 +147,26 @@ fn gc_completes_while_sessions_keep_writing() {
     const THREADS: u64 = 4;
     const KEYS: u64 = 2_000;
     const ROUNDS: u64 = 30;
+    let mut cutoffs = Vec::new();
+    {
+        let mut session = store.start_session();
+        for key in 0..THREADS * KEYS {
+            assert_eq!(session.upsert(&mut Op::new(key, 0), key), Status::Ok);
+            if [THREADS * KEYS / 3, THREADS * KEYS * 2 / 3, THREADS * KEYS].contains(&(key + 1)) {
+                cutoffs.push(store.hlog.tail());
+            }
+        }
+        let end = *cutoffs.last().unwrap();
+        store.hlog.shift_read_only_to(end);
+        while store.hlog.safe_read_only.load() < end {
+            session.refresh();
+        }
+    }
     let completed = Arc::new(AtomicUsize::new(0));
     std::thread::scope(|scope| {
         for t in 0..THREADS {
             let store = &store;
+            let completed = &completed;
             scope.spawn(move || {
                 // Another action may already be running; wait for REST.
                 let mut session = loop {
@@ -169,12 +185,18 @@ fn gc_completes_while_sessions_keep_writing() {
                     session.complete_pending(false);
                 }
                 assert!(session.complete_pending(true));
+                // Keep driving GC even if this writer finishes its rounds early.
+                while completed.load(Ordering::Acquire) < 3 {
+                    session.refresh();
+                    std::thread::yield_now();
+                }
             });
         }
         let mut shifted = 0;
         while shifted < 3 {
             std::thread::sleep(std::time::Duration::from_millis(5));
-            let begin = store.hlog.safe_read_only.load();
+            // Reclaim only the frozen old prefix, never a writer's final value.
+            let begin = cutoffs[shifted];
             let c = completed.clone();
             if store.shift_begin_address(
                 begin,

@@ -12,6 +12,7 @@ pub mod guid;
 pub mod hlog;
 pub mod index;
 pub mod kv;
+pub mod options;
 mod pending;
 pub mod read_cache;
 pub mod record;
@@ -24,6 +25,7 @@ pub mod store;
 pub use kv::{
     DeleteContext, Key, KeyContext, ReadContext, RmwContext, UpsertContext, Value, ValueSlot,
 };
+pub use options::{DeleteOptions, ReadOptions, RmwOptions};
 pub use read_cache::ReadCacheConfig;
 pub use session::Session;
 pub use store::{FasterKv, Status, StoreConfig};

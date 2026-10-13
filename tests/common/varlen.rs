@@ -26,7 +26,7 @@ impl<const C: bool> PartialEq for VarKey<C> {
 impl<const C: bool> Eq for VarKey<C> {}
 impl<const C: bool> Key for VarKey<C> {
     fn size(&self) -> u32 {
-        size_of::<Self>() as u32 + self.len
+        (size_of::<Self>() as u32).saturating_add(self.len)
     }
     fn hash(&self) -> u64 {
         if C { 0 } else { hash(self.bytes()) }
@@ -40,6 +40,9 @@ pub fn hash(bytes: &[u8]) -> u64 {
 
 const LOCKED: u64 = 1 << 62;
 const REPLACED: u64 = 1 << 63;
+thread_local! {
+    pub static SIZE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 #[repr(C)]
 pub struct VarValue {
     generation: AtomicU64,
@@ -48,7 +51,8 @@ pub struct VarValue {
 }
 impl Value for VarValue {
     fn size(&self) -> u32 {
-        size_of::<Self>() as u32 + self.capacity
+        SIZE_READS.with(|count| count.set(count.get() + 1));
+        (size_of::<Self>() as u32).saturating_add(self.capacity)
     }
     fn initialize_empty(slot: ValueSlot<'_, Self>) {
         Self::initialize(slot, &[]);
@@ -156,6 +160,7 @@ pub struct VarRequest<const COLLIDE: bool = false> {
     pub data: Vec<u8>,
     pub increment: u64,
     pub suffix: Vec<u8>,
+    pub expected_rmw_status: Status,
     pub out: Output,
 }
 impl<const C: bool> VarRequest<C> {
@@ -170,6 +175,7 @@ impl<const C: bool> VarRequest<C> {
             data: vec![88; value_len],
             increment: 0,
             suffix: Vec::new(),
+            expected_rmw_status: Status::Ok,
             out: Rc::default(),
         }
     }
@@ -261,7 +267,8 @@ impl<const C: bool> RmwContext<VarKey<C>, VarValue> for VarRequest<C> {
         value.update(|bytes| self.updated(bytes))
     }
     fn on_complete(&mut self, status: Status) {
-        assert_eq!(status, Status::Ok);
+        assert_eq!(status, self.expected_rmw_status);
+        *self.out.borrow_mut() = Some((status, self.data.clone()));
     }
 }
 impl<const C: bool> DeleteContext<VarKey<C>> for VarRequest<C> {
