@@ -275,7 +275,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         mode: OpMode,
     ) -> Outcome {
         loop {
-            match self.upsert_attempt(slot_id, ctx, mode) {
+            let attempt = if mode.phase == Phase::Rest {
+                self.upsert_attempt::<true, C>(slot_id, ctx, mode)
+            } else {
+                self.upsert_attempt::<false, C>(slot_id, ctx, mode)
+            };
+            match attempt {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Retry => {}
                 Attempt::Shift => return Outcome::Shift,
@@ -286,7 +291,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    fn upsert_attempt<C: UpsertContext<K, V>>(
+    fn upsert_attempt<const REST: bool, C: UpsertContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -299,7 +304,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         // Load both boundaries before touching the record, as FASTER does.
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
-        let (gate, _guard) = if mode.phase == Phase::Rest {
+        let (gate, _guard) = if REST {
             (Gate::Normal, LockGuard::none())
         } else {
             self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))
@@ -339,7 +344,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         mode: OpMode,
     ) -> Outcome {
         loop {
-            match self.rmw_attempt(slot_id, ctx, mode) {
+            let attempt = if mode.phase == Phase::Rest {
+                self.rmw_attempt::<true, C>(slot_id, ctx, mode)
+            } else {
+                self.rmw_attempt::<false, C>(slot_id, ctx, mode)
+            };
+            match attempt {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Disk(address, observed, marked) => {
                     return Outcome::Disk {
@@ -407,7 +417,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    fn rmw_attempt<C: RmwContext<K, V>>(
+    fn rmw_attempt<const REST: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -419,7 +429,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.hlog.prefetch_for_write(slot.entry.address());
         let head = self.hlog.head.load();
         let read_only = self.hlog.read_only.load();
-        let (gate, guard) = if mode.phase == Phase::Rest {
+        let (gate, guard) = if REST {
             (Gate::Normal, LockGuard::none())
         } else {
             self.cpr_gate(mode, hash, self.latest_version(slot.entry.address(), head))

@@ -64,6 +64,11 @@ pub struct HybridLog {
     /// Completed flush ranges (start -> end control words) not yet merged
     /// into `flushed_until`. Flushes are rare, so a lock is fine here.
     completed_flushes: std::sync::Mutex<std::collections::BTreeMap<u64, u64>>,
+    /// Orders flush issue with range assignment, so a later range sharing a
+    /// sector is always written after the earlier range's padded tail.
+    flush_order: std::sync::Mutex<()>,
+    /// Serializes clearing frames and publishing safe_head.
+    head_order: std::sync::Mutex<()>,
     pending_flushes: AtomicU64,
 }
 
@@ -118,6 +123,8 @@ impl HybridLog {
             device,
             page_bits: config.page_bits,
             completed_flushes: Default::default(),
+            flush_order: Default::default(),
+            head_order: Default::default(),
             pending_flushes: AtomicU64::new(0),
         }
     }
@@ -144,7 +151,9 @@ impl HybridLog {
 
     /// Hints that the record at `address` is about to be updated, so its cache
     /// line is fetched once in exclusive state instead of shared then upgraded.
-    /// Prefetches never fault, so any address is acceptable.
+    /// Prefetches never fault, so any address is acceptable. The asm is a
+    /// compiler memory barrier on purpose: if the record's loads were hoisted
+    /// above it, the line would arrive shared first and need an upgrade.
     #[inline(always)]
     pub fn prefetch_for_write(&self, address: Address) {
         let ptr = self.get(address);
@@ -152,23 +161,29 @@ impl HybridLog {
         // SAFETY: PREFETCHW only hints the cache and never faults; it decodes
         // as a NOP on CPUs without PRFCHW.
         unsafe {
-            std::arch::asm!("prefetchw [{0}]", in(reg) ptr, options(nostack, preserves_flags, readonly));
+            std::arch::asm!("prefetchw [{0}]", in(reg) ptr, options(nostack, preserves_flags));
         }
         #[cfg(target_arch = "aarch64")]
         // SAFETY: PRFM only hints the cache and never faults.
         unsafe {
-            std::arch::asm!("prfm pstl1keep, [{0}]", in(reg) ptr, options(nostack, preserves_flags, readonly));
+            std::arch::asm!("prfm pstl1keep, [{0}]", in(reg) ptr, options(nostack, preserves_flags));
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let _ = ptr;
     }
 
     #[inline]
+    /// Current tail. A full tail page reads as the start of the next page, so
+    /// every position has a single representation.
     pub fn tail(&self) -> Address {
         let word = self.tail.0.load(Ordering::Acquire);
         let page = word >> TAIL_OFFSET_BITS;
-        let offset = (word & ((1 << TAIL_OFFSET_BITS) - 1)).min(self.page_size);
-        Address::new(page, offset.min(Address::MAX_OFFSET))
+        let offset = word & ((1 << TAIL_OFFSET_BITS) - 1);
+        if offset >= self.page_size {
+            Address::new(page + 1, 0)
+        } else {
+            Address::new(page, offset)
+        }
     }
 
     /// Reserves `size` bytes (a multiple of 8) at the tail.
@@ -235,13 +250,18 @@ impl HybridLog {
             self.epoch.bump_with_action(move || {
                 // SAFETY: as above.
                 let log = unsafe { log.log() };
-                let previous = log.safe_head.fetch_max(head);
+                // Clear the frames before publishing safe_head: `new_page`
+                // reuses a frame as soon as safe_head passes its old page.
+                let _order = log.head_order.lock().unwrap();
+                let previous = log.safe_head.load();
                 for page in previous.page()..head.page() {
                     let frame = log.frames[(page & log.frame_mask) as usize];
                     // SAFETY: every session has moved past the epoch in which
-                    // `head` passed this page, so no reader holds the frame.
+                    // `head` passed this page, so no reader holds the frame,
+                    // and safe_head has not yet allowed its reuse.
                     unsafe { frame.write_bytes(0, log.page_size as usize) };
                 }
+                log.safe_head.monotonic_update(head);
             });
         }
     }
@@ -316,6 +336,7 @@ impl HybridLog {
             self.epoch.bump_with_action(move || {
                 // SAFETY: the store keeps the log alive while actions can run.
                 let log = unsafe { log.log() };
+                let _order = log.flush_order.lock().unwrap();
                 let previous = log.safe_read_only.fetch_max(address);
                 if previous < address {
                     log.flush_range(previous, address);
@@ -397,6 +418,10 @@ impl HybridLog {
     ) {
         self.pending_flushes.fetch_add(1, Ordering::AcqRel);
         let log = LogPtr(self);
+        // A zero-padded partial sector must land before any later write of the
+        // same sector, so wait for it; full-sector writes never overlap.
+        let wait = buffer.is_some();
+        let (sent, finished) = std::sync::mpsc::channel();
         let done = Box::new(move |result: std::io::Result<()>| {
             drop(buffer);
             // SAFETY: `Drop` waits for all pending flushes.
@@ -404,10 +429,14 @@ impl HybridLog {
             result.expect("hybrid log flush failed");
             log.complete_flush(start, end);
             log.pending_flushes.fetch_sub(1, Ordering::AcqRel);
+            let _ = sent.send(());
         });
         // SAFETY: `data` is either stable frame memory (see `flush_range`) or
         // `buffer`, which the callback keeps alive until completion.
         unsafe { self.device.write_async(offset, data, len, done) };
+        if wait {
+            let _ = finished.recv();
+        }
     }
 
     /// Records `[start, end)` as durable and advances `flushed_until` over

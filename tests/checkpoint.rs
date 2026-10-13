@@ -139,7 +139,11 @@ impl ReadContext<u64, AtomicU64> for Get {
         match status {
             Status::Ok => {}
             Status::NotFound => self.out.set(Some(0)),
-            other => panic!("pending read of key {} finished with {other:?}", self.key),
+            other => {
+                eprintln!("pending read of key {} finished with {other:?}", self.key);
+                FAILED_KEY.with(|k| k.set(Some(self.key)));
+                self.out.set(Some(u64::MAX));
+            }
         }
     }
 }
@@ -253,6 +257,10 @@ fn recover_prefix(threads: u64, name: &str) {
     }
     assert!(store.continue_session(guids[0]).is_none(), "resumed once");
     let actual = read_all(&store, KEYS);
+    if let Some(key) = FAILED_KEY.with(|k| k.get()) {
+        dump_key(&dir, token, key, &guids, &serials, KEYS);
+        panic!("pending read of key {key} failed");
+    }
     let wrong = (0..KEYS as usize)
         .filter(|&k| actual[k] != expected[k])
         .count();
@@ -322,7 +330,21 @@ fn dump_key(
             let at = page * page_size + offset;
             let header = u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
             if header == 0 {
-                break;
+                // Report zero runs that are followed by more records (holes).
+                let run_start = offset;
+                while offset + 8 <= page_size
+                    && page * page_size + offset + 8 <= bytes.len()
+                    && bytes[page * page_size + offset..page * page_size + offset + 8] == [0; 8]
+                {
+                    offset += 8;
+                }
+                if offset + 8 <= page_size && page * page_size + offset + 8 <= bytes.len() {
+                    eprintln!(
+                        "  hole ({page},{run_start})..({page},{offset}) = {} bytes",
+                        offset - run_start
+                    );
+                }
+                continue;
             }
             let k = u64::from_le_bytes(bytes[at + 8..at + 16].try_into().unwrap());
             if k == key {
@@ -339,4 +361,8 @@ fn dump_key(
             offset += 24;
         }
     }
+}
+
+thread_local! {
+    static FAILED_KEY: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
