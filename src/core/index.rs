@@ -73,12 +73,12 @@ impl Slot<'_> {
     }
 }
 
-pub struct HashIndex {
+pub struct Table {
     buckets: Box<[Bucket]>,
     mask: u64,
 }
 
-impl HashIndex {
+impl Table {
     pub fn new(buckets: u64) -> Self {
         let len = buckets.max(1).next_power_of_two();
         Self {
@@ -199,7 +199,7 @@ impl HashIndex {
 /// Buckets per garbage-collection or growth chunk (FASTER `kHashTableChunkSize`).
 pub const CHUNK_BUCKETS: u64 = 16_384;
 
-impl HashIndex {
+impl Table {
     /// Number of chunks a whole-table pass is split into.
     pub fn chunks(&self) -> u64 {
         self.buckets().div_ceil(CHUNK_BUCKETS)
@@ -238,7 +238,7 @@ impl HashIndex {
 
 const CHECKPOINT_MAGIC: u64 = 0x5241_5354_4552_4854; // "RASTERHT"
 
-impl HashIndex {
+impl Table {
     pub fn buckets(&self) -> u64 {
         self.mask + 1
     }
@@ -322,7 +322,7 @@ impl HashIndex {
         Ok(count)
     }
 
-    /// Loads a checkpoint written by [`HashIndex::write_checkpoint`] into this
+    /// Loads a checkpoint written by [`Table::write_checkpoint`] into this
     /// empty table and clears tentative entries.
     pub fn read_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<()> {
         use std::io::Read;
@@ -393,7 +393,7 @@ fn words_as_bytes(words: &[u64]) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Owned(words.iter().flat_map(|w| w.to_le_bytes()).collect())
 }
 
-impl Drop for HashIndex {
+impl Drop for Table {
     fn drop(&mut self) {
         for bucket in self.buckets.iter() {
             let mut next = bucket.overflow.load(Ordering::Acquire);
@@ -403,6 +403,197 @@ impl Drop for HashIndex {
                 next = owned.overflow.load(Ordering::Acquire);
             }
         }
+    }
+}
+
+/// Where an entry goes when a bucket is split into a table twice the size.
+pub(crate) enum Route {
+    /// The record is not in memory, so its key is unknown: keep the entry in
+    /// both new buckets.
+    Both,
+    /// The chain head belongs to the upper (`true`) or lower new bucket;
+    /// `other` is the newest record of the chain for the other bucket.
+    Side { upper: bool, other: Option<Address> },
+}
+
+impl Table {
+    /// Splits chunk `chunk` of this table into `new`, which has twice as many
+    /// buckets (FASTER `Grow`). No operation may use either table meanwhile.
+    pub(crate) fn split_chunk(&self, new: &Table, chunk: u64, route: &dyn Fn(Address) -> Route) {
+        let old_len = self.buckets.len();
+        let start = (chunk * CHUNK_BUCKETS) as usize;
+        let end = (start + CHUNK_BUCKETS as usize).min(old_len);
+        for index in start..end {
+            let (lower, upper) = (&new.buckets[index], &new.buckets[index + old_len]);
+            let mut current = Some(&self.buckets[index]);
+            while let Some(bucket) = current {
+                for atomic in &bucket.entries {
+                    let entry = Entry(atomic.load(Ordering::Acquire));
+                    if entry.unused() || entry.tentative() || entry.address() == Address::INVALID {
+                        continue;
+                    }
+                    match route(entry.address()) {
+                        Route::Both => {
+                            Self::add_entry(lower, entry);
+                            Self::add_entry(upper, entry);
+                        }
+                        Route::Side {
+                            upper: is_upper,
+                            other,
+                        } => {
+                            let (own, opposite) = if is_upper {
+                                (upper, lower)
+                            } else {
+                                (lower, upper)
+                            };
+                            Self::add_entry(own, entry);
+                            if let Some(address) = other {
+                                Self::add_entry(opposite, Entry::new(address, entry.tag(), false));
+                            }
+                        }
+                    }
+                }
+                current = Self::next(bucket);
+            }
+        }
+    }
+
+    /// Stores `entry` in the first free slot of `bucket`'s chain. Each new
+    /// bucket has a single writer during a split.
+    fn add_entry(mut bucket: &Bucket, entry: Entry) {
+        loop {
+            for atomic in &bucket.entries {
+                if atomic.load(Ordering::Relaxed) == 0 {
+                    atomic.store(entry.0, Ordering::Release);
+                    return;
+                }
+            }
+            bucket = match Self::next(bucket) {
+                Some(next) => next,
+                None => Self::append_bucket(bucket),
+            };
+        }
+    }
+}
+
+/// A table being grown into one twice its size.
+pub(crate) struct Growth {
+    old: *mut Table,
+    new: *mut Table,
+}
+
+// SAFETY: both tables are heap allocations owned by the index; access is
+// coordinated by the GrowIndex state machine.
+unsafe impl Send for Growth {}
+// SAFETY: see above.
+unsafe impl Sync for Growth {}
+
+impl Growth {
+    pub(crate) fn old(&self) -> &Table {
+        // SAFETY: freed only by `retire_old`, which consumes the growth.
+        unsafe { &*self.old }
+    }
+    pub(crate) fn grown(&self) -> &Table {
+        // SAFETY: owned by the index once installed.
+        unsafe { &*self.new }
+    }
+    /// Frees the replaced table.
+    ///
+    /// # Safety
+    /// No session may still reference the old table.
+    pub(crate) unsafe fn retire_old(self) {
+        // SAFETY: guaranteed by the caller.
+        drop(unsafe { Box::from_raw(self.old) });
+    }
+}
+
+impl HashIndex {
+    /// Allocates a table twice the current size for a growth.
+    pub(crate) fn begin_growth(&self) -> Growth {
+        let old = self.table.load(Ordering::Acquire);
+        // SAFETY: the current table is live.
+        let buckets = unsafe { (*old).buckets() } * 2;
+        Growth {
+            old,
+            new: Box::into_raw(Box::new(Table::new(buckets))),
+        }
+    }
+
+    /// Makes the new table current; the index now owns it.
+    pub(crate) fn install(&self, growth: &Growth) {
+        self.table.store(growth.new, Ordering::Release);
+    }
+}
+
+/// The hash index: the current [`Table`], swapped as a whole by index growth.
+/// Tables are retired through epoch actions, so a table reference obtained
+/// under epoch protection stays valid until the session next refreshes.
+pub struct HashIndex {
+    table: std::sync::atomic::AtomicPtr<Table>,
+}
+
+impl HashIndex {
+    pub fn new(buckets: u64) -> Self {
+        Self {
+            table: std::sync::atomic::AtomicPtr::new(Box::into_raw(Box::new(Table::new(buckets)))),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn table(&self) -> &Table {
+        // SAFETY: the pointer always refers to a live table; replaced tables
+        // are freed only after every session has refreshed (see `retire`).
+        unsafe { &*self.table.load(Ordering::Acquire) }
+    }
+
+    #[inline]
+    pub fn find(&self, hash: u64) -> Option<Slot<'_>> {
+        self.table().find(hash)
+    }
+
+    #[inline]
+    pub fn find_or_create(&self, hash: u64) -> Slot<'_> {
+        self.table().find_or_create(hash)
+    }
+
+    pub fn buckets(&self) -> u64 {
+        self.table().buckets()
+    }
+
+    pub fn chunks(&self) -> u64 {
+        self.table().chunks()
+    }
+
+    pub fn garbage_collect_chunk(&self, chunk: u64, begin: Address) {
+        self.table().garbage_collect_chunk(chunk, begin)
+    }
+
+    pub fn write_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<u64> {
+        self.table().write_checkpoint(ht, ofb)
+    }
+
+    /// Loads a checkpoint, first resizing the (empty) table to the
+    /// checkpoint's bucket count. Only for recovery, before any session.
+    pub fn read_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<()> {
+        use std::io::Read;
+        let mut header = [0u8; 24];
+        File::open(ht)?.read_exact(&mut header)?;
+        let buckets = u64::from_le_bytes(header[8..16].try_into().expect("8 bytes"));
+        if buckets != self.buckets() && buckets.is_power_of_two() {
+            let fresh = Box::into_raw(Box::new(Table::new(buckets)));
+            let old = self.table.swap(fresh, Ordering::AcqRel);
+            // SAFETY: recovery runs before any session, so nothing else
+            // references the old table.
+            drop(unsafe { Box::from_raw(old) });
+        }
+        self.table().read_checkpoint(ht, ofb)
+    }
+}
+
+impl Drop for HashIndex {
+    fn drop(&mut self) {
+        // SAFETY: the index owns its current table.
+        drop(unsafe { Box::from_raw(*self.table.get_mut()) });
     }
 }
 
@@ -449,7 +640,7 @@ mod tests {
             .collect();
         threads.into_iter().for_each(|t| t.join().unwrap());
         let mut seen = std::collections::HashMap::new();
-        let mut bucket = Some(&index.buckets[0]);
+        let mut bucket = Some(&index.table().buckets[0]);
         while let Some(b) = bucket {
             for atomic in &b.entries {
                 let entry = Entry(atomic.load(Ordering::Acquire));
@@ -457,7 +648,7 @@ mod tests {
                     *seen.entry(entry.tag()).or_insert(0) += 1;
                 }
             }
-            bucket = HashIndex::next(b);
+            bucket = Table::next(b);
         }
         assert_eq!(seen.len(), 64);
         assert!(seen.values().all(|&n| n == 1));
@@ -478,7 +669,7 @@ mod checkpoint_tests {
             slot.try_update(Address::new(3, 64 + tag * 24));
         }
         // A leftover tentative entry must not survive recovery.
-        index.buckets[0].entries[0]
+        index.table().buckets[0].entries[0]
             .store(Entry::new(Address::INVALID, 99, true).0, Ordering::Release);
         let (ht, ofb) = (dir.join("ht.dat"), dir.join("ofb.dat"));
         assert!(index.write_checkpoint(&ht, &ofb).unwrap() > 0);
@@ -489,7 +680,10 @@ mod checkpoint_tests {
             assert_eq!(slot.entry.address(), Address::new(3, 64 + tag * 24));
         }
         assert!(restored.find(99 << TAG_SHIFT).is_none());
-        assert!(HashIndex::new(4).read_checkpoint(&ht, &ofb).is_err());
+        // A different configured size is replaced by the checkpoint's size.
+        let resized = HashIndex::new(4);
+        resized.read_checkpoint(&ht, &ofb).unwrap();
+        assert_eq!(resized.buckets(), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
@@ -503,7 +697,7 @@ mod parallel_checkpoint_tests {
         let dir = std::env::temp_dir().join(format!("raster-index-parts-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let index = HashIndex::new(1 << 17);
-        assert_eq!(index.checkpoint_parts(), 2);
+        assert_eq!(index.table().checkpoint_parts(), 2);
         // Twenty tags in a bucket of each part force overflow chains in both.
         let buckets = [5u64, (1 << 16) + 9];
         for &bucket in &buckets {

@@ -5,6 +5,7 @@ pub mod cpr;
 pub mod device;
 pub mod epoch;
 pub mod gc;
+pub mod grow;
 pub mod guid;
 pub mod hlog;
 pub mod index;

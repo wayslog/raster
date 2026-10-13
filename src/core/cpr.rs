@@ -157,6 +157,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 self.gc_truncate();
                 return true;
             }
+            Phase::GrowInProgress => {
+                drop(run);
+                self.grow_install();
+                return true;
+            }
             Phase::WaitFlush => {
                 let final_address = self.hlog.tail();
                 self.hlog.shift_read_only_to(final_address);
@@ -171,6 +176,11 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     Action::Gc => {
                         drop(run);
                         self.gc_complete();
+                        return true;
+                    }
+                    Action::GrowIndex => {
+                        drop(run);
+                        self.grow_complete();
                         return true;
                     }
                     _ => {

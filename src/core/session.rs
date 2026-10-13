@@ -103,6 +103,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
+        if self.phase != Phase::Rest {
+            self.heavy_enter();
+        }
         // The checkpoint persists the serial of the last version-v operation.
         // If this operation shifts to v+1, the previous serial is restored
         // while the session switches versions.
@@ -121,6 +124,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: UpsertContext<K, V> + Clone + 'static,
     {
+        if self.phase != Phase::Rest {
+            self.heavy_enter();
+        }
         // The checkpoint persists the serial of the last version-v operation.
         // If this operation shifts to v+1, the previous serial is restored
         // while the session switches versions.
@@ -139,6 +145,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: RmwContext<K, V> + Clone + 'static,
     {
+        if self.phase != Phase::Rest {
+            self.heavy_enter();
+        }
         // The checkpoint persists the serial of the last version-v operation.
         // If this operation shifts to v+1, the previous serial is restored
         // while the session switches versions.
@@ -167,6 +176,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: DeleteContext<K> + Clone + 'static,
     {
+        if self.phase != Phase::Rest {
+            self.heavy_enter();
+        }
         // The checkpoint persists the serial of the last version-v operation.
         // If this operation shifts to v+1, the previous serial is restored
         // while the session switches versions.
@@ -178,6 +190,23 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                 outcome => return self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
             }
         }
+    }
+
+    /// Waits out index growth, during which no session may use the index
+    /// (FASTER `HeavyEnter`); refreshing also helps split the table.
+    #[cold]
+    fn heavy_enter(&mut self) {
+        while self.growing() {
+            self.refresh();
+            if self.growing() {
+                std::thread::yield_now();
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn growing(&self) -> bool {
+        matches!(self.phase, Phase::GrowPrepare | Phase::GrowInProgress)
     }
 
     /// A CPR shift means the global state already reached v+1: catch up.
@@ -353,6 +382,11 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     store.gc_collect_all();
                     finish(store);
                 }
+                Phase::GrowPrepare if !finished => finish(store),
+                Phase::GrowInProgress if !finished => {
+                    store.grow_split_all();
+                    finish(store);
+                }
                 Phase::PersistenceCallback if !finished => {
                     store.persistence_callback(self.checkpoint_serial);
                     finish(store);
@@ -384,6 +418,10 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     /// none remain and the session is back in REST. Returns true in that case.
     pub fn complete_pending(&mut self, wait: bool) -> bool {
         loop {
+            if self.growing() {
+                // Completions may touch the index; wait for growth to end.
+                self.heavy_enter();
+            }
             let batch = std::mem::take(&mut *self.responses.lock().unwrap());
             for (id, result) in batch {
                 let disk = result.ok().map(|bytes| DiskRecord::new(&bytes));
@@ -394,6 +432,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                 self.advance(id, step);
             }
             self.refresh();
+            if self.growing() {
+                continue;
+            }
             for id in std::mem::take(&mut self.retry) {
                 let mode = self.entry_mode(&self.pending[&id]);
                 let slot = self.slot.as_ref().expect("live session");
