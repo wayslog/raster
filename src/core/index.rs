@@ -6,7 +6,7 @@
 //! references stay valid for the table's lifetime.
 use super::address::Address;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, Write};
 use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
@@ -209,74 +209,100 @@ impl HashIndex {
     /// replays the log from the checkpoint start to repair the difference.
     /// Returns the number of overflow buckets written.
     pub fn write_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<u64> {
-        let mut ht = BufWriter::new(File::create(ht)?);
-        let mut ofb_out = BufWriter::new(File::create(ofb)?);
-        ht.write_all(&CHECKPOINT_MAGIC.to_le_bytes())?;
-        ht.write_all(&self.buckets().to_le_bytes())?;
+        let mut ht = File::create(ht)?;
+        let mut ofb_out = File::create(ofb)?;
+        let mut header = Vec::with_capacity(16);
+        header.extend_from_slice(&CHECKPOINT_MAGIC.to_le_bytes());
+        header.extend_from_slice(&self.buckets().to_le_bytes());
+        ht.write_all(&header)?;
+        // Copy buckets with atomic loads into large buffers and write those,
+        // instead of issuing one small write per word.
+        const CHUNK_BUCKETS: usize = 1 << 14;
+        let mut main = Vec::with_capacity(CHUNK_BUCKETS * 8);
+        let mut overflow = Vec::new();
         let mut overflow_count = 0u64;
-        let write_bucket =
-            |out: &mut BufWriter<File>, bucket: &Bucket, has_next: bool, count: &mut u64| {
-                for atomic in &bucket.entries {
-                    out.write_all(&atomic.load(Ordering::Acquire).to_le_bytes())?;
+        fn push(out: &mut Vec<u64>, bucket: &Bucket, has_next: bool, count: &mut u64) {
+            out.extend(bucket.entries.iter().map(|a| a.load(Ordering::Acquire)));
+            out.push(if has_next {
+                *count += 1;
+                *count
+            } else {
+                0
+            });
+        }
+        for chunk in self.buckets.chunks(CHUNK_BUCKETS) {
+            main.clear();
+            for bucket in chunk {
+                let mut next = Self::next(bucket);
+                push(&mut main, bucket, next.is_some(), &mut overflow_count);
+                while let Some(bucket) = next {
+                    next = Self::next(bucket);
+                    push(&mut overflow, bucket, next.is_some(), &mut overflow_count);
                 }
-                let link = if has_next {
-                    *count += 1;
-                    *count
-                } else {
-                    0
-                };
-                out.write_all(&link.to_le_bytes())
-            };
-        for bucket in self.buckets.iter() {
-            let mut next = Self::next(bucket);
-            write_bucket(&mut ht, bucket, next.is_some(), &mut overflow_count)?;
-            while let Some(overflow) = next {
-                next = Self::next(overflow);
-                write_bucket(&mut ofb_out, overflow, next.is_some(), &mut overflow_count)?;
+            }
+            ht.write_all(&words_as_bytes(&main))?;
+            if overflow.len() >= CHUNK_BUCKETS * 8 {
+                ofb_out.write_all(&words_as_bytes(&overflow))?;
+                overflow.clear();
             }
         }
-        ht.into_inner()?.sync_all()?;
-        ofb_out.into_inner()?.sync_all()?;
+        ofb_out.write_all(&words_as_bytes(&overflow))?;
+        ht.sync_all()?;
+        ofb_out.sync_all()?;
         Ok(overflow_count)
     }
 
     /// Loads a checkpoint written by [`HashIndex::write_checkpoint`] into this
     /// empty table and clears tentative entries.
     pub fn read_checkpoint(&self, ht: &Path, ofb: &Path) -> io::Result<()> {
+        use std::io::Read;
         let invalid = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_string());
-        let mut ht = BufReader::new(File::open(ht)?);
-        let mut ofb = BufReader::new(File::open(ofb)?);
-        let word = |input: &mut BufReader<File>| -> io::Result<u64> {
-            let mut bytes = [0u8; 8];
-            input.read_exact(&mut bytes)?;
-            Ok(u64::from_le_bytes(bytes))
+        let mut ht = File::open(ht)?;
+        let mut ofb = io::BufReader::with_capacity(1 << 20, File::open(ofb)?);
+        let mut header = [0u8; 16];
+        ht.read_exact(&mut header)?;
+        let word = |bytes: &[u8], i: usize| {
+            u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().expect("8 bytes"))
         };
-        if word(&mut ht)? != CHECKPOINT_MAGIC {
+        if word(&header, 0) != CHECKPOINT_MAGIC {
             return Err(invalid("not an index checkpoint"));
         }
-        if word(&mut ht)? != self.buckets() {
+        if word(&header, 1) != self.buckets() {
             return Err(invalid("index checkpoint has a different bucket count"));
         }
-        let load = |input: &mut BufReader<File>, bucket: &Bucket| -> io::Result<bool> {
-            for atomic in &bucket.entries {
-                let entry = Entry(word(input)?);
+        let load = |bucket: &Bucket, bytes: &[u8]| -> bool {
+            for (i, atomic) in bucket.entries.iter().enumerate() {
+                let entry = Entry(word(bytes, i));
                 atomic.store(
                     if entry.tentative() { 0 } else { entry.0 },
                     Ordering::Relaxed,
                 );
             }
-            Ok(word(input)? != 0)
+            word(bytes, ENTRIES) != 0
         };
-        for bucket in self.buckets.iter() {
-            let mut current = bucket;
-            let mut has_next = load(&mut ht, current)?;
-            while has_next {
-                current = Self::append_bucket(current);
-                has_next = load(&mut ofb, current)?;
+        const CHUNK_BUCKETS: usize = 1 << 14;
+        let mut chunk = vec![0u8; CHUNK_BUCKETS * 64];
+        let mut overflow = [0u8; 64];
+        for buckets in self.buckets.chunks(CHUNK_BUCKETS) {
+            let bytes = &mut chunk[..buckets.len() * 64];
+            ht.read_exact(bytes)?;
+            for (bucket, bytes) in buckets.iter().zip(bytes.as_chunks::<64>().0) {
+                let mut current = bucket;
+                let mut has_next = load(current, bytes);
+                while has_next {
+                    ofb.read_exact(&mut overflow)
+                        .map_err(|_| invalid("missing overflow bucket"))?;
+                    current = Self::append_bucket(current);
+                    has_next = load(current, &overflow);
+                }
             }
         }
         Ok(())
     }
+}
+
+fn words_as_bytes(words: &[u64]) -> Vec<u8> {
+    words.iter().flat_map(|w| w.to_le_bytes()).collect()
 }
 
 impl Drop for HashIndex {
