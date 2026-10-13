@@ -135,5 +135,7 @@ int main(int argc, char** argv) {
   std::cout << "{\"engine\":\"cpp\",\"operation\":\"" << operation << "\",\"distribution\":\"" << distribution
     << "\",\"threads\":" << threads << ",\"count\":" << count << ",\"elapsed_ns\":" << elapsed
     << ",\"p99_ns\":" << samples[samples.size() * 99 / 100] << ",\"samples\":" << samples.size()
-    << ",\"checksum\":" << checksum << ",\"digest\":" << digest << ",\"verified_keys\":" << expected.size() << ",\"per_thread\":[" << per_thread << "]}\n";
+    << ",\"checksum\":" << checksum << ",\"digest\":" << digest << ",\"verified_keys\":" << expected.size() << ",\"per_thread\":[" << per_thread << "],\"pcts\":[" << samples[samples.size() / 2] << ","
+    << samples[samples.size() * 9 / 10] << "," << samples[samples.size() * 99 / 100] << ","
+    << samples[samples.size() * 999 / 1000] << "]}\n";
 }

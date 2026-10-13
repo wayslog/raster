@@ -193,10 +193,14 @@ fn main() {
         digest = (digest ^ context.output).wrapping_mul(0x0100_0000_01b3);
     }
     println!(
-        "{{\"engine\":\"rust\",\"operation\":\"{operation}\",\"distribution\":\"{distribution}\",\"threads\":{threads},\"count\":{count},\"elapsed_ns\":{elapsed},\"p99_ns\":{},\"samples\":{},\"checksum\":{checksum},\"digest\":{digest},\"verified_keys\":{},\"retries\":0,\"pending\":0,\"per_thread\":[{}]}}",
+        "{{\"engine\":\"rust\",\"operation\":\"{operation}\",\"distribution\":\"{distribution}\",\"threads\":{threads},\"count\":{count},\"elapsed_ns\":{elapsed},\"p99_ns\":{},\"samples\":{},\"checksum\":{checksum},\"digest\":{digest},\"verified_keys\":{},\"retries\":0,\"pending\":0,\"per_thread\":[{}],\"pcts\":[{},{},{},{}]}}",
         samples[samples.len() * 99 / 100],
         samples.len(),
         expected.len(),
-        per_thread.join(",")
+        per_thread.join(","),
+        samples[samples.len() / 2],
+        samples[samples.len() * 9 / 10],
+        samples[samples.len() * 99 / 100],
+        samples[samples.len() * 999 / 1000]
     );
 }
