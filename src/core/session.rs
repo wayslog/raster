@@ -100,18 +100,17 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
-        // Like FASTER, record the serial only after the operation ran: a CPR
-        // shift moves this session to v+1 first, and the checkpoint must not
-        // count this operation as part of version v.
-        let status = loop {
+        // The checkpoint persists the serial of the last version-v operation.
+        // If this operation shifts to v+1, the previous serial is restored
+        // while the session switches versions.
+        let previous = std::mem::replace(&mut self.serial, serial);
+        loop {
             match self.store.internal_read(ctx, self.mode()) {
-                Outcome::Done(status) => break status,
-                Outcome::Shift => self.shift(),
-                outcome => break self.suspend(outcome, PendingRead { ctx: ctx.clone() }),
+                Outcome::Done(status) => return status,
+                Outcome::Shift => self.shift(previous, serial),
+                outcome => return self.suspend(outcome, PendingRead { ctx: ctx.clone() }),
             }
-        };
-        self.serial = serial;
-        status
+        }
     }
 
     #[inline]
@@ -119,18 +118,17 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: UpsertContext<K, V> + Clone + 'static,
     {
-        // Like FASTER, record the serial only after the operation ran: a CPR
-        // shift moves this session to v+1 first, and the checkpoint must not
-        // count this operation as part of version v.
-        let status = loop {
+        // The checkpoint persists the serial of the last version-v operation.
+        // If this operation shifts to v+1, the previous serial is restored
+        // while the session switches versions.
+        let previous = std::mem::replace(&mut self.serial, serial);
+        loop {
             match self.store.internal_upsert(self.slot(), ctx, self.mode()) {
-                Outcome::Done(status) => break status,
-                Outcome::Shift => self.shift(),
-                outcome => break self.suspend(outcome, PendingUpsert { ctx: ctx.clone() }),
+                Outcome::Done(status) => return status,
+                Outcome::Shift => self.shift(previous, serial),
+                outcome => return self.suspend(outcome, PendingUpsert { ctx: ctx.clone() }),
             }
-        };
-        self.serial = serial;
-        status
+        }
     }
 
     #[inline]
@@ -138,13 +136,14 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: RmwContext<K, V> + Clone + 'static,
     {
-        // Like FASTER, record the serial only after the operation ran: a CPR
-        // shift moves this session to v+1 first, and the checkpoint must not
-        // count this operation as part of version v.
-        let status = loop {
+        // The checkpoint persists the serial of the last version-v operation.
+        // If this operation shifts to v+1, the previous serial is restored
+        // while the session switches versions.
+        let previous = std::mem::replace(&mut self.serial, serial);
+        loop {
             match self.store.internal_rmw(self.slot(), ctx, self.mode()) {
-                Outcome::Done(status) => break status,
-                Outcome::Shift => self.shift(),
+                Outcome::Done(status) => return status,
+                Outcome::Shift => self.shift(previous, serial),
                 outcome => {
                     let observed = match outcome {
                         Outcome::Disk { observed, .. } => observed,
@@ -154,12 +153,10 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                         ctx: ctx.clone(),
                         observed,
                     };
-                    break self.suspend(outcome, op);
+                    return self.suspend(outcome, op);
                 }
             }
-        };
-        self.serial = serial;
-        status
+        }
     }
 
     #[inline]
@@ -167,23 +164,23 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: DeleteContext<K> + Clone + 'static,
     {
-        // Like FASTER, record the serial only after the operation ran: a CPR
-        // shift moves this session to v+1 first, and the checkpoint must not
-        // count this operation as part of version v.
-        let status = loop {
+        // The checkpoint persists the serial of the last version-v operation.
+        // If this operation shifts to v+1, the previous serial is restored
+        // while the session switches versions.
+        let previous = std::mem::replace(&mut self.serial, serial);
+        loop {
             match self.store.internal_delete(self.slot(), ctx, self.mode()) {
-                Outcome::Done(status) => break status,
-                Outcome::Shift => self.shift(),
-                outcome => break self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
+                Outcome::Done(status) => return status,
+                Outcome::Shift => self.shift(previous, serial),
+                outcome => return self.suspend(outcome, PendingDelete { ctx: ctx.clone() }),
             }
-        };
-        self.serial = serial;
-        status
+        }
     }
 
     /// A CPR shift means the global state already reached v+1: catch up.
     #[cold]
-    fn shift(&mut self) {
+    fn shift(&mut self, previous: u64, serial: u64) {
+        self.serial = previous;
         let version = self.version;
         while self.version == version {
             self.refresh();
@@ -191,6 +188,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                 std::thread::yield_now();
             }
         }
+        self.serial = serial;
     }
 
     #[cold]
