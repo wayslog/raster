@@ -67,7 +67,8 @@ impl SendPtr {
     }
 }
 
-const SECTOR: u64 = 512;
+/// Alignment and length granularity of unbuffered I/O.
+pub const SECTOR: u64 = 512;
 
 impl FileInner {
     fn segment(&self, index: u64) -> io::Result<Arc<File>> {
@@ -131,14 +132,14 @@ impl FileInner {
     }
 }
 
-/// Sector-aligned heap buffer for unbuffered reads.
-struct AlignedBuffer {
+/// Sector-aligned, zero-initialized heap buffer for unbuffered I/O.
+pub(crate) struct AlignedBuffer {
     ptr: *mut u8,
     layout: std::alloc::Layout,
 }
 
 impl AlignedBuffer {
-    fn new(len: usize) -> Self {
+    pub(crate) fn new(len: usize) -> Self {
         let layout =
             std::alloc::Layout::from_size_align(len, SECTOR as usize).expect("buffer layout");
         // SAFETY: `len` is a non-zero multiple of the sector size.
@@ -146,14 +147,20 @@ impl AlignedBuffer {
         assert!(!ptr.is_null(), "read buffer allocation failed");
         Self { ptr, layout }
     }
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.layout.size()
     }
-    fn as_mut(&mut self) -> &mut [u8] {
+    pub(crate) fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+    pub(crate) fn as_mut(&mut self) -> &mut [u8] {
         // SAFETY: owned, initialized allocation of `len` bytes.
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.layout.size()) }
     }
 }
+
+// SAFETY: the buffer is uniquely owned heap memory.
+unsafe impl Send for AlignedBuffer {}
 
 impl Drop for AlignedBuffer {
     fn drop(&mut self) {

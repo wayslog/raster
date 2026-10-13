@@ -5,7 +5,7 @@
 //! `page:23 | offset:41` word advanced with `fetch_add`. Boundary shifts run as
 //! epoch actions so that no protected session can still use a closed frame.
 use super::address::{Address, AtomicAddress};
-use super::device::Device;
+use super::device::{AlignedBuffer, Device, SECTOR};
 use super::epoch::LightEpoch;
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::sync::Arc;
@@ -61,8 +61,9 @@ pub struct HybridLog {
     epoch: Arc<LightEpoch>,
     device: Arc<dyn Device>,
     page_bits: u32,
-    /// Per frame: one past the last page number whose flush completed.
-    frame_flushed: Box<[AtomicU64]>,
+    /// Completed flush ranges (start -> end control words) not yet merged
+    /// into `flushed_until`. Flushes are rare, so a lock is fine here.
+    completed_flushes: std::sync::Mutex<std::collections::BTreeMap<u64, u64>>,
     pending_flushes: AtomicU64,
 }
 
@@ -116,7 +117,7 @@ impl HybridLog {
             epoch,
             device,
             page_bits: config.page_bits,
-            frame_flushed: (0..frames_len).map(|_| AtomicU64::new(0)).collect(),
+            completed_flushes: Default::default(),
             pending_flushes: AtomicU64::new(0),
         }
     }
@@ -222,18 +223,10 @@ impl HybridLog {
     }
 
     fn shift_boundaries(&self, tail_page: u64) {
-        let read_only = Address::new(tail_page.saturating_sub(self.mutable_pages), 0);
-        if self.read_only.monotonic_update(read_only) {
-            let log = LogPtr(self);
-            self.epoch.bump_with_action(move || {
-                // SAFETY: the store keeps the log alive while actions can run.
-                let log = unsafe { log.log() };
-                let previous = log.safe_read_only.fetch_max(read_only);
-                for page in previous.page()..read_only.page() {
-                    log.flush_page(page);
-                }
-            });
-        }
+        self.shift_read_only_to(Address::new(
+            tail_page.saturating_sub(self.mutable_pages),
+            0,
+        ));
         let frames = self.frames.len() as u64;
         let desired = Address::new((tail_page + 2).saturating_sub(frames), 0);
         let head = desired.min(self.flushed_until.load());
@@ -267,45 +260,118 @@ impl HybridLog {
             .read_async(self.device_offset(address), len, done);
     }
 
-    /// Writes a whole read-only page; its frame cannot be reused before the
-    /// write completes because `head` never passes `flushed_until`.
-    fn flush_page(&self, page: u64) {
-        self.pending_flushes.fetch_add(1, Ordering::AcqRel);
-        let frame = self.frames[(page & self.frame_mask) as usize];
-        let log = LogPtr(self);
-        let done = Box::new(move |result: std::io::Result<()>| {
-            // SAFETY: `Drop` waits for all pending flushes.
-            let log = unsafe { log.log() };
-            result.expect("hybrid log page flush failed");
-            log.frame_flushed[(page & log.frame_mask) as usize].store(page + 1, Ordering::Release);
-            log.advance_flushed();
-            log.pending_flushes.fetch_sub(1, Ordering::AcqRel);
-        });
-        // SAFETY: the frame stays allocated and unmodified until the flush
-        // completes: it is read-only and below `head` only after `flushed_until`.
-        unsafe {
-            self.device.write_async(
-                self.device_offset(Address::new(page, 0)),
-                frame,
-                self.page_size as usize,
-                done,
-            )
-        };
+    /// Makes everything below `address` read-only. Once every session has
+    /// observed the shift, the newly read-only range is flushed.
+    pub fn shift_read_only_to(&self, address: Address) {
+        if self.read_only.monotonic_update(address) {
+            let log = LogPtr(self);
+            self.epoch.bump_with_action(move || {
+                // SAFETY: the store keeps the log alive while actions can run.
+                let log = unsafe { log.log() };
+                let previous = log.safe_read_only.fetch_max(address);
+                if previous < address {
+                    log.flush_range(previous, address);
+                }
+            });
+        }
     }
 
-    /// Moves `flushed_until` over every contiguous completed page.
-    fn advance_flushed(&self) {
-        loop {
-            let current = self.flushed_until.load();
-            let page = current.page();
-            let done =
-                self.frame_flushed[(page & self.frame_mask) as usize].load(Ordering::Acquire);
-            if done != page + 1 || page + 1 > self.safe_read_only.load().page() {
-                return;
+    /// Flushes `[from, to)`, which is read-only and therefore stable, split at
+    /// page boundaries. A trailing partial sector is copied so that bytes past
+    /// `to`, which may still be written, are never read.
+    fn flush_range(&self, from: Address, to: Address) {
+        let mut start = from;
+        while start < to {
+            let page_end = Address::new(start.page() + 1, 0);
+            let end = to.min(page_end);
+            let end_offset = if end == page_end {
+                self.page_size
+            } else {
+                end.offset()
+            };
+            let aligned_start = start.offset() & !(SECTOR - 1);
+            let aligned_end = end_offset & !(SECTOR - 1);
+            let frame = self.frames[(start.page() & self.frame_mask) as usize];
+            let page_base = self.device_offset(Address::new(start.page(), 0));
+            if aligned_end > aligned_start {
+                let range_end = if aligned_end == end_offset {
+                    end
+                } else {
+                    Address::new(start.page(), aligned_end)
+                };
+                // SAFETY: the bytes are read-only and the frame cannot be
+                // reused before `flushed_until` passes this range.
+                let data = unsafe { frame.add(aligned_start as usize) };
+                self.write_range(
+                    start,
+                    range_end,
+                    page_base + aligned_start,
+                    data,
+                    (aligned_end - aligned_start) as usize,
+                    None,
+                );
             }
-            self.flushed_until
-                .monotonic_update(Address::new(page + 1, 0));
+            if aligned_end < end_offset {
+                let tail_start = aligned_end.max(aligned_start);
+                let mut copy = AlignedBuffer::new(SECTOR as usize);
+                let stable = (end_offset - tail_start) as usize;
+                // SAFETY: `[tail_start, end_offset)` is read-only and stable.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        frame.add(tail_start as usize),
+                        copy.as_mut().as_mut_ptr(),
+                        stable,
+                    )
+                };
+                let range_start = start.max(Address::new(start.page(), tail_start));
+                let data = copy.as_ptr();
+                self.write_range(
+                    range_start,
+                    end,
+                    page_base + tail_start,
+                    data,
+                    SECTOR as usize,
+                    Some(copy),
+                );
+            }
+            start = end;
         }
+    }
+
+    fn write_range(
+        &self,
+        start: Address,
+        end: Address,
+        offset: u64,
+        data: *const u8,
+        len: usize,
+        buffer: Option<AlignedBuffer>,
+    ) {
+        self.pending_flushes.fetch_add(1, Ordering::AcqRel);
+        let log = LogPtr(self);
+        let done = Box::new(move |result: std::io::Result<()>| {
+            drop(buffer);
+            // SAFETY: `Drop` waits for all pending flushes.
+            let log = unsafe { log.log() };
+            result.expect("hybrid log flush failed");
+            log.complete_flush(start, end);
+            log.pending_flushes.fetch_sub(1, Ordering::AcqRel);
+        });
+        // SAFETY: `data` is either stable frame memory (see `flush_range`) or
+        // `buffer`, which the callback keeps alive until completion.
+        unsafe { self.device.write_async(offset, data, len, done) };
+    }
+
+    /// Records `[start, end)` as durable and advances `flushed_until` over
+    /// every contiguous completed range.
+    fn complete_flush(&self, start: Address, end: Address) {
+        let mut completed = self.completed_flushes.lock().unwrap();
+        completed.insert(start.control(), end.control());
+        let mut flushed = self.flushed_until.load();
+        while let Some(end) = completed.remove(&flushed.control()) {
+            flushed = Address::from_control(end);
+        }
+        self.flushed_until.monotonic_update(flushed);
     }
 }
 
@@ -371,5 +437,72 @@ mod tests {
         assert!(log.head.load().page() + 4 > last.page());
         assert!(log.read_only.load() <= log.tail());
         epoch.release(slot);
+    }
+}
+
+#[cfg(test)]
+mod flush_tests {
+    use super::*;
+    use crate::core::device::FileDevice;
+
+    #[test]
+    fn read_only_shift_to_unaligned_address_flushes_exact_prefix() {
+        let dir = std::env::temp_dir().join(format!("raster-hlog-flush-{}", std::process::id()));
+        let device = Arc::new(FileDevice::open_with(&dir, 20, 2, true).unwrap());
+        let epoch = Arc::new(LightEpoch::new());
+        let config = LogConfig {
+            page_bits: 12,
+            memory_pages: 8,
+            mutable_fraction: 0.5,
+        };
+        let log = HybridLog::new(config, epoch.clone(), device.clone());
+        let slot = epoch.reserve().unwrap();
+        epoch.protect(&slot);
+        // Fill ~2.5 pages with recognizable bytes.
+        let mut last = Address::default();
+        for i in 0..400u64 {
+            let address = loop {
+                match log.allocate(24) {
+                    Allocation::Ok(address) => break address,
+                    Allocation::PageFull(page) => {
+                        while !log.new_page(page) {
+                            epoch.protect_and_drain(&slot);
+                        }
+                    }
+                    Allocation::Retry => {}
+                }
+            };
+            // SAFETY: freshly allocated, exclusive, in memory.
+            unsafe { std::ptr::write_bytes(log.get(address), (i % 251) as u8 + 1, 24) };
+            last = address;
+        }
+        let target = Address::new(last.page(), last.offset() - 24 * 7 + 12);
+        assert_ne!(target.offset() % SECTOR, 0);
+        log.shift_read_only_to(target);
+        let started = std::time::Instant::now();
+        while log.flushed_until.load() < target {
+            epoch.protect_and_drain(&slot);
+            assert!(started.elapsed().as_secs() < 10, "flush did not complete");
+        }
+        assert_eq!(log.flushed_until.load(), target);
+        let begin = Address::new(0, FIRST_VALID_OFFSET);
+        let len = (log.device_offset(target) - log.device_offset(begin)) as usize;
+        let (tx, rx) = std::sync::mpsc::channel();
+        log.read_async(begin, len, Box::new(move |r| tx.send(r).unwrap()));
+        let disk = rx.recv().unwrap().unwrap();
+        let mut memory = Vec::with_capacity(len);
+        let mut at = begin;
+        while at < target {
+            let page_end = Address::new(at.page() + 1, 0).min(target);
+            let n = (log.device_offset(page_end) - log.device_offset(at)) as usize;
+            // SAFETY: resident, read-only bytes.
+            memory.extend_from_slice(unsafe { std::slice::from_raw_parts(log.get(at), n) });
+            at = page_end;
+        }
+        assert_eq!(disk, memory);
+        epoch.release(slot);
+        drop(log);
+        drop(device);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
