@@ -24,6 +24,11 @@ impl RecordInfo {
         }
         Self(word)
     }
+    /// Reinterprets a raw header word read from the log.
+    #[inline(always)]
+    pub fn from_word(word: u64) -> Self {
+        Self(word)
+    }
     #[inline(always)]
     pub fn previous(self) -> Address {
         Address::from_control(self.0)
