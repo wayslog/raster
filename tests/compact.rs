@@ -23,10 +23,12 @@ impl Op {
         }
     }
 }
-impl ReadContext<u64, AtomicU64> for Op {
+impl KeyContext<u64> for Op {
     fn key(&self) -> &u64 {
         &self.key
     }
+}
+impl ReadContext<u64, AtomicU64> for Op {
     fn get(&mut self, value: &AtomicU64) {
         self.input = value.load(Ordering::Relaxed);
     }
@@ -35,11 +37,8 @@ impl ReadContext<u64, AtomicU64> for Op {
     }
 }
 impl UpsertContext<u64, AtomicU64> for Op {
-    fn key(&self) -> &u64 {
-        &self.key
-    }
-    fn put(&mut self) -> AtomicU64 {
-        AtomicU64::new(self.input)
+    fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(self.input));
     }
     fn put_atomic(&mut self, value: &AtomicU64) -> bool {
         value.store(self.input, Ordering::Relaxed);
@@ -47,25 +46,18 @@ impl UpsertContext<u64, AtomicU64> for Op {
     }
 }
 impl RmwContext<u64, AtomicU64> for Op {
-    fn key(&self) -> &u64 {
-        &self.key
+    fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(self.input));
     }
-    fn rmw_initial(&mut self) -> AtomicU64 {
-        AtomicU64::new(self.input)
-    }
-    fn rmw_copy(&mut self, old: &AtomicU64) -> AtomicU64 {
-        AtomicU64::new(old.load(Ordering::Relaxed) + self.input)
+    fn rmw_copy(&mut self, old: &AtomicU64, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(old.load(Ordering::Relaxed) + self.input));
     }
     fn rmw_atomic(&mut self, value: &AtomicU64) -> bool {
         value.fetch_add(self.input, Ordering::Relaxed);
         true
     }
 }
-impl DeleteContext<u64> for Op {
-    fn key(&self) -> &u64 {
-        &self.key
-    }
-}
+impl DeleteContext<u64> for Op {}
 
 fn store(dir: &std::path::Path) -> FasterKv<u64, AtomicU64> {
     let _ = std::fs::remove_dir_all(dir);

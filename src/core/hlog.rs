@@ -189,7 +189,10 @@ impl HybridLog {
     /// Reserves `size` bytes (a multiple of 8) at the tail.
     #[inline]
     pub fn allocate(&self, size: u64) -> Allocation {
-        debug_assert!(size.is_multiple_of(8) && size <= self.page_size);
+        assert!(
+            size.is_multiple_of(8) && size <= self.page_size,
+            "record exceeds log page size or is unaligned"
+        );
         let word = self.tail.0.fetch_add(size, Ordering::AcqRel);
         let page = word >> TAIL_OFFSET_BITS;
         let offset = word & ((1 << TAIL_OFFSET_BITS) - 1);

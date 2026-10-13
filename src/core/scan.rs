@@ -130,13 +130,13 @@ impl<K: Key, V: Value> ScanPage<K, V> {
     /// Records in this page in address order, including invalid ones. A null
     /// header marks the unused rest of the page.
     pub fn records(&mut self) -> impl Iterator<Item = ScannedRecord<'_, K, V>> {
-        let size = Layout::<K, V>::SIZE;
+        let min_size = Layout::<K, V>::min_io_size();
         let bytes = self.words.len() * 8;
         let base = self.base;
         let ptr = self.words.as_mut_ptr().cast::<u8>();
         let mut offset = 0usize;
         std::iter::from_fn(move || {
-            if offset + size > bytes {
+            if offset + min_size > bytes {
                 return None;
             }
             // SAFETY: the record lies inside our 8-byte aligned buffer, which
@@ -144,6 +144,16 @@ impl<K: Key, V: Value> ScanPage<K, V> {
             let record = unsafe { Record::<K, V>::from_ptr(ptr.add(offset)) };
             let info = record.info();
             if info.is_null() {
+                return None;
+            }
+            // SAFETY: header reads are checked against the remaining page.
+            let required = unsafe { record.required_bytes(bytes - offset, bytes - offset) }.ok()?;
+            if required > bytes - offset {
+                return None;
+            }
+            // SAFETY: the fixed headers were validated above.
+            let size = unsafe { record.size() } as usize;
+            if offset + size > bytes {
                 return None;
             }
             let address = base.add(offset as u64);

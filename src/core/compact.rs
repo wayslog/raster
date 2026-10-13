@@ -7,18 +7,32 @@
 //! wins and the copy is discarded.
 use super::address::Address;
 use super::epoch::SlotId;
-use super::kv::{Key, Value};
-use super::pending::{DiskRecord, PendingOp, Step};
+use super::kv::{Key, KeyContext, Value};
+use super::pending::{DiskError, DiskRecord, PendingOp, Step};
 use super::record::{Layout, RecordInfo};
 use super::store::{FasterKv, OpMode, Outcome, Status};
 
 /// A record being copied: its bytes and the chain range left to check.
-pub(crate) struct CopyRequest<K> {
+pub(crate) struct CopyRequest<K, V> {
     pub words: Vec<u64>,
-    pub key: K,
+    pub types: std::marker::PhantomData<(K, V)>,
     /// Records above this address may still hide a newer version of the key;
     /// it starts at the address of the record being copied.
     pub search_min: Address,
+}
+
+impl<K: Key, V> KeyContext<K> for CopyRequest<K, V> {
+    fn key(&self) -> &K {
+        // SAFETY: words owns a complete aligned record copied from a scan.
+        unsafe {
+            &*self
+                .words
+                .as_ptr()
+                .cast::<u8>()
+                .add(Layout::<K, V>::KEY_OFFSET)
+                .cast::<K>()
+        }
+    }
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
@@ -29,13 +43,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     pub(crate) fn conditional_insert(
         &self,
         slot_id: &SlotId,
-        request: &mut CopyRequest<K>,
+        request: &mut CopyRequest<K, V>,
         mode: OpMode,
     ) -> Outcome {
-        let hash = request.key.hash();
+        let hash = request.key_hash();
         loop {
             let slot = self.index.find_or_create(hash);
-            let entry = self.skip_and_invalidate(slot.entry.address(), &request.key);
+            let entry = self.skip_and_invalidate(slot.entry.address(), request);
             let head = self.hlog.head.load();
             let (gate, _guard) = if mode.phase == super::state::Phase::Rest {
                 (super::store::Gate::Normal, super::store::LockGuard::none())
@@ -55,7 +69,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             while address > request.search_min && address >= head {
                 let record = self.record(address);
                 // SAFETY: published, in-memory record under epoch protection.
-                if unsafe { record.key() } == &request.key {
+                if request.key_equals(unsafe { record.key() }) {
                     return Outcome::Done(Status::Aborted);
                 }
                 address = record.info().previous();
@@ -71,7 +85,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     marked: mode.holds_old,
                 };
             }
-            let new_address = self.block_allocate(slot_id, Layout::<K, V>::SIZE as u64);
+            let new_address = self.block_allocate(slot_id, (request.words.len() * 8) as u64);
             let record = self.record(new_address);
             let info = RecordInfo::new(entry, mode.version, false);
             // SAFETY: freshly allocated and not yet published.
@@ -85,15 +99,15 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 }
 
 /// Continues a copy whose liveness check reached the device.
-pub(crate) struct PendingCopy<K> {
-    pub request: CopyRequest<K>,
+pub(crate) struct PendingCopy<K, V> {
+    pub request: CopyRequest<K, V>,
     /// Index entry observed by the attempt that went to the device.
     pub observed: Address,
 }
 
-impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K> {
+impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K, V> {
     fn hash(&self) -> u64 {
-        self.request.key.hash()
+        self.request.key_hash()
     }
 
     fn resume(
@@ -106,17 +120,26 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K> {
         let Some(mut disk) = disk else {
             return Step::Done;
         };
-        let Some(record) = disk.record::<K, V>() else {
-            return Step::Done;
+        let record = match disk.record::<K, V>(store.hlog.page_size()) {
+            Ok(record) => record,
+            Err(DiskError::NeedMore(len)) => {
+                return Step::Read {
+                    address: disk.address,
+                    len,
+                    marked: mode.holds_old,
+                };
+            }
+            Err(DiskError::Corruption) => return Step::Done,
         };
         // SAFETY: the record was fully written before it was flushed.
-        if record.info().is_null() || unsafe { record.key() } == &self.request.key {
+        if record.info().is_null() || self.request.key_equals(unsafe { record.key() }) {
             return Step::Done;
         }
         let previous = record.info().previous();
         if previous > self.request.search_min {
             return Step::Read {
                 address: previous,
+                len: Layout::<K, V>::min_io_size(),
                 marked: mode.holds_old,
             };
         }
@@ -138,7 +161,11 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K> {
                 marked,
             } => {
                 self.observed = observed;
-                Step::Read { address, marked }
+                Step::Read {
+                    address,
+                    len: Layout::<K, V>::min_io_size(),
+                    marked,
+                }
             }
             Outcome::RetryLater { marked } => Step::RetryLater { marked },
             Outcome::Shift => Step::RetryLater { marked: false },
@@ -224,7 +251,7 @@ fn copy_pages<K: Key, V: Value>(
             }
             let request = CopyRequest {
                 words: record.words.to_vec(),
-                key: *record.key,
+                types: std::marker::PhantomData,
                 search_min: record.address,
             };
             let _ = session.copy_record(request);

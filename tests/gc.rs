@@ -22,12 +22,14 @@ impl Op {
         }
     }
 }
-impl UpsertContext<u64, AtomicU64> for Op {
+impl KeyContext<u64> for Op {
     fn key(&self) -> &u64 {
         &self.key
     }
-    fn put(&mut self) -> AtomicU64 {
-        AtomicU64::new(self.value)
+}
+impl UpsertContext<u64, AtomicU64> for Op {
+    fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(self.value));
     }
     fn put_atomic(&mut self, value: &AtomicU64) -> bool {
         value.store(self.value, Ordering::Relaxed);
@@ -35,9 +37,6 @@ impl UpsertContext<u64, AtomicU64> for Op {
     }
 }
 impl ReadContext<u64, AtomicU64> for Op {
-    fn key(&self) -> &u64 {
-        &self.key
-    }
     fn get(&mut self, value: &AtomicU64) {
         self.value = value.load(Ordering::Relaxed);
     }

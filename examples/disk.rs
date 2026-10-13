@@ -22,10 +22,12 @@ impl Request {
         self.sum.set(self.sum.get().wrapping_add(self.output));
     }
 }
-impl ReadContext<u64, AtomicU64> for Request {
+impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
     }
+}
+impl ReadContext<u64, AtomicU64> for Request {
     fn get(&mut self, value: &AtomicU64) {
         self.output = value.load(Ordering::Relaxed);
     }
@@ -38,11 +40,8 @@ impl ReadContext<u64, AtomicU64> for Request {
     }
 }
 impl UpsertContext<u64, AtomicU64> for Request {
-    fn key(&self) -> &u64 {
-        &self.key
-    }
-    fn put(&mut self) -> AtomicU64 {
-        AtomicU64::new(self.input)
+    fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+        slot.write(AtomicU64::new(self.input));
     }
     fn put_atomic(&mut self, value: &AtomicU64) -> bool {
         value.store(self.input, Ordering::SeqCst);
@@ -50,16 +49,13 @@ impl UpsertContext<u64, AtomicU64> for Request {
     }
 }
 impl RmwContext<u64, AtomicU64> for Request {
-    fn key(&self) -> &u64 {
-        &self.key
-    }
-    fn rmw_initial(&mut self) -> AtomicU64 {
+    fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         self.output = self.input;
-        AtomicU64::new(self.input)
+        slot.write(AtomicU64::new(self.input));
     }
-    fn rmw_copy(&mut self, old: &AtomicU64) -> AtomicU64 {
+    fn rmw_copy(&mut self, old: &AtomicU64, slot: ValueSlot<'_, AtomicU64>) {
         self.output = old.load(Ordering::Relaxed) + self.input;
-        AtomicU64::new(self.output)
+        slot.write(AtomicU64::new(self.output));
     }
     fn rmw_atomic(&mut self, value: &AtomicU64) -> bool {
         self.output = value.fetch_add(self.input, Ordering::SeqCst) + self.input;

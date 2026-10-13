@@ -126,7 +126,7 @@ impl Table {
 
     /// Finds the entry for `hash`'s tag, creating one with an invalid address
     /// if absent. Uses tentative insertion so a tag appears at most once.
-    #[inline]
+    #[inline(always)]
     pub fn find_or_create(&self, hash: u64) -> Slot<'_> {
         let (head, tag) = self.locate(hash);
         loop {
@@ -596,7 +596,7 @@ impl HashIndex {
         self.table().find(hash)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn find_or_create(&self, hash: u64) -> Slot<'_> {
         self.table().find_or_create(hash)
     }
