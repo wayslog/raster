@@ -52,6 +52,7 @@ enum Attempt {
     Done(Status),
     Retry,
     Disk(Address, Address),
+    RetryLater,
 }
 
 /// Result of an operation that may need a record read from the device.
@@ -62,6 +63,8 @@ pub(crate) enum Outcome {
         address: Address,
         observed: Address,
     },
+    /// The source is in the fuzzy region; retry after the session refreshes.
+    RetryLater,
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
@@ -162,7 +165,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             match self.upsert_attempt(slot_id, ctx) {
                 Attempt::Done(status) => return status,
                 Attempt::Retry => {}
-                Attempt::Disk(..) => unreachable!("blind upserts never read the device"),
+                Attempt::Disk(..) | Attempt::RetryLater => {
+                    unreachable!("blind upserts never read the device")
+                }
             }
         }
     }
@@ -204,6 +209,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             match self.rmw_attempt(slot_id, ctx) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Disk(address, observed) => return Outcome::Disk { address, observed },
+                Attempt::RetryLater => return Outcome::RetryLater,
                 Attempt::Retry => {}
             }
         }
@@ -254,9 +260,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 return Attempt::Done(Status::Ok);
             }
         } else if address >= self.hlog.safe_read_only.load() {
-            // Fuzzy region: another session may still update in place.
-            self.epoch.protect_and_drain(slot_id);
-            return Attempt::Retry;
+            // Fuzzy region: another session may still update in place, so a
+            // copy could lose its update. Retry once safe_read_only advances.
+            return Attempt::RetryLater;
         } else if address >= self.hlog.begin.load() && address < head {
             return Attempt::Disk(address, slot.entry.address());
         }

@@ -34,12 +34,18 @@ pub(crate) enum Step {
     Done,
     /// Read the record at this address next.
     Read(Address),
+    /// Re-run the operation after the session refreshes.
+    RetryLater,
 }
 
 pub(crate) trait PendingOp<K: Key, V: Value> {
     /// Continues with the record read at the requested address, or `None` on I/O failure.
     fn resume(&mut self, store: &FasterKv<K, V>, slot: &SlotId, record: Option<DiskRecord>)
     -> Step;
+    /// Re-runs an operation queued with `Step::RetryLater`.
+    fn retry(&mut self, _store: &FasterKv<K, V>, _slot: &SlotId) -> Step {
+        unreachable!("only RMW is retried later")
+    }
 }
 
 /// Where a disk lookup for `key` landed.
@@ -123,6 +129,20 @@ impl<K: Key, V: Value, C: RmwContext<K, V>> PendingOp<K, V> for PendingRmw<C> {
             Lookup::Previous(address) => return Step::Read(address),
             Lookup::Failed(status) => Outcome::Done(status),
         };
+        self.step(outcome)
+    }
+
+    fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId) -> Step {
+        let outcome = store.internal_rmw(slot, &mut self.ctx);
+        self.step(outcome)
+    }
+}
+
+impl<C> PendingRmw<C> {
+    fn step<K: Key, V: Value>(&mut self, outcome: Outcome) -> Step
+    where
+        C: RmwContext<K, V>,
+    {
         match outcome {
             Outcome::Done(status) => {
                 self.ctx.on_complete(status);
@@ -132,6 +152,7 @@ impl<K: Key, V: Value, C: RmwContext<K, V>> PendingOp<K, V> for PendingRmw<C> {
                 self.observed = observed;
                 Step::Read(address)
             }
+            Outcome::RetryLater => Step::RetryLater,
         }
     }
 }

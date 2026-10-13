@@ -23,6 +23,8 @@ pub struct Session<'a, K: Key, V: Value> {
     next_id: u64,
     pending: HashMap<u64, Box<dyn PendingOp<K, V>>>,
     responses: Arc<Mutex<Vec<Response>>>,
+    /// Pending operations to re-run after the next refresh.
+    retry: Vec<u64>,
 }
 
 impl<'a, K: Key, V: Value> Session<'a, K, V> {
@@ -36,6 +38,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             next_id: 0,
             pending: HashMap::new(),
             responses: Arc::default(),
+            retry: Vec::new(),
         }
     }
 
@@ -65,6 +68,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             Outcome::Disk { address, .. } => {
                 self.suspend(address, PendingRead { ctx: ctx.clone() })
             }
+            Outcome::RetryLater => unreachable!("reads never retry later"),
         }
     }
 
@@ -89,6 +93,14 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     observed,
                 },
             ),
+            Outcome::RetryLater => {
+                let id = self.register(PendingRmw {
+                    ctx: ctx.clone(),
+                    observed: Default::default(),
+                });
+                self.retry.push(id);
+                Status::Pending
+            }
         }
     }
 
@@ -99,10 +111,16 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     }
 
     #[cold]
-    fn suspend(&mut self, address: Address, op: impl PendingOp<K, V> + 'static) -> Status {
+    fn register(&mut self, op: impl PendingOp<K, V> + 'static) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.pending.insert(id, Box::new(op));
+        id
+    }
+
+    #[cold]
+    fn suspend(&mut self, address: Address, op: impl PendingOp<K, V> + 'static) -> Status {
+        let id = self.register(op);
         self.issue(id, address);
         Status::Pending
     }
@@ -124,6 +142,16 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
 
     /// Completes pending operations on this thread; with `wait`, blocks until
     /// none remain. Returns true when no operation is pending.
+    fn advance(&mut self, id: u64, step: Step) {
+        match step {
+            Step::Done => {
+                self.pending.remove(&id);
+            }
+            Step::Read(address) => self.issue(id, address),
+            Step::RetryLater => self.retry.push(id),
+        }
+    }
+
     pub fn complete_pending(&mut self, wait: bool) -> bool {
         loop {
             let batch = std::mem::take(&mut *self.responses.lock().unwrap());
@@ -133,14 +161,15 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     .pending
                     .get_mut(&id)
                     .expect("response for a pending operation");
-                match op.resume(self.store, self.slot.as_ref().expect("live session"), disk) {
-                    Step::Done => {
-                        self.pending.remove(&id);
-                    }
-                    Step::Read(address) => self.issue(id, address),
-                }
+                let step = op.resume(self.store, self.slot.as_ref().expect("live session"), disk);
+                self.advance(id, step);
             }
             self.refresh();
+            for id in std::mem::take(&mut self.retry) {
+                let op = self.pending.get_mut(&id).expect("queued retry");
+                let step = op.retry(self.store, self.slot.as_ref().expect("live session"));
+                self.advance(id, step);
+            }
             if self.pending.is_empty() {
                 return true;
             }
