@@ -370,3 +370,144 @@ fn dump_key(
 thread_local! {
     static FAILED_KEY: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
+
+mod common;
+use common::varlen::{self as variable, TestDirectory};
+
+fn variable_recovery(mode: &str, large: bool, threads: u64, name: &str) {
+    let dir = TestDirectory::new(name);
+    let keys = 64;
+    let length = if large { 1001 } else { 31 };
+    let store = variable::store(&dir, false, false);
+    if mode != "insert" {
+        let mut session = store.start_session();
+        for id in 0..keys * threads {
+            let mut op = variable::request(id, length);
+            op.data.fill(0);
+            assert_eq!(session.upsert(&mut op, id), Status::Ok);
+        }
+    }
+    let started = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let (token, guids) = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for worker in 0..threads {
+            let (store, started, stop) = (&store, &started, &stop);
+            handles.push(scope.spawn(move || {
+                let mut session = store.start_session();
+                for serial in 1..=512 {
+                    let key = if mode == "insert" {
+                        (serial - 1) * threads + worker
+                    } else {
+                        worker * keys + (serial - 1) % keys
+                    };
+                    let mut op = variable::request(key, length + serial as usize % 17);
+                    let status = if mode == "rmw" {
+                        op.increment = 1;
+                        op.suffix = vec![88; 8];
+                        session.rmw(&mut op, serial)
+                    } else {
+                        op.data[..8].copy_from_slice(&serial.to_le_bytes());
+                        session.upsert(&mut op, serial)
+                    };
+                    assert!(matches!(status, Status::Ok | Status::Pending));
+                    if serial % 8 == 0 {
+                        session.complete_pending(false);
+                    }
+                    if serial == 16 {
+                        started.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+                while !stop.load(Ordering::SeqCst) {
+                    session.complete_pending(false);
+                    std::thread::yield_now();
+                }
+                session.complete_pending(true);
+                session.guid()
+            }));
+        }
+        while started.load(Ordering::SeqCst) < threads as usize {
+            std::thread::yield_now();
+        }
+        let token = store.checkpoint(None, None).unwrap();
+        while store.system_state().phase != Phase::Rest {
+            std::thread::yield_now();
+        }
+        stop.store(true, Ordering::SeqCst);
+        (
+            token,
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>(),
+        )
+    });
+    drop(store);
+    let store = variable::store(&dir, false, false);
+    let info = store.recover(token, token).unwrap();
+    let mut expected = std::collections::BTreeMap::new();
+    for (worker, guid) in guids.into_iter().enumerate() {
+        assert!(info.sessions.contains(&guid));
+        let (session, serial) = store.continue_session(guid).unwrap();
+        drop(session);
+        assert!((16..=512).contains(&serial));
+        if mode != "insert" {
+            for id in 0..keys {
+                expected.insert(worker as u64 * keys + id, (0u64, length));
+            }
+        }
+        for i in 1..=serial {
+            let key = if mode == "insert" {
+                (i - 1) * threads + worker as u64
+            } else {
+                worker as u64 * keys + (i - 1) % keys
+            };
+            if mode == "rmw" {
+                let value = expected.get_mut(&key).unwrap();
+                value.0 += 1;
+                value.1 += 8;
+            } else {
+                expected.insert(key, (i, length + i as usize % 17));
+            }
+        }
+    }
+    let mut session = store.start_session();
+    for (serial, (key, (count, len))) in expected.into_iter().enumerate() {
+        let (status, bytes, _) = variable::request(key, 0).read(&mut session, serial as u64);
+        assert_eq!(status, Status::Ok, "key {key}");
+        assert_eq!(
+            u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            count,
+            "key {key}"
+        );
+        assert_eq!(bytes.len(), len, "key {key}");
+    }
+}
+#[test]
+fn recovery_serial_variable_length_keys() {
+    variable_recovery("insert", false, 1, "recover-serial-var-key");
+}
+#[test]
+fn recovery_concurrent_insert_small() {
+    variable_recovery("insert", false, 4, "recover-insert-small");
+}
+#[test]
+fn recovery_concurrent_insert_large() {
+    variable_recovery("insert", true, 4, "recover-insert-large");
+}
+#[test]
+fn recovery_concurrent_update_small() {
+    variable_recovery("update", false, 4, "recover-update-small");
+}
+#[test]
+fn recovery_concurrent_update_large() {
+    variable_recovery("update", true, 4, "recover-update-large");
+}
+#[test]
+fn recovery_concurrent_rmw_small() {
+    variable_recovery("rmw", false, 4, "recover-rmw-small");
+}
+#[test]
+fn recovery_concurrent_rmw_large() {
+    variable_recovery("rmw", true, 4, "recover-rmw-large");
+}

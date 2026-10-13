@@ -231,3 +231,175 @@ fn auto_compaction_keeps_the_log_near_its_budget() {
     drop(store);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+mod common;
+use common::varlen::{self as variable, TestDirectory};
+
+fn variable_compaction(resident: bool, long_keys: bool, name: &str) {
+    let dir = TestDirectory::new(name);
+    let store = variable::store(&dir, resident, false);
+    let mut session = store.start_session();
+    let make = |id| {
+        common::varlen::VarRequest::new(
+            id,
+            if long_keys { 8 + id as usize % 701 } else { 8 },
+            if long_keys { 8 } else { 8 + id as usize % 900 },
+        )
+    };
+    for id in 0..1200 {
+        assert_eq!(session.upsert(&mut make(id), id), Status::Ok);
+    }
+    let until = store.hlog.tail();
+    store.hlog.shift_read_only_to(store.hlog.tail());
+    session.refresh();
+    for id in 0..1200 {
+        if id % 3 == 0 {
+            assert_eq!(session.delete(&make(id), 1200 + id), Status::Ok);
+        } else if id % 2 == 0 {
+            let mut op = make(id);
+            op.data.fill(19);
+            assert_eq!(session.upsert(&mut op, 1200 + id), Status::Ok);
+        }
+    }
+    assert!(session.complete_pending(true));
+    let compacted = session.compact(until, true, 3).unwrap();
+    assert!(compacted <= until);
+    for id in 0..1200 {
+        let mut op = make(id);
+        let expected_len = op.data.len();
+        let (status, bytes, _) = op.read(&mut session, 2400 + id);
+        if id % 3 == 0 {
+            assert_eq!(status, Status::NotFound);
+        } else {
+            assert_eq!(status, Status::Ok);
+            assert_eq!(bytes, vec![if id % 2 == 0 { 19 } else { 88 }; expected_len]);
+        }
+    }
+}
+#[test]
+fn compact_in_memory_variable_length_keys() {
+    variable_compaction(true, true, "compact-mem-key");
+}
+#[test]
+fn compact_in_memory_variable_length_values() {
+    variable_compaction(true, false, "compact-mem-value");
+}
+#[test]
+fn compact_on_disk_variable_length_keys() {
+    variable_compaction(false, true, "compact-disk-key");
+}
+#[test]
+fn compact_on_disk_variable_length_values() {
+    variable_compaction(false, false, "compact-disk-value");
+}
+
+#[test]
+fn variable_disk_read_compaction_race() {
+    let dir = TestDirectory::new("compact-pending-read");
+    let store = variable::store(&dir, false, false);
+    let mut session = store.start_session();
+    for id in 0..500 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 333), id),
+            Status::Ok
+        );
+    }
+    let mut read = variable::request(0, 0);
+    assert_eq!(session.read(&mut read, 500), Status::Pending);
+    let until = store.hlog.safe_read_only.load();
+    session.compact(until, true, 2).unwrap();
+    assert!(session.complete_pending(true));
+    assert_eq!(
+        read.out.borrow_mut().take(),
+        Some((Status::Ok, vec![88; 333]))
+    );
+    assert_eq!(read.read(&mut session, 501).1, vec![88; 333]);
+}
+
+#[test]
+fn variable_disk_delete_all_and_reinsert() {
+    let dir = TestDirectory::new("compact-reinsert");
+    let store = variable::store(&dir, false, false);
+    let mut session = store.start_session();
+    for id in 0..500 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 333), id),
+            Status::Ok
+        );
+    }
+    for id in 0..500 {
+        assert_eq!(
+            session.delete(&variable::request(id, 21), 500 + id),
+            Status::Ok
+        );
+    }
+    session.compact(Address::MAX, true, 2).unwrap();
+    for id in 0..500 {
+        assert_eq!(
+            session.upsert(&mut variable::request(id, 711), 1000 + id),
+            Status::Ok
+        );
+    }
+    session.compact(Address::MAX, true, 2).unwrap();
+    for id in 0..500 {
+        assert_eq!(
+            variable::request(id, 0).read(&mut session, 1500 + id).1,
+            vec![88; 711]
+        );
+    }
+}
+
+fn variable_concurrent_compaction(resident: bool, name: &str) {
+    let dir = TestDirectory::new(name);
+    let store = variable::store(&dir, resident, false);
+    {
+        let mut session = store.start_session();
+        for id in 0..500 {
+            let mut op = variable::request(id, 64);
+            op.data.fill(0);
+            assert_eq!(session.upsert(&mut op, id), Status::Ok);
+        }
+    }
+    std::thread::scope(|scope| {
+        for _ in 0..3 {
+            let store = &store;
+            scope.spawn(move || {
+                let mut session = variable::session(store);
+                for round in 0..4 {
+                    for id in 0..500 {
+                        let mut op = variable::request(id, 0);
+                        op.increment = 1;
+                        op.suffix = vec![88; 8];
+                        let status = session.rmw(&mut op, round * 500 + id);
+                        assert!(matches!(status, Status::Ok | Status::Pending));
+                        if id % 32 == 0 {
+                            session.complete_pending(false);
+                        }
+                    }
+                    session.complete_pending(true);
+                }
+            });
+        }
+        let mut session = variable::session(&store);
+        for _ in 0..4 {
+            store.hlog.shift_read_only_to(store.hlog.tail());
+            session.refresh();
+            session.compact(Address::MAX, true, 2).unwrap();
+        }
+    });
+    let mut session = store.start_session();
+    for id in 0..500 {
+        let (status, bytes, _) = variable::request(id, 0).read(&mut session, id);
+        assert_eq!(status, Status::Ok);
+        assert_eq!(u64::from_le_bytes(bytes[..8].try_into().unwrap()), 12);
+        assert_eq!(bytes.len(), 64 + 12 * 8);
+    }
+}
+#[test]
+fn variable_in_memory_concurrent_compaction() {
+    variable_concurrent_compaction(true, "compact-concurrent-memory");
+}
+#[test]
+fn variable_on_disk_concurrent_compaction() {
+    variable_concurrent_compaction(false, "compact-concurrent-disk");
+}
