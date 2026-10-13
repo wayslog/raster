@@ -168,7 +168,14 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
                 .map(|_| {
                     let (scanner, finished) = (&scanner, &finished);
                     scope.spawn(move || {
-                        let mut session = store.start_session();
+                        // An action may be starting; this caller keeps
+                        // refreshing, so it will finish and REST will return.
+                        let mut session = loop {
+                            if let Some(session) = store.try_start_session() {
+                                break session;
+                            }
+                            std::thread::yield_now();
+                        };
                         let result = copy_pages(&mut session, scanner);
                         finished.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                         result

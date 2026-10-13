@@ -178,3 +178,52 @@ fn compaction_under_concurrent_rmw_loses_no_update() {
     drop(store);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn auto_compaction_keeps_the_log_near_its_budget() {
+    use raster::core::auto_compact::AutoCompactionConfig;
+    let dir = std::env::temp_dir().join(format!("raster-autocompact-{}", std::process::id()));
+    let store = Arc::new(store(&dir));
+    const KEYS: u64 = 2_000;
+    const BUDGET: u64 = 256 << 10;
+    let config = AutoCompactionConfig {
+        check_interval: std::time::Duration::from_millis(5),
+        threads: 2,
+        ..AutoCompactionConfig::with_budget(BUDGET)
+    };
+    let begin = store.hlog.begin.load();
+    let compactor = store.spawn_auto_compaction(config);
+    std::thread::scope(|scope| {
+        for t in 0..2u64 {
+            let store = &store;
+            scope.spawn(move || {
+                let mut session = store.start_session();
+                for round in 0..200u64 {
+                    for key in 0..KEYS {
+                        let _ =
+                            session.upsert(&mut Op::new(key, round), (round * KEYS + key) * 2 + t);
+                    }
+                    session.complete_pending(false);
+                }
+                assert!(session.complete_pending(true));
+            });
+        }
+    });
+    drop(compactor);
+    assert!(
+        store.hlog.begin.load() > begin,
+        "auto compaction truncated the log"
+    );
+    assert!(
+        store.log_size() < 4 * BUDGET,
+        "log size {}",
+        store.log_size()
+    );
+    let mut session = store.start_session();
+    for key in 0..KEYS {
+        assert_eq!(read(&mut session, key), (Status::Ok, 199), "key {key}");
+    }
+    drop(session);
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
