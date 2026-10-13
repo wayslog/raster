@@ -46,7 +46,7 @@ impl Default for StoreConfig {
 
 pub struct FasterKv<K: Key, V: Value> {
     // Declared before `epoch` so the log drops while pending actions are inert.
-    pub(crate) hlog: HybridLog,
+    pub hlog: HybridLog,
     pub(crate) index: HashIndex,
     pub(crate) epoch: Arc<LightEpoch>,
     pub(crate) state: AtomicSystemState,
