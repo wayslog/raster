@@ -1,5 +1,5 @@
 //! Larger-than-memory benchmark paired with tools/performance/disk.cc.
-//! Usage: disk OP THREADS KEYS COUNT SAMPLE_STRIDE DIR
+//! Usage: disk OP THREADS KEYS COUNT SAMPLE_STRIDE DIR [READ_CACHE_MB]
 use raster::core::device::FileDevice;
 use raster::core::hlog::LogConfig;
 use raster::core::*;
@@ -78,6 +78,17 @@ fn next(state: &mut u64) -> u64 {
     *state
 }
 
+/// hotread sends 9 of 10 reads to the first keys / 32, which were loaded
+/// first and so live on the device.
+fn pick(state: &mut u64, keys: u64, hot: bool) -> u64 {
+    let r = next(state);
+    if hot && !r.is_multiple_of(10) {
+        next(state) % (keys / 32)
+    } else {
+        r % keys
+    }
+}
+
 #[derive(Default)]
 #[repr(align(64))]
 struct WorkerResult {
@@ -89,31 +100,39 @@ struct WorkerResult {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    assert_eq!(
-        args.len(),
-        6,
-        "usage: disk OP THREADS KEYS COUNT SAMPLE_STRIDE DIR"
+    assert!(
+        matches!(args.len(), 6 | 7),
+        "usage: disk OP THREADS KEYS COUNT SAMPLE_STRIDE DIR [READ_CACHE_MB]"
     );
     let operation = args[0].as_str();
     let threads: usize = args[1].parse().unwrap();
     let keys: u64 = args[2].parse().unwrap();
     let count: usize = args[3].parse().unwrap();
     let stride: usize = args[4].parse().unwrap();
-    assert!(matches!(operation, "read" | "rmw"));
+    assert!(matches!(operation, "read" | "hotread" | "rmw"));
+    let hot = operation == "hotread";
+    let read_cache_mb: u64 = args.get(6).map_or(0, |mb| mb.parse().unwrap());
     assert!(count.is_multiple_of(threads) && stride.is_power_of_two());
     let device = Arc::new(FileDevice::open_with(&args[5], 30, 8, false).unwrap());
-    let store = FasterKv::<u64, AtomicU64>::with_device(
-        StoreConfig {
-            index_buckets: 1 << 22,
-            checkpoint_dir: None,
-            log: LogConfig {
-                page_bits: 25,
-                memory_pages: 8,
-                mutable_fraction: 0.5,
-            },
+    let config = StoreConfig {
+        index_buckets: 1 << 22,
+        checkpoint_dir: None,
+        log: LogConfig {
+            page_bits: 25,
+            memory_pages: 8,
+            mutable_fraction: 0.5,
         },
-        device,
-    );
+    };
+    let store = if read_cache_mb > 0 {
+        let log = LogConfig {
+            page_bits: 25,
+            memory_pages: read_cache_mb >> 5,
+            mutable_fraction: 0.9,
+        };
+        FasterKv::<u64, AtomicU64>::with_read_cache(config, device, ReadCacheConfig { log })
+    } else {
+        FasterKv::<u64, AtomicU64>::with_device(config, device)
+    };
     let ignored = Rc::new(Cell::new(0));
     {
         let mut session = store.start_session();
@@ -152,14 +171,14 @@ fn main() {
                     let started = Instant::now();
                     for i in 0..count / threads {
                         let mut context = Request {
-                            key: next(&mut state) % keys,
+                            key: pick(&mut state, keys, hot),
                             input: 1,
                             output: 0,
                             sum: sum.clone(),
                         };
                         let sampled = (i & (stride - 1)) == ((i / stride) & (stride - 1));
                         let clock = sampled.then(Instant::now);
-                        let status = if operation == "read" {
+                        let status = if operation != "rmw" {
                             session.read(&mut context, i as u64)
                         } else {
                             session.rmw(&mut context, i as u64)

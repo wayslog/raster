@@ -110,7 +110,7 @@ impl Table {
     }
 
     /// Finds the non-tentative entry for `hash`'s tag.
-    #[inline]
+    #[inline(always)]
     pub fn find(&self, hash: u64) -> Option<Slot<'_>> {
         let (mut bucket, tag) = self.locate(hash);
         loop {
@@ -591,7 +591,7 @@ impl HashIndex {
         unsafe { &*self.table.load(Ordering::Acquire) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn find(&self, hash: u64) -> Option<Slot<'_>> {
         self.table().find(hash)
     }
