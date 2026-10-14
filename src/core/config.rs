@@ -30,7 +30,6 @@ fn invalid(message: &str) -> ConfigError {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
-    #[serde(default)]
     filepath: String,
     checkpoint_dir: Option<PathBuf>,
     hlog: Hlog,
@@ -74,7 +73,7 @@ impl Default for Cache {
 #[serde(default, deny_unknown_fields)]
 struct Compaction {
     enabled: bool,
-    hlog_size_budget_mb: u64,
+    hlog_size_budget_mb: Option<u64>,
     trigger_pct: f64,
     compact_pct: f64,
     max_compacted_size_mb: u64,
@@ -85,7 +84,7 @@ impl Default for Compaction {
     fn default() -> Self {
         Self {
             enabled: false,
-            hlog_size_budget_mb: 0,
+            hlog_size_budget_mb: None,
             trigger_pct: 0.8,
             compact_pct: 0.2,
             max_compacted_size_mb: 512,
@@ -112,6 +111,11 @@ fn log_config(memory_mb: u64, fraction: f64) -> Result<LogConfig, ConfigError> {
     if bytes < 128 << 20 || !bytes.is_power_of_two() {
         return Err(invalid(
             "in_mem_size_mb must be a power of two and at least 128",
+        ));
+    }
+    if bytes >> 25 > super::address::Address::MAX_PAGE + 1 {
+        return Err(invalid(
+            "in_mem_size_mb exceeds the hybrid log address space",
         ));
     }
     Ok(LogConfig {
@@ -148,20 +152,32 @@ impl StoreConfig {
         }
         let log = log_config(parsed.hlog.in_mem_size_mb, parsed.hlog.mutable_fraction)?;
         let read_cache = match parsed.read_cache {
-            Some(cache) => {
+            Some(cache) if cache.enabled => {
                 let log = log_config(cache.in_mem_size_mb, cache.mutable_fraction)?;
-                cache.enabled.then_some(ReadCacheConfig {
+                Some(ReadCacheConfig {
                     log,
                     pre_allocate: cache.pre_allocate,
                 })
             }
-            None => None,
+            _ => None,
         };
+        if parsed
+            .hlog
+            .compaction
+            .as_ref()
+            .is_some_and(|c| c.hlog_size_budget_mb.is_none())
+        {
+            return Err(invalid("hlog.compaction requires hlog_size_budget_mb"));
+        }
         let auto_compaction = match parsed.hlog.compaction {
             Some(compaction) if compaction.enabled => {
-                let budget = megabytes(compaction.hlog_size_budget_mb)?;
+                let budget = megabytes(
+                    compaction
+                        .hlog_size_budget_mb
+                        .expect("required budget checked"),
+                )?;
                 let max_bytes = megabytes(compaction.max_compacted_size_mb)?;
-                if budget == 0
+                if budget < log.memory_pages * (1 << log.page_bits)
                     || max_bytes == 0
                     || compaction.check_interval_ms == 0
                     || compaction.num_threads == 0
@@ -174,7 +190,7 @@ impl StoreConfig {
                     || compaction.compact_pct == 0.0
                 {
                     return Err(invalid(
-                        "enabled compaction requires positive sizes, interval, 1..64 threads and fractions in (0, 1]",
+                        "enabled compaction requires a budget at least as large as the memory window, positive max size and interval, 1..64 threads and fractions in (0, 1]",
                     ));
                 }
                 Some(AutoCompactionConfig {

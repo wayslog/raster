@@ -24,6 +24,7 @@ pub mod session;
 pub mod state;
 pub mod store;
 
+pub use compact::CompactionResult;
 pub use kv::{
     DeleteContext, Key, KeyContext, ReadContext, RmwContext, UpsertContext, Value, ValueSlot,
 };

@@ -19,6 +19,8 @@ pub trait Device: Send + Sync + 'static {
     /// # Safety
     /// `data..data + len` must stay valid and unmodified until `done` runs.
     unsafe fn write_async(&self, offset: u64, data: *const u8, len: usize, done: WriteCallback);
+    /// Completes with exactly len initialized bytes, or an I/O error. The
+    /// engine treats a successful short read as UnexpectedEof, not a retry.
     fn read_async(&self, offset: u64, len: usize, done: ReadCallback);
     /// Drops storage below `offset`; `done` receives the offset actually
     /// truncated to (it may be lower, e.g. a segment boundary). Callers must

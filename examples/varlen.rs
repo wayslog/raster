@@ -18,7 +18,9 @@ struct BytesValue {
     capacity: u32,
     length: AtomicU32,
 }
-impl Value for BytesValue {
+// SAFETY: Headers use integers/atomics only; initialized inline payloads are
+// relocatable, resource-free, and retain their allocation size.
+unsafe impl Value for BytesValue {
     #[inline(always)]
     fn size(&self) -> u32 {
         16 + self.capacity
@@ -116,7 +118,9 @@ impl Request {
         }
     }
 }
-impl KeyContext<u64> for Request {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Request {
     #[inline(always)]
     fn key(&self) -> &u64 {
         &self.key
@@ -131,7 +135,9 @@ impl ReadContext<u64, BytesValue> for Request {
         self.add_output();
     }
 }
-impl UpsertContext<u64, BytesValue> for Request {
+// SAFETY: All reserved value bytes are initialized and capacity stays fixed;
+// shared payload updates use the generation lock and atomic fields.
+unsafe impl UpsertContext<u64, BytesValue> for Request {
     fn value_size(&self) -> u32 {
         16 + self.length
     }
@@ -165,7 +171,9 @@ impl UpsertContext<u64, BytesValue> for Request {
         self.add_output();
     }
 }
-impl RmwContext<u64, BytesValue> for Request {
+// SAFETY: All reserved value bytes are initialized and capacity stays fixed;
+// shared payload updates use the generation lock and atomic fields.
+unsafe impl RmwContext<u64, BytesValue> for Request {
     fn initial_value_size(&self) -> u32 {
         16 + self.length
     }

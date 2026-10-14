@@ -16,7 +16,25 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64};
 
 /// An inline key; its size and bytes are immutable once published.
-pub trait Key: Eq + Sized + Send + Sync + 'static {
+///
+/// # Safety
+/// The fixed header must accept every bit pattern, contain no references or
+/// owned resources, and support bytewise relocation without destruction.
+/// `size` may inspect only the fixed header. For a complete key it reports the
+/// exact initialized allocation, at least size_of::<Self>(), and never changes.
+/// Hashing and equality must not modify a published key. Access to trailing
+/// bytes must be restricted to complete keys supplied by the engine.
+///
+/// ```compile_fail
+/// use raster::core::Key;
+/// #[derive(PartialEq, Eq)]
+/// struct InvalidKey(u64);
+/// impl Key for InvalidKey {
+///     fn size(&self) -> u32 { 4096 }
+///     fn hash(&self) -> u64 { 0 }
+/// }
+/// ```
+pub unsafe trait Key: Eq + Sized + Send + Sync + 'static {
     #[inline(always)]
     fn size(&self) -> u32 {
         size_of::<Self>() as u32
@@ -28,7 +46,24 @@ pub trait Key: Eq + Sized + Send + Sync + 'static {
 /// An inline value with a fixed header and an optional trailing payload.
 /// Implementations must initialize all bytes they inspect, report the exact
 /// allocation size, and support bytewise relocation without destruction.
-pub trait Value: Sized + Send + Sync + 'static {
+///
+/// # Safety
+/// The fixed header must accept every bit pattern and contain no references or
+/// owned resources. `size` reads only that header and reports the immutable
+/// allocation size, at least size_of::<Self>(), for every initialized value.
+/// `initialize_empty` must initialize a valid value of exactly the supplied
+/// slot size, including all bytes later copied or read. All in-place mutation
+/// must preserve the allocation size and the type's validity invariants.
+///
+/// ```compile_fail
+/// use raster::core::{Value, ValueSlot};
+/// struct InvalidValue(u64);
+/// impl Value for InvalidValue {
+///     fn size(&self) -> u32 { 4096 }
+///     fn initialize_empty(_: ValueSlot<'_, Self>) {}
+/// }
+/// ```
+pub unsafe trait Value: Sized + Send + Sync + 'static {
     #[inline(always)]
     fn size(&self) -> u32 {
         size_of::<Self>() as u32
@@ -81,7 +116,24 @@ impl<V> ValueSlot<'_, V> {
 }
 
 /// Shared key operations, including FASTER's shallow-key/deep-write contract.
-pub trait KeyContext<K: Key> {
+///
+/// # Safety
+/// Sizes, hashes, equality and key bytes remain consistent through an operation
+/// and its pending clones. `write_key` initializes exactly `key_size` bytes with
+/// a key whose `size` equals that allocation. The default copy requires `key`
+/// to point to that complete initialized allocation; a shallow key must override
+/// the copy, hash and equality methods. Every clone owns all referenced request
+/// data until completion. Methods must return normally rather than unwind.
+///
+/// ```compile_fail
+/// use raster::core::KeyContext;
+/// struct InvalidContext(u64);
+/// impl KeyContext<u64> for InvalidContext {
+///     fn key(&self) -> &u64 { &self.0 }
+///     fn key_size(&self) -> u32 { 4096 }
+/// }
+/// ```
+pub unsafe trait KeyContext<K: Key> {
     fn key(&self) -> &K;
     #[inline(always)]
     fn key_hash(&self) -> u64 {
@@ -120,7 +172,24 @@ pub trait ReadContext<K: Key, V: Value>: KeyContext<K> {
     fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
-pub trait UpsertContext<K: Key, V: Value>: KeyContext<K> {
+/// # Safety
+/// `put` initializes every byte of a valid V allocation of exactly `value_size`
+/// bytes. `put_atomic` preserves that allocation size and synchronizes shared
+/// writes. Callbacks return normally, and pending clones uphold the same contract.
+///
+/// ```compile_fail
+/// use raster::core::{KeyContext, UpsertContext, ValueSlot};
+/// #[derive(Clone)]
+/// struct MissingInitialization(u64);
+/// unsafe impl KeyContext<u64> for MissingInitialization {
+///     fn key(&self) -> &u64 { &self.0 }
+/// }
+/// impl UpsertContext<u64, u64> for MissingInitialization {
+///     fn put(&mut self, _: ValueSlot<'_, u64>) {}
+///     fn put_atomic(&mut self, _: &u64) -> bool { false }
+/// }
+/// ```
+pub unsafe trait UpsertContext<K: Key, V: Value>: KeyContext<K> {
     #[inline(always)]
     fn value_size(&self) -> u32 {
         size_of::<V>() as u32
@@ -131,7 +200,27 @@ pub trait UpsertContext<K: Key, V: Value>: KeyContext<K> {
     fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
-pub trait RmwContext<K: Key, V: Value>: KeyContext<K> {
+/// # Safety
+/// Initial and copy callbacks initialize every byte of a valid value whose
+/// allocation size equals the corresponding size callback. In-place mutation
+/// preserves allocation size and synchronizes shared writes; a failed growth
+/// attempt must prevent later in-place updates from racing the copy. Callbacks
+/// return normally, and pending clones uphold the same contract.
+///
+/// ```compile_fail
+/// use raster::core::{KeyContext, RmwContext, ValueSlot};
+/// #[derive(Clone)]
+/// struct MissingInitialization(u64);
+/// unsafe impl KeyContext<u64> for MissingInitialization {
+///     fn key(&self) -> &u64 { &self.0 }
+/// }
+/// impl RmwContext<u64, u64> for MissingInitialization {
+///     fn rmw_initial(&mut self, _: ValueSlot<'_, u64>) {}
+///     fn rmw_copy(&mut self, _: &u64, _: ValueSlot<'_, u64>) {}
+///     fn rmw_atomic(&mut self, _: &u64) -> bool { false }
+/// }
+/// ```
+pub unsafe trait RmwContext<K: Key, V: Value>: KeyContext<K> {
     #[inline(always)]
     fn initial_value_size(&self) -> u32 {
         size_of::<V>() as u32
@@ -146,7 +235,22 @@ pub trait RmwContext<K: Key, V: Value>: KeyContext<K> {
     fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 
-pub trait DeleteContext<K: Key>: KeyContext<K> {
+/// # Safety
+/// `value_size` must select an allocation the target store's Value implementation
+/// can initialize to exactly that size. None selects the fixed header size.
+/// The size remains stable throughout the operation and its pending clones.
+///
+/// ```compile_fail
+/// use raster::core::{DeleteContext, KeyContext};
+/// struct InvalidDelete(u64);
+/// unsafe impl KeyContext<u64> for InvalidDelete {
+///     fn key(&self) -> &u64 { &self.0 }
+/// }
+/// impl DeleteContext<u64> for InvalidDelete {
+///     fn value_size(&self) -> Option<u32> { Some(4096) }
+/// }
+/// ```
+pub unsafe trait DeleteContext<K: Key>: KeyContext<K> {
     /// None uses the fixed value-header size; variable tombstones may reserve
     /// additional payload. The value type initializes this allocation.
     #[inline(always)]
@@ -157,7 +261,10 @@ pub trait DeleteContext<K: Key>: KeyContext<K> {
 }
 
 macro_rules! values {
-    ($($ty:ty),*) => { $(impl Value for $ty {
+    ($($ty:ty),*) => { $(
+    // SAFETY: scalar and atomic integer/float headers accept every bit pattern,
+    // own no resources, and retain their fixed allocation size.
+    unsafe impl Value for $ty {
         #[inline(always)]
         fn initialize_empty(slot: ValueSlot<'_, Self>) { slot.write(Self::default()); }
     })* };
@@ -168,7 +275,8 @@ values!(
 );
 
 /// FNV-1a over little-endian bytes, matching the C++ benchmark key.
-impl Key for u64 {
+// SAFETY: u64 accepts every bit pattern and has a fixed, relocatable layout.
+unsafe impl Key for u64 {
     #[inline(always)]
     fn hash(&self) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325u64;
@@ -178,7 +286,8 @@ impl Key for u64 {
         hash
     }
 }
-impl Key for u32 {
+// SAFETY: u32 accepts every bit pattern and has a fixed, relocatable layout.
+unsafe impl Key for u32 {
     #[inline(always)]
     fn hash(&self) -> u64 {
         (*self as u64).hash()

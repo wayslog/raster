@@ -73,7 +73,7 @@ fn f2_from_toml_file_is_explicitly_unsupported() {
 #[test]
 fn defaults_and_integer_mutable_fraction_are_supported() {
     let config = StoreConfig::from_toml_str(
-        "[hlog]\nin_mem_size_mb = 128\nmutable_fraction = 1\n[index]\ntable_size = 64",
+        "filepath = ''\n[hlog]\nin_mem_size_mb = 128\nmutable_fraction = 1\n[index]\ntable_size = 64",
     )
     .unwrap();
     assert_eq!(config.log.mutable_fraction, 1.0);
@@ -102,4 +102,60 @@ fn invalid_geometry_and_unknown_fields_are_rejected() {
             "accepted {to}"
         );
     }
+}
+
+#[test]
+fn partial_configuration_requires_filepath_and_compaction_budget() {
+    for text in [
+        CONFIG.replace("filepath = \"store-data\"\n", ""),
+        CONFIG.replace("hlog_size_budget_mb = 2048\n", ""),
+        CONFIG
+            .replace("hlog_size_budget_mb = 2048\n", "")
+            .replace("enabled = true", "enabled = false"),
+    ] {
+        assert!(
+            StoreConfig::from_toml_str(&text).is_err(),
+            "required field silently defaulted"
+        );
+    }
+}
+
+#[test]
+fn disabled_cache_ignores_unused_geometry() {
+    let text = CONFIG
+        .replace(
+            "[faster.read_cache]\nenabled = true",
+            "[faster.read_cache]\nenabled = false",
+        )
+        .replace("in_mem_size_mb = 512", "in_mem_size_mb = 3")
+        .replace("mutable_fraction = 0.81", "mutable_fraction = nan");
+    assert!(
+        StoreConfig::from_toml_str(&text)
+            .unwrap()
+            .read_cache
+            .is_none()
+    );
+}
+
+#[test]
+fn configuration_rejects_impossible_window_and_compaction_budget() {
+    for (from, to) in [
+        ("in_mem_size_mb = 1024", "in_mem_size_mb = 268435456"),
+        ("hlog_size_budget_mb = 2048", "hlog_size_budget_mb = 512"),
+    ] {
+        assert!(
+            StoreConfig::from_toml_str(&CONFIG.replace(from, to)).is_err(),
+            "accepted {to}"
+        );
+    }
+}
+
+#[test]
+fn toml_and_direct_configuration_share_preallocation_defaults() {
+    let parsed = StoreConfig::from_toml_str("filepath = ''\n[hlog]\nin_mem_size_mb = 256\n[index]\ntable_size = 64\n[read_cache]\nenabled = true").unwrap();
+    assert_eq!(parsed.pre_allocate, StoreConfig::default().pre_allocate);
+    assert_eq!(
+        parsed.read_cache.unwrap().pre_allocate,
+        raster::core::ReadCacheConfig::default().pre_allocate
+    );
 }

@@ -23,7 +23,9 @@ impl Op {
         }
     }
 }
-impl KeyContext<u64> for Op {
+// SAFETY: The borrowed scan record is complete and immutable; suspension
+// deep-copies its initialized words before the scanner can release it.
+unsafe impl KeyContext<u64> for Op {
     fn key(&self) -> &u64 {
         &self.key
     }
@@ -36,7 +38,9 @@ impl ReadContext<u64, AtomicU64> for Op {
         self.out.set(Some((status, self.input)));
     }
 }
-impl UpsertContext<u64, AtomicU64> for Op {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl UpsertContext<u64, AtomicU64> for Op {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -45,7 +49,9 @@ impl UpsertContext<u64, AtomicU64> for Op {
         true
     }
 }
-impl RmwContext<u64, AtomicU64> for Op {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl RmwContext<u64, AtomicU64> for Op {
     fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -57,7 +63,8 @@ impl RmwContext<u64, AtomicU64> for Op {
         true
     }
 }
-impl DeleteContext<u64> for Op {}
+// SAFETY: The tombstone size matches the value header initialized by the store.
+unsafe impl DeleteContext<u64> for Op {}
 
 fn store(dir: &std::path::Path) -> FasterKv<u64, AtomicU64> {
     let _ = std::fs::remove_dir_all(dir);
@@ -110,7 +117,8 @@ fn compaction_keeps_live_records_and_drops_the_rest() {
     let begin_before = store.hlog.begin.load();
     let until = session
         .compact(Address::MAX, true, 3, false)
-        .expect("compaction succeeds");
+        .expect("compaction succeeds")
+        .until;
     assert!(until > begin_before);
     assert_eq!(store.hlog.begin.load(), until);
     for key in 0..KEYS {
@@ -163,9 +171,13 @@ fn compaction_under_concurrent_rmw_loses_no_update() {
         let mut session = store.start_session();
         while compactions.load(Ordering::SeqCst) < 3 {
             std::thread::sleep(std::time::Duration::from_millis(5));
-            session
-                .compact(Address::MAX, true, 2, false)
-                .expect("compaction succeeds");
+            assert_eq!(
+                session
+                    .compact(Address::MAX, true, 2, false)
+                    .expect("compaction succeeds")
+                    .checkpoint,
+                None
+            );
             compactions.fetch_add(1, Ordering::SeqCst);
         }
     });
@@ -267,7 +279,7 @@ fn variable_compaction(resident: bool, long_keys: bool, name: &str) {
         }
     }
     assert!(session.complete_pending(true));
-    let compacted = session.compact(until, true, 3, false).unwrap();
+    let compacted = session.compact(until, true, 3, false).unwrap().until;
     assert!(compacted <= until);
     for id in 0..1200 {
         let mut op = make(id);
@@ -312,7 +324,10 @@ fn variable_disk_read_compaction_race() {
     let mut read = variable::request(0, 0);
     assert_eq!(session.read(&mut read, 500), Status::Pending);
     let until = store.hlog.safe_read_only.load();
-    session.compact(until, true, 2, false).unwrap();
+    assert_eq!(
+        session.compact(until, true, 2, false).unwrap().checkpoint,
+        None
+    );
     assert!(session.complete_pending(true));
     assert_eq!(
         read.out.borrow_mut().take(),
@@ -338,14 +353,26 @@ fn variable_disk_delete_all_and_reinsert() {
             Status::Ok
         );
     }
-    session.compact(Address::MAX, true, 2, false).unwrap();
+    assert_eq!(
+        session
+            .compact(Address::MAX, true, 2, false)
+            .unwrap()
+            .checkpoint,
+        None
+    );
     for id in 0..500 {
         assert_eq!(
             session.upsert(&mut variable::request(id, 711), 1000 + id),
             Status::Ok
         );
     }
-    session.compact(Address::MAX, true, 2, false).unwrap();
+    assert_eq!(
+        session
+            .compact(Address::MAX, true, 2, false)
+            .unwrap()
+            .checkpoint,
+        None
+    );
     for id in 0..500 {
         assert_eq!(
             variable::request(id, 0).read(&mut session, 1500 + id).1,
@@ -389,7 +416,13 @@ fn variable_concurrent_compaction(resident: bool, name: &str) {
         for _ in 0..4 {
             store.hlog.shift_read_only_to(store.hlog.tail());
             session.refresh();
-            session.compact(Address::MAX, true, 2, false).unwrap();
+            assert_eq!(
+                session
+                    .compact(Address::MAX, true, 2, false)
+                    .unwrap()
+                    .checkpoint,
+                None
+            );
         }
     });
     let mut session = store.start_session();
@@ -447,7 +480,13 @@ fn budget_limited_writer_claims_compaction_pages() {
         });
         let mut session = store.start_session();
         barrier.wait();
-        session.compact(Address::MAX, true, 1, false).unwrap();
+        assert_eq!(
+            session
+                .compact(Address::MAX, true, 1, false)
+                .unwrap()
+                .checkpoint,
+            None
+        );
         done.store(true, Ordering::Release);
         // The writer may still be finishing an epoch transition.
         drop(session);
@@ -470,7 +509,7 @@ fn budget_limited_writer_claims_compaction_pages() {
 fn compaction_checkpoint_recovers_variable_values() {
     let dir = TestDirectory::new("compact-checkpoint");
     let store = variable::store(&dir, false, false);
-    {
+    let token = {
         let mut session = store.start_session();
         for id in 0..600 {
             assert_eq!(
@@ -478,17 +517,14 @@ fn compaction_checkpoint_recovers_variable_values() {
                 Status::Ok
             );
         }
-        session.compact(Address::MAX, true, 2, true).unwrap();
-    }
+        session
+            .compact(Address::MAX, true, 2, true)
+            .unwrap()
+            .checkpoint
+            .expect("checkpoint requested")
+            .expect("checkpoint succeeds")
+    };
     drop(store);
-    let index_root = dir.0.join("checkpoints/index-checkpoints");
-    let token_name = std::fs::read_dir(index_root)
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .file_name();
-    let token = guid::Guid::parse(token_name.to_str().unwrap()).unwrap();
     let store = variable::store(&dir, false, false);
     store.recover(token, token).unwrap();
     let mut session = store.start_session();

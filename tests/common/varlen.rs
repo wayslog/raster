@@ -24,7 +24,9 @@ impl<const C: bool> PartialEq for VarKey<C> {
     }
 }
 impl<const C: bool> Eq for VarKey<C> {}
-impl<const C: bool> Key for VarKey<C> {
+// SAFETY: Headers use integers/atomics only; initialized inline payloads are
+// relocatable, resource-free, and retain their allocation size.
+unsafe impl<const C: bool> Key for VarKey<C> {
     fn size(&self) -> u32 {
         (size_of::<Self>() as u32).saturating_add(self.len)
     }
@@ -49,7 +51,9 @@ pub struct VarValue {
     capacity: u32,
     length: AtomicU32,
 }
-impl Value for VarValue {
+// SAFETY: Headers use integers/atomics only; initialized inline payloads are
+// relocatable, resource-free, and retain their allocation size.
+unsafe impl Value for VarValue {
     fn size(&self) -> u32 {
         SIZE_READS.with(|count| count.set(count.get() + 1));
         (size_of::<Self>() as u32).saturating_add(self.capacity)
@@ -206,7 +210,9 @@ impl<const C: bool> VarRequest<C> {
         (status, bytes, pending)
     }
 }
-impl<const C: bool> KeyContext<VarKey<C>> for VarRequest<C> {
+// SAFETY: The context owns its shallow key bytes and overrides deep copying,
+// hashing and equality consistently; clones retain the request bytes.
+unsafe impl<const C: bool> KeyContext<VarKey<C>> for VarRequest<C> {
     fn key(&self) -> &VarKey<C> {
         &self.key
     }
@@ -239,7 +245,9 @@ impl<const C: bool> ReadContext<VarKey<C>, VarValue> for VarRequest<C> {
         *self.out.borrow_mut() = Some((status, self.data.clone()));
     }
 }
-impl<const C: bool> UpsertContext<VarKey<C>, VarValue> for VarRequest<C> {
+// SAFETY: All reserved value bytes are initialized and capacity stays fixed;
+// shared payload updates use the generation lock and atomic fields.
+unsafe impl<const C: bool> UpsertContext<VarKey<C>, VarValue> for VarRequest<C> {
     fn value_size(&self) -> u32 {
         VarValue::size_for(self.data.len())
     }
@@ -250,7 +258,9 @@ impl<const C: bool> UpsertContext<VarKey<C>, VarValue> for VarRequest<C> {
         value.update(|_| self.data.clone())
     }
 }
-impl<const C: bool> RmwContext<VarKey<C>, VarValue> for VarRequest<C> {
+// SAFETY: All reserved value bytes are initialized and capacity stays fixed;
+// shared payload updates use the generation lock and atomic fields.
+unsafe impl<const C: bool> RmwContext<VarKey<C>, VarValue> for VarRequest<C> {
     fn initial_value_size(&self) -> u32 {
         VarValue::size_for(self.updated(vec![]).len())
     }
@@ -271,7 +281,8 @@ impl<const C: bool> RmwContext<VarKey<C>, VarValue> for VarRequest<C> {
         *self.out.borrow_mut() = Some((status, self.data.clone()));
     }
 }
-impl<const C: bool> DeleteContext<VarKey<C>> for VarRequest<C> {
+// SAFETY: The tombstone size matches the value header initialized by the store.
+unsafe impl<const C: bool> DeleteContext<VarKey<C>> for VarRequest<C> {
     fn value_size(&self) -> Option<u32> {
         Some(VarValue::size_for(self.data.len()))
     }

@@ -64,7 +64,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     /// the state is checked, so an action that starts afterwards waits for
     /// this session like any other.
     pub(crate) fn try_new(store: &'a FasterKv<K, V>, guid: Guid, serial: u64) -> Option<Self> {
-        let slot = store.epoch.reserve().expect("all epoch slots are in use");
+        let slot = store.epoch.reserve()?;
         store.epoch.protect_and_drain(&slot);
         let state = store.state.load();
         if state.phase != Phase::Rest {
@@ -299,6 +299,13 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         self.store
     }
 
+    pub(crate) fn copy_scan_page(
+        &self,
+        scanner: &mut super::scan::LogScanner<'_, K, V>,
+    ) -> Result<Option<super::scan::ScanPage<K, V>>, Status> {
+        scanner.next_page_with_slot(self.store, self.slot())
+    }
+
     /// Copies a record to the tail if it is still the newest version of its
     /// key; used by compaction. Returns Ok (copied), Aborted or Pending.
     pub(crate) fn copy_record(
@@ -397,7 +404,16 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         self.store.hlog.read_async(
             address,
             len,
-            Box::new(move |result| responses.lock().unwrap().push((id, result))),
+            Box::new(move |result| {
+                let result = result.and_then(|bytes| {
+                    if bytes.len() == len {
+                        Ok(bytes)
+                    } else {
+                        Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+                    }
+                });
+                responses.lock().unwrap().push((id, result));
+            }),
         );
     }
 

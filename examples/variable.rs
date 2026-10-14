@@ -25,7 +25,9 @@ impl Bytes {
         }
     }
 }
-impl Value for Bytes {
+// SAFETY: Headers use integers/atomics only; initialized inline payloads are
+// relocatable, resource-free, and retain their allocation size.
+unsafe impl Value for Bytes {
     fn size(&self) -> u32 {
         (size_of::<Self>() as u32).saturating_add(self.len)
     }
@@ -44,12 +46,16 @@ struct Request {
     key: u64,
     bytes: Vec<u8>,
 }
-impl KeyContext<u64> for Request {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
     }
 }
-impl UpsertContext<u64, Bytes> for Request {
+// SAFETY: The complete header and payload are initialized to the reserved size;
+// put_atomic declines all shared mutation, so published values stay immutable.
+unsafe impl UpsertContext<u64, Bytes> for Request {
     fn value_size(&self) -> u32 {
         size_of::<Bytes>() as u32 + self.bytes.len() as u32
     }

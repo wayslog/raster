@@ -15,12 +15,16 @@ struct Request {
     input: u64,
     sum: Rc<Cell<u64>>,
 }
-impl KeyContext<u64> for Request {
+// SAFETY: The borrowed scan record is complete and immutable; suspension
+// deep-copies its initialized words before the scanner can release it.
+unsafe impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
     }
 }
-impl UpsertContext<u64, AtomicU64> for Request {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl UpsertContext<u64, AtomicU64> for Request {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -92,10 +96,12 @@ fn main() {
     let until = store.hlog.safe_read_only.load();
     let size_before = store.log_size();
     let started = Instant::now();
-    session
+    let result = session
         .compact(until, true, threads, false)
         .expect("compaction succeeds");
     let compact_ns = started.elapsed().as_nanos();
+    assert_eq!(result.until, until);
+    assert_eq!(result.checkpoint, None);
     let size_after = store.log_size();
     for key in 0..keys {
         let mut read = request(key, 0);

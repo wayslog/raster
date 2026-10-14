@@ -2,7 +2,7 @@
 //!
 //! Pages live in a power-of-two ring of frames allocated up front, so
 //! `get(address)` is one shift, mask and add. The tail is a packed
-//! `page:23 | offset:41` word advanced with `fetch_add`. Boundary shifts run as
+//! `page:23 | offset:41` word advanced with a bounded CAS. Boundary shifts run as
 //! epoch actions so that no protected session can still use a closed frame.
 use super::address::{Address, AtomicAddress};
 use super::device::{AlignedBuffer, Device, SECTOR};
@@ -194,17 +194,28 @@ impl HybridLog {
             size.is_multiple_of(8) && size <= self.page_size,
             "record exceeds log page size or is unaligned"
         );
-        let word = self.tail.0.fetch_add(size, Ordering::AcqRel);
-        let page = word >> TAIL_OFFSET_BITS;
-        let offset = word & ((1 << TAIL_OFFSET_BITS) - 1);
-        let end = offset + size;
-        if end <= self.page_size {
-            Allocation::Ok(Address::new(page, offset))
-        } else if offset <= self.page_size {
-            // This caller crossed the boundary and owns opening the next page.
-            Allocation::PageFull(page)
-        } else {
-            Allocation::Retry(page)
+        let mut word = self.tail.0.load(Ordering::Acquire);
+        loop {
+            let page = word >> TAIL_OFFSET_BITS;
+            let offset = word & ((1 << TAIL_OFFSET_BITS) - 1);
+            if offset > self.page_size {
+                return Allocation::Retry(page);
+            }
+            // Only the boundary-crossing reservation may exceed page_size.
+            // A failed frame wait never increments the packed offset again.
+            let end = offset + size;
+            match self.tail.0.compare_exchange_weak(
+                word,
+                word + size,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) if end <= self.page_size => {
+                    return Allocation::Ok(Address::new(page, offset));
+                }
+                Ok(_) => return Allocation::PageFull(page),
+                Err(observed) => word = observed,
+            }
         }
     }
 
@@ -227,8 +238,8 @@ impl HybridLog {
             self.shift_boundaries(old_page, &before_evict);
             return false;
         }
-        // Other callers keep bumping the offset of the full page, so retry the
-        // CAS until the tail leaves `old_page`.
+        // A concurrent reservation or page opener may win the CAS; retry
+        // until this page is opened or the tail has already moved past it.
         let next = new_page << TAIL_OFFSET_BITS;
         let mut current = self.tail.0.load(Ordering::Acquire);
         while current >> TAIL_OFFSET_BITS == old_page {
@@ -534,6 +545,23 @@ mod tests {
         assert!(log.head.load().page() + 4 > last.page());
         assert!(log.read_only.load() <= log.tail());
         epoch.release(slot);
+    }
+
+    #[test]
+    fn blocked_large_allocations_do_not_advance_or_wrap_tail() {
+        let (_, log) = small_log();
+        for offset in [log.page_size + 8, (1 << TAIL_OFFSET_BITS) - 8] {
+            let tail = (3 << TAIL_OFFSET_BITS) | offset;
+            log.tail.0.store(tail, Ordering::Release);
+            for _ in 0..100 {
+                assert!(matches!(log.allocate(log.page_size), Allocation::Retry(3)));
+                assert_eq!(
+                    log.tail.0.load(Ordering::Acquire),
+                    tail,
+                    "waiting for a frame must not consume offset bits"
+                );
+            }
+        }
     }
 }
 

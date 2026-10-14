@@ -11,12 +11,16 @@ type Store = FasterKv<u64, AtomicU64>;
 struct Incr {
     key: u64,
 }
-impl KeyContext<u64> for Incr {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Incr {
     fn key(&self) -> &u64 {
         &self.key
     }
 }
-impl RmwContext<u64, AtomicU64> for Incr {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl RmwContext<u64, AtomicU64> for Incr {
     fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(1));
     }
@@ -135,7 +139,9 @@ struct Get {
     key: u64,
     out: std::rc::Rc<std::cell::Cell<Option<u64>>>,
 }
-impl KeyContext<u64> for Get {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Get {
     fn key(&self) -> &u64 {
         &self.key
     }
