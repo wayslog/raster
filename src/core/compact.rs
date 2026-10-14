@@ -12,6 +12,9 @@ use super::pending::{DiskError, DiskRecord, PendingOp, Step};
 use super::record::{Layout, RecordInfo};
 use super::store::{FasterKv, OpMode, Outcome, Status};
 
+#[cfg(test)]
+mod tests;
+
 /// A record being copied: its bytes and the chain range left to check.
 pub(crate) struct CopyRequest<'a, K, V> {
     pub words: &'a [u64],
@@ -51,7 +54,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             let slot = self.index.find_or_create(hash);
             let entry = self.skip_and_invalidate(slot.entry.address(), request);
             let head = self.hlog.head.load();
-            let (gate, _guard) = if mode.phase == super::state::Phase::Rest {
+            let (gate, guard) = if mode.phase == super::state::Phase::Rest {
                 (super::store::Gate::Normal, super::store::LockGuard::none())
             } else {
                 self.cpr_gate(mode, hash, self.latest_version(entry, head))
@@ -59,8 +62,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             match gate {
                 super::store::Gate::Shift => return Outcome::Shift,
                 super::store::Gate::RetryLater => {
-                    return Outcome::RetryLater {
-                        marked: mode.holds_old,
+                    return match self.mark_pending(mode, hash, guard) {
+                        Some(marked) => Outcome::RetryLater { marked },
+                        None => Outcome::Shift,
                     };
                 }
                 _ => {}
@@ -79,10 +83,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 return Outcome::Done(Status::Aborted);
             }
             if address > request.search_min {
-                return Outcome::Disk {
-                    address,
-                    observed: entry,
-                    marked: mode.holds_old,
+                return match self.mark_pending(mode, hash, guard) {
+                    Some(marked) => Outcome::Disk {
+                        address,
+                        observed: entry,
+                        marked,
+                    },
+                    None => Outcome::Shift,
                 };
             }
             let new_address = self.block_allocate(slot_id, (request.words.len() * 8) as u64);
@@ -99,13 +106,25 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 }
 
 /// Continues a copy whose liveness check reached the device.
+#[derive(Default)]
+pub(crate) struct CopyBatch {
+    pub pending: std::cell::Cell<usize>,
+    pub failure: std::cell::Cell<Option<Status>>,
+}
+
 pub(crate) struct PendingCopy<K, V> {
     pub words: Vec<u64>,
     pub search_min: Address,
     pub types: std::marker::PhantomData<(K, V)>,
-    pub failure: std::rc::Rc<std::cell::Cell<Option<Status>>>,
+    pub batch: std::rc::Rc<CopyBatch>,
     /// Index entry observed by the attempt that went to the device.
     pub observed: Address,
+}
+
+impl<K, V> Drop for PendingCopy<K, V> {
+    fn drop(&mut self) {
+        self.batch.pending.set(self.batch.pending.get() - 1);
+    }
 }
 
 impl<K, V> PendingCopy<K, V> {
@@ -131,7 +150,7 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K, V> {
         disk: Option<DiskRecord>,
     ) -> Step {
         let Some(mut disk) = disk else {
-            self.failure.set(Some(Status::IoError));
+            self.batch.failure.set(Some(Status::IoError));
             return Step::Done;
         };
         let record = match disk.record::<K, V>(store.hlog.page_size()) {
@@ -144,7 +163,7 @@ impl<K: Key, V: Value> PendingOp<K, V> for PendingCopy<K, V> {
                 };
             }
             Err(DiskError::Corruption) => {
-                self.failure.set(Some(Status::Corruption));
+                self.batch.failure.set(Some(Status::Corruption));
                 return Step::Done;
             }
         };
@@ -301,6 +320,11 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
         if store.maintenance.budget == 0 || store.log_size() < store.maintenance.budget {
             return;
         }
+        // User completions belong to complete_pending, not to an unrelated
+        // write. They may also hold CPR locks needed by a new copy batch.
+        if self.pending_count() != 0 {
+            return;
+        }
         let work = {
             let active = store.maintenance.work.lock().unwrap();
             let Some(work) = active.as_ref() else {
@@ -329,42 +353,55 @@ fn copy_pages<K: Key, V: Value>(
     work: &super::maintenance::CompactionWork,
     limit: usize,
 ) -> Result<(), Status> {
+    let Some(mut start) = work.claim() else {
+        return Ok(());
+    };
     let mut scanner = session.store().scan(work.begin, work.until);
-    let failure = std::rc::Rc::new(std::cell::Cell::new(None));
+    let batch = std::rc::Rc::new(CopyBatch::default());
     let mut copies = 0u64;
-    for _ in 0..limit {
-        let Some(start) = work.claim() else {
-            break;
-        };
-        scanner.seek(start);
-        let Some(mut page) = scanner.next_page()? else {
-            break;
-        };
-        for record in page.records() {
-            if record.info.invalid() || record.info.tombstone() {
-                continue;
+    let result = (|| {
+        for index in 0..limit {
+            if index != 0 {
+                let Some(next) = work.claim() else { break };
+                start = next;
             }
-            let request = CopyRequest {
-                words: record.words,
-                types: std::marker::PhantomData,
-                search_min: record.address,
+            scanner.seek(start);
+            let Some(mut page) = scanner.next_page()? else {
+                break;
             };
-            match session.copy_record(request, &failure) {
-                Status::Ok | Status::Aborted | Status::Pending => {}
-                status => return Err(status),
+            for record in page.records() {
+                if record.info.invalid() || record.info.tombstone() {
+                    continue;
+                }
+                let request = CopyRequest {
+                    words: record.words,
+                    types: std::marker::PhantomData,
+                    search_min: record.address,
+                };
+                match session.copy_record(request, &batch) {
+                    Status::Ok | Status::Aborted | Status::Pending => {}
+                    status => return Err(status),
+                }
+                copies += 1;
+                if copies.is_multiple_of(512) {
+                    session.complete_pending(false);
+                }
             }
-            copies += 1;
-            if copies.is_multiple_of(512) {
-                session.complete_pending(false);
+            if let Some(status) = page.error() {
+                return Err(status);
             }
+            session.refresh();
         }
-        if let Some(status) = page.error() {
-            return Err(status);
-        }
-        session.refresh();
+        Ok(())
+    })();
+    // Even a later scan failure must not leave an earlier copy outstanding
+    // when this page owner leaves and the coordinator considers truncation.
+    while batch.pending.get() != 0 {
+        session.complete_pending(false);
+        std::thread::yield_now();
     }
-    session.complete_pending(true);
-    match failure.get() {
+    result?;
+    match batch.failure.get() {
         Some(status) => Err(status),
         None => Ok(()),
     }
