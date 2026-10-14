@@ -20,7 +20,9 @@ impl Op {
         }
     }
 }
-impl KeyContext<u64> for Op {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Op {
     fn key(&self) -> &u64 {
         &self.key
     }
@@ -30,7 +32,9 @@ impl ReadContext<u64, AtomicU64> for Op {
         self.output = value.load(Ordering::Relaxed);
     }
 }
-impl UpsertContext<u64, AtomicU64> for Op {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl UpsertContext<u64, AtomicU64> for Op {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -39,7 +43,9 @@ impl UpsertContext<u64, AtomicU64> for Op {
         true
     }
 }
-impl RmwContext<u64, AtomicU64> for Op {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl RmwContext<u64, AtomicU64> for Op {
     fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -51,7 +57,8 @@ impl RmwContext<u64, AtomicU64> for Op {
         true
     }
 }
-impl DeleteContext<u64> for Op {}
+// SAFETY: The tombstone size matches the value header initialized by the store.
+unsafe impl DeleteContext<u64> for Op {}
 
 fn small_store(index_buckets: u64) -> Store {
     Store::new(StoreConfig {

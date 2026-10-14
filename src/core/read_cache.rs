@@ -29,7 +29,7 @@ impl Default for ReadCacheConfig {
     /// FASTER's defaults: 256 MiB, 90% mutable.
     fn default() -> Self {
         Self {
-            pre_allocate: true,
+            pre_allocate: false,
             log: LogConfig {
                 page_bits: 25,
                 memory_pages: 8,
@@ -153,6 +153,9 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let previous = self.skip_read_cache(observed);
         // SAFETY: the source is complete and immutable.
         let size = unsafe { source.size() } as u64;
+        if size > cache.log.page_size() {
+            return false;
+        }
         let address = match cache.log.allocate(size) {
             Allocation::Ok(address) => address,
             Allocation::PageFull(page) | Allocation::Retry(page) => {
@@ -211,5 +214,73 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             address = address.add(unsafe { record.size() } as u64);
         }
         *evicted = (*evicted).max(to);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{KeyContext, StoreConfig, UpsertContext, ValueSlot};
+
+    struct LargeValue([u64; 1024]);
+    // SAFETY: the integer array accepts every bit pattern and has a fixed,
+    // resource-free allocation. Initialization writes the complete array.
+    unsafe impl Value for LargeValue {
+        fn initialize_empty(slot: ValueSlot<'_, Self>) {
+            slot.write(Self([0; 1024]));
+        }
+    }
+    #[derive(Clone)]
+    struct Put(u64);
+    // SAFETY: the context owns a complete, stable integer key.
+    unsafe impl KeyContext<u64> for Put {
+        fn key(&self) -> &u64 {
+            &self.0
+        }
+    }
+    // SAFETY: each slot receives a complete fixed-size array; shared values
+    // are never mutated in place.
+    unsafe impl UpsertContext<u64, LargeValue> for Put {
+        fn put(&mut self, slot: ValueSlot<'_, LargeValue>) {
+            slot.write(LargeValue([7; 1024]));
+        }
+        fn put_atomic(&mut self, _: &LargeValue) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn record_larger_than_cache_page_skips_insertion() {
+        let store = FasterKv::with_read_cache(
+            StoreConfig {
+                index_buckets: 16,
+                log: LogConfig {
+                    page_bits: 14,
+                    memory_pages: 4,
+                    mutable_fraction: 0.5,
+                },
+                ..Default::default()
+            },
+            Arc::new(super::super::device::NullDevice),
+            ReadCacheConfig {
+                log: LogConfig {
+                    page_bits: 12,
+                    memory_pages: 4,
+                    mutable_fraction: 0.5,
+                },
+                pre_allocate: true,
+            },
+        );
+        let mut session = store.start_session();
+        assert_eq!(session.upsert(&mut Put(0), 0), Status::Ok);
+        let address = store.index.find(0u64.hash()).unwrap().entry.address();
+        let record = store.record(address);
+        assert!(!store.insert_cached(address, &record));
+        assert_eq!(
+            store.index.find(0u64.hash()).unwrap().entry.address(),
+            address
+        );
+        // SAFETY: the session protects the complete, unchanged record.
+        assert_eq!(unsafe { record.value() }.0, [7; 1024]);
     }
 }

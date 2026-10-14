@@ -320,7 +320,9 @@ mod tests {
     #[test]
     fn initialize_and_mark() {
         struct Context(u64);
-        impl KeyContext<u64> for Context {
+        // SAFETY: The context owns a fixed-size integer key with stable bytes;
+        // default hashing, equality and copying use that complete field.
+        unsafe impl KeyContext<u64> for Context {
             fn key(&self) -> &u64 {
                 &self.0
             }

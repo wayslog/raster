@@ -24,7 +24,9 @@ impl Op {
         }
     }
 }
-impl KeyContext<u64> for Op {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Op {
     fn key(&self) -> &u64 {
         &self.key
     }
@@ -37,7 +39,9 @@ impl ReadContext<u64, AtomicU64> for Op {
         self.out.set(Some((status, self.input)));
     }
 }
-impl UpsertContext<u64, AtomicU64> for Op {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl UpsertContext<u64, AtomicU64> for Op {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -46,7 +50,9 @@ impl UpsertContext<u64, AtomicU64> for Op {
         true
     }
 }
-impl RmwContext<u64, AtomicU64> for Op {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl RmwContext<u64, AtomicU64> for Op {
     fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -58,7 +64,8 @@ impl RmwContext<u64, AtomicU64> for Op {
         true
     }
 }
-impl DeleteContext<u64> for Op {}
+// SAFETY: The tombstone size matches the value header initialized by the store.
+unsafe impl DeleteContext<u64> for Op {}
 
 type Store = FasterKv<u64, AtomicU64>;
 
@@ -278,9 +285,10 @@ fn compaction_and_truncation_with_cached_entries() {
     const KEYS: u64 = 4_000;
     let mut session = store.start_session();
     populate(&mut session, KEYS);
-    session
+    let result = session
         .compact(Address::MAX, true, 2, false)
         .expect("compaction succeeds");
+    assert_eq!(result.checkpoint, None);
     for key in 0..KEYS {
         assert_eq!(value(&mut session, key), (Status::Ok, key + 1), "key {key}");
     }

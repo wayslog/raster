@@ -7,12 +7,16 @@ struct Request {
     key: u64,
     value: u64,
 }
-impl KeyContext<u64> for Request {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
     }
 }
-impl UpsertContext<u64, AtomicU64> for Request {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl UpsertContext<u64, AtomicU64> for Request {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.value));
     }

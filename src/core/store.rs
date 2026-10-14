@@ -24,6 +24,7 @@ pub enum Status {
     OutOfMemory,
     IoError,
     Corruption,
+    InvalidArgument,
 }
 
 #[derive(Clone, Debug)]
@@ -49,7 +50,7 @@ impl Default for StoreConfig {
         Self {
             index_buckets: 1 << 20,
             filepath: None,
-            pre_allocate: true,
+            pre_allocate: false,
             read_cache: None,
             auto_compaction: None,
             log_size_budget: 0,
@@ -124,15 +125,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// Histogram: chain-head entries per primary bucket, including overflow.
     /// This is a concurrent snapshot of entries, not a count of live keys.
-    pub fn index_distribution(&self) -> std::collections::BTreeMap<usize, usize> {
-        let slot = self
-            .epoch
-            .reserve_helper()
-            .expect("all epoch slots are in use");
+    /// Returns OutOfMemory when no helper epoch slot is available.
+    pub fn index_distribution(&self) -> Result<std::collections::BTreeMap<usize, usize>, Status> {
+        let slot = self.epoch.reserve_helper().ok_or(Status::OutOfMemory)?;
         self.epoch.protect_and_drain(&slot);
         let distribution = self.index.table().distribution();
         self.epoch.release(slot);
-        distribution
+        Ok(distribution)
     }
     /// Opens buffered local storage for a configured filepath, or a memory-only
     /// store for an empty path. Background compaction is started explicitly.
@@ -194,7 +193,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         Session::new(self, super::guid::Guid::new(), 0)
     }
 
-    /// Starts a session unless a state-machine action is running.
+    /// Starts a session unless an action is running or all epoch slots are used.
     pub fn try_start_session(&self) -> Option<Session<'_, K, V>> {
         Session::try_new(self, super::guid::Guid::new(), 0)
     }

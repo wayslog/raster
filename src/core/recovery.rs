@@ -91,9 +91,14 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             limit as usize,
             Box::new(move |r| drop(tx.send(r))),
         );
-        rx.recv()
+        let bytes = rx
+            .recv()
             .map_err(|_| Status::IoError)?
-            .map_err(|_| Status::IoError)
+            .map_err(|_| Status::IoError)?;
+        if bytes.len() != limit as usize {
+            return Err(Status::IoError);
+        }
+        Ok(bytes)
     }
 
     /// Replays the records of `page` within `[start, end)` into the index and

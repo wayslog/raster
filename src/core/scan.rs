@@ -43,15 +43,12 @@ pub struct ScannedRecord<'p, K, V> {
 impl<K: Key, V: Value> FasterKv<K, V> {
     /// Scans records in `[begin, until)`, clamped to the valid, immutable log.
     pub fn scan(&self, begin: Address, until: Address) -> LogScanner<'_, K, V> {
-        let slot = self
-            .epoch
-            .reserve_helper()
-            .expect("all epoch slots are in use");
+        let slot = self.epoch.reserve_helper();
         let begin = begin.max(self.hlog.begin.load());
         let until = until.min(self.hlog.safe_read_only.load());
         LogScanner {
             store: self,
-            slot: Some(slot),
+            slot,
             next: begin,
             until,
         }
@@ -59,6 +56,20 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 }
 
 impl<K: Key, V: Value> LogScanner<'_, K, V> {
+    /// Internal scans borrow their active session's protection for each page.
+    pub(crate) fn for_session(
+        store: &FasterKv<K, V>,
+        begin: Address,
+        until: Address,
+    ) -> LogScanner<'_, K, V> {
+        LogScanner {
+            store,
+            slot: None,
+            next: begin.max(store.hlog.begin.load()),
+            until: until.min(store.hlog.safe_read_only.load()),
+        }
+    }
+
     /// Selects a claimed page while retaining this scanner's helper slot.
     pub(crate) fn seek(&mut self, start: Address) {
         self.next = start;
@@ -68,10 +79,38 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
     }
 
     /// Copies the next page range, or returns `None` at the end of the scan.
+    /// Returns OutOfMemory if no helper epoch slot is available; callers may retry.
     pub fn next_page(&mut self) -> Result<Option<ScanPage<K, V>>, Status> {
         if self.next >= self.until {
             return Ok(None);
         }
+        if self.slot.is_none() {
+            self.slot = self.store.epoch.reserve_helper();
+        }
+        self.read_next(None)
+    }
+
+    pub(crate) fn next_page_with_slot(
+        &mut self,
+        store: &FasterKv<K, V>,
+        slot: &SlotId,
+    ) -> Result<Option<ScanPage<K, V>>, Status> {
+        assert!(
+            std::ptr::eq(store, self.store),
+            "scanner belongs to another store"
+        );
+        assert!(
+            store.epoch.is_protected(slot),
+            "scanning requires an active session"
+        );
+        self.read_next(Some(slot))
+    }
+
+    fn read_next(&mut self, borrowed: Option<&SlotId>) -> Result<Option<ScanPage<K, V>>, Status> {
+        if self.next >= self.until {
+            return Ok(None);
+        }
+        let slot = borrowed.or(self.slot.as_ref()).ok_or(Status::OutOfMemory)?;
         let start = self.next;
         let page_end = Address::new(start.page() + 1, 0);
         let end = self.until.min(page_end);
@@ -79,8 +118,9 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
         let len =
             (self.store.hlog.device_offset(end) - self.store.hlog.device_offset(start)) as usize;
         let mut words = vec![0u64; len.div_ceil(8)];
-        let slot = self.slot.as_ref().expect("live scanner");
-        self.store.epoch.protect_and_drain(slot);
+        if borrowed.is_none() {
+            self.store.epoch.protect_and_drain(slot);
+        }
         if start >= self.store.hlog.head.load() {
             // SAFETY: the range is resident and read-only, and our epoch
             // protection keeps its frame from being reused while we copy.
@@ -91,9 +131,13 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
                     len,
                 )
             };
-            self.store.epoch.unprotect(slot);
+            if borrowed.is_none() {
+                self.store.epoch.unprotect(slot);
+            }
         } else {
-            self.store.epoch.unprotect(slot);
+            if borrowed.is_none() {
+                self.store.epoch.unprotect(slot);
+            }
             let (tx, rx) = mpsc::channel();
             self.store
                 .hlog
@@ -102,6 +146,9 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
                 .recv()
                 .map_err(|_| Status::IoError)?
                 .map_err(|_| Status::IoError)?;
+            if bytes.len() != len {
+                return Err(Status::IoError);
+            }
             // SAFETY: `words` holds at least `len` bytes.
             unsafe {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr().cast(), len)

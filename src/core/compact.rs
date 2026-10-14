@@ -15,6 +15,17 @@ use super::store::{FasterKv, OpMode, Outcome, Status};
 #[cfg(test)]
 mod tests;
 
+/// Completed compaction progress, independent of an optional checkpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub struct CompactionResult {
+    pub until: Address,
+    /// Begin address after this call's optional truncation.
+    pub begin_address: Address,
+    /// None when not requested; a failure does not undo compaction or truncation.
+    pub checkpoint: Option<Result<super::guid::Guid, Status>>,
+}
+
 /// A record being copied: its bytes and the chain range left to check.
 pub(crate) struct CopyRequest<'a, K, V> {
     pub words: &'a [u64],
@@ -24,7 +35,9 @@ pub(crate) struct CopyRequest<'a, K, V> {
     pub search_min: Address,
 }
 
-impl<K: Key, V> KeyContext<K> for CopyRequest<'_, K, V> {
+// SAFETY: The borrowed scan record is complete and immutable; suspension
+// deep-copies its initialized words before the scanner can release it.
+unsafe impl<K: Key, V> KeyContext<K> for CopyRequest<'_, K, V> {
     fn key(&self) -> &K {
         // SAFETY: words contains a complete aligned record copied from a scan.
         unsafe {
@@ -213,20 +226,26 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
     /// Copies live records below until, optionally truncating and checkpointing.
     /// Workers and budget-limited writers claim disjoint pages. Only one
     /// compaction may run at a time; the caller must start in REST.
+    /// Err reports a failure before this call truncates the log. Once copying
+    /// and optional truncation finish, checkpoint errors are returned inside
+    /// CompactionResult and do not imply rollback of that completed work.
     pub fn compact(
         &mut self,
         until: Address,
         shift_begin: bool,
         threads: usize,
         checkpoint: bool,
-    ) -> Result<Address, Status> {
+    ) -> Result<CompactionResult, Status> {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let store = self.store();
         if store.system_state().phase != super::state::Phase::Rest {
             return Err(Status::Aborted);
         }
         let _coordinator = store.maintenance.start().ok_or(Status::Aborted)?;
-        let until = until.min(store.hlog.safe_read_only.load());
+        let until = until
+            .min(store.hlog.safe_read_only.load())
+            .max(store.hlog.begin.load());
+        self.validate_compaction_boundary(until)?;
         let work = std::sync::Arc::new(super::maintenance::CompactionWork::new(
             store.hlog.begin.load(),
             until,
@@ -245,13 +264,11 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
                 .map(|_| {
                     let (work, finished) = (&work, &finished);
                     scope.spawn(move || {
-                        let mut session = loop {
-                            if let Some(session) = store.try_start_session() {
-                                break session;
-                            }
-                            std::thread::yield_now();
-                        };
-                        if let Err(status) = copy_pages(&mut session, work, usize::MAX) {
+                        // The coordinator can consume every unclaimed page.
+                        // Never wait for a slot held by a persistent user session.
+                        if let Some(mut session) = store.try_start_session()
+                            && let Err(status) = copy_pages(&mut session, work, usize::MAX)
+                        {
                             work.fail(status);
                         }
                         finished.fetch_add(1, Ordering::AcqRel);
@@ -286,30 +303,76 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
             }
             self.complete_pending(true);
         }
-        if checkpoint {
+        let checkpoint = if checkpoint {
             let failed = std::sync::Arc::new(AtomicBool::new(false));
             let index_failed = failed.clone();
             let log_failed = failed.clone();
-            store
-                .checkpoint(
-                    Some(Box::new(move |status| {
-                        if status != Status::Ok {
-                            index_failed.store(true, Ordering::Release);
-                        }
-                    })),
-                    Some(std::sync::Arc::new(move |status, _| {
-                        if status != Status::Ok {
-                            log_failed.store(true, Ordering::Release);
-                        }
-                    })),
-                )
-                .ok_or(Status::Aborted)?;
-            self.complete_pending(true);
-            if failed.load(Ordering::Acquire) {
-                return Err(Status::IoError);
+            match store.checkpoint(
+                Some(Box::new(move |status| {
+                    if status != Status::Ok {
+                        index_failed.store(true, Ordering::Release);
+                    }
+                })),
+                Some(std::sync::Arc::new(move |status, _| {
+                    if status != Status::Ok {
+                        log_failed.store(true, Ordering::Release);
+                    }
+                })),
+            ) {
+                Some(token) => {
+                    self.complete_pending(true);
+                    Some(if failed.load(Ordering::Acquire) {
+                        Err(Status::IoError)
+                    } else {
+                        Ok(token)
+                    })
+                }
+                None => Some(Err(Status::Aborted)),
+            }
+        } else {
+            None
+        };
+        Ok(CompactionResult {
+            until,
+            begin_address: store.hlog.begin.load(),
+            checkpoint,
+        })
+    }
+
+    /// Reject a caller-supplied partial record before copying any pages.
+    fn validate_compaction_boundary(&self, until: Address) -> Result<(), Status> {
+        let store = self.store();
+        if until.offset() == 0 || until == store.hlog.begin.load() {
+            return Ok(());
+        }
+        let mut scanner = super::scan::LogScanner::for_session(
+            store,
+            Address::new(until.page(), 0),
+            Address::new(until.page() + 1, 0),
+        );
+        let Some(mut page) = self.copy_scan_page(&mut scanner)? else {
+            return Err(Status::InvalidArgument);
+        };
+        let mut boundary = false;
+        for record in page.records() {
+            if record.address == until
+                || record.address.add((record.words.len() * 8) as u64) == until
+            {
+                boundary = true;
+                break;
+            }
+            if record.address > until {
+                break;
             }
         }
-        Ok(until)
+        if let Some(status) = page.error() {
+            return Err(status);
+        }
+        if boundary {
+            Ok(())
+        } else {
+            Err(Status::InvalidArgument)
+        }
     }
 
     /// Called only from configured maintenance paths, never the plain path.
@@ -356,7 +419,7 @@ fn copy_pages<K: Key, V: Value>(
     let Some(mut start) = work.claim() else {
         return Ok(());
     };
-    let mut scanner = session.store().scan(work.begin, work.until);
+    let mut scanner = super::scan::LogScanner::for_session(session.store(), work.begin, work.until);
     let batch = std::rc::Rc::new(CopyBatch::default());
     let mut copies = 0u64;
     let result = (|| {
@@ -366,7 +429,7 @@ fn copy_pages<K: Key, V: Value>(
                 start = next;
             }
             scanner.seek(start);
-            let Some(mut page) = scanner.next_page()? else {
+            let Some(mut page) = session.copy_scan_page(&mut scanner)? else {
                 break;
             };
             for record in page.records() {

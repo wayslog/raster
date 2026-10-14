@@ -117,6 +117,7 @@ impl LightEpoch {
         self.slots[id.0]
             .phase_finished
             .store(NO_PHASE, Ordering::Release);
+        self.slots[id.0].session.store(false, Ordering::Release);
         self.slots[id.0].used.store(false, Ordering::Release);
     }
 

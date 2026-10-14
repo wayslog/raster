@@ -20,7 +20,9 @@ struct Request {
     output: u64,
     sum: Rc<Cell<u64>>,
 }
-impl KeyContext<u64> for Request {
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
+unsafe impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
     }
@@ -37,7 +39,9 @@ impl ReadContext<u64, AtomicU64> for Request {
         self.sum.set(self.sum.get() + self.output);
     }
 }
-impl UpsertContext<u64, AtomicU64> for Request {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl UpsertContext<u64, AtomicU64> for Request {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
@@ -46,7 +50,9 @@ impl UpsertContext<u64, AtomicU64> for Request {
         true
     }
 }
-impl RmwContext<u64, AtomicU64> for Request {
+// SAFETY: New values are fully initialized in their fixed-size slots;
+// in-place updates use atomics or decline mutation of shared values.
+unsafe impl RmwContext<u64, AtomicU64> for Request {
     fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.input));
     }
