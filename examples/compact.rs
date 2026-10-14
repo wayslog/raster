@@ -15,8 +15,8 @@ struct Request {
     input: u64,
     sum: Rc<Cell<u64>>,
 }
-// SAFETY: The borrowed scan record is complete and immutable; suspension
-// deep-copies its initialized words before the scanner can release it.
+// SAFETY: The context owns a fixed-size integer key with stable bytes;
+// default hashing, equality and copying use that complete field.
 unsafe impl KeyContext<u64> for Request {
     fn key(&self) -> &u64 {
         &self.key
