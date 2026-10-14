@@ -135,7 +135,8 @@ def main():
             result["base_p99_ratio"] = result["candidate"]["p99_ns"] / result["base"]["p99_ns"]
             result["cpp_p99_ratio"] = result["candidate"]["p99_ns"] / result["cpp"]["p99_ns"]
         result["accepted"] = (result["base_speed_ratio"] >= .98 and result["cpp_speed_ratio"] >= 1
-                              and result.get("cycles_ratio", 1) <= 1.03)
+                              and result.get("cycles_ratio", 1) <= 1.03
+                              and result.get("base_p99_ratio", 1) <= 1 / .98)
         summary.append(result)
         (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
         print(json.dumps(result), flush=True)
