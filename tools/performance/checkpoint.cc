@@ -103,12 +103,13 @@ int main(int argc, char** argv) {
     auto started = Clock::now();
     for (size_t t = 0; t < threads; ++t) {
       workers.emplace_back([&, t]() {
+        uint64_t thread_sum = 0;
         store.StartSession();
         uint64_t state = (t + 1) * 0x9E3779B97F4A7C15ULL;
         enrolled.fetch_add(1);
         while (enrolled.load() != threads) std::this_thread::yield();
         for (size_t i = 1; i <= ops / threads; ++i) {
-          Request context{next(state) % keys, 1, &ignored};
+          Request context{next(state) % keys, 1, &thread_sum};
           Status status = store.Rmw(context, rmw_done, i);
           require(status == Status::Ok || status == Status::Pending);
           if ((i & 255) == 0) { store.CompletePending(false); done.fetch_add(256); }
