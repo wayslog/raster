@@ -1,9 +1,11 @@
 //! Variable-value benchmark paired with tools/performance/varlen.cc.
 //! Usage: varlen OP THREADS KEYS COUNT SAMPLE_STRIDE DIR MIN_VALUE MAX_VALUE
+mod bench_support;
+use bench_support::{Sample, Samples};
 use raster::core::device::FileDevice;
 use raster::core::hlog::LogConfig;
 use raster::core::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -92,6 +94,7 @@ struct Request {
     max: u32,
     verify: bool,
     sum: Rc<Cell<u64>>,
+    sample: Option<Sample>,
 }
 impl Request {
     fn add_output(&self) {
@@ -133,6 +136,7 @@ impl ReadContext<u64, BytesValue> for Request {
     fn on_complete(&mut self, status: Status) {
         assert_eq!(status, Status::Ok);
         self.add_output();
+        Sample::finish(&mut self.sample, true);
     }
 }
 // SAFETY: All reserved value bytes are initialized and capacity stays fixed;
@@ -169,6 +173,7 @@ unsafe impl UpsertContext<u64, BytesValue> for Request {
     fn on_complete(&mut self, status: Status) {
         assert_eq!(status, Status::Ok);
         self.add_output();
+        Sample::finish(&mut self.sample, true);
     }
 }
 // SAFETY: All reserved value bytes are initialized and capacity stays fixed;
@@ -207,6 +212,7 @@ unsafe impl RmwContext<u64, BytesValue> for Request {
     fn on_complete(&mut self, status: Status) {
         assert_eq!(status, Status::Ok);
         self.add_output();
+        Sample::finish(&mut self.sample, true);
     }
 }
 fn next(state: &mut u64) -> u64 {
@@ -225,6 +231,7 @@ struct WorkerResult {
     sum: u64,
     pending: u64,
     samples: Vec<u64>,
+    pending_samples: usize,
 }
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -256,6 +263,7 @@ fn main() {
             && min.is_multiple_of(8)
             && max.is_multiple_of(8)
     );
+    let io_threads = bench_support::io_threads();
     let store = FasterKv::<u64, BytesValue>::with_device(
         StoreConfig {
             index_buckets: 1 << 22,
@@ -271,7 +279,7 @@ fn main() {
                 mutable_fraction: 0.5,
             },
         },
-        Arc::new(FileDevice::open_with(&args[5], 30, 8, false).unwrap()),
+        Arc::new(FileDevice::open_with(&args[5], 30, io_threads, false).unwrap()),
     );
     let ignored = Rc::new(Cell::new(0));
     {
@@ -285,6 +293,7 @@ fn main() {
                 max,
                 verify: false,
                 sum: ignored.clone(),
+                sample: None,
             };
             assert_eq!(session.upsert(&mut ctx, key), Status::Ok);
             if key & 255 == 255 {
@@ -301,10 +310,12 @@ fn main() {
                 scope.spawn(move || {
                     let mut session = store.start_session();
                     let sum = Rc::new(Cell::new(0u64));
-                    let mut result = WorkerResult {
-                        samples: Vec::with_capacity(count / threads / stride + 1),
-                        ..Default::default()
-                    };
+                    let mut result = WorkerResult::default();
+                    let samples = Rc::new(RefCell::new(Samples {
+                        values: Vec::with_capacity(count / threads / stride + 1),
+                        pending: 0,
+                    }));
+                    let mut expected_samples = 0;
                     let mut state = (worker as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
                     enrolled.fetch_add(1, Ordering::SeqCst);
                     while enrolled.load(Ordering::SeqCst) != threads {
@@ -327,9 +338,13 @@ fn main() {
                             max,
                             verify: false,
                             sum: sum.clone(),
+                            sample: None,
                         };
                         let sampled = (i & (stride - 1)) == ((i / stride) & (stride - 1));
-                        let clock = sampled.then(Instant::now);
+                        if sampled {
+                            expected_samples += 1;
+                            ctx.sample = Some(Sample::start(&samples));
+                        }
                         let status = match operation {
                             "read" => session.read(&mut ctx, i as u64),
                             "upsert" => session.upsert(&mut ctx, i as u64),
@@ -338,9 +353,7 @@ fn main() {
                         match status {
                             Status::Ok => {
                                 ctx.add_output();
-                                if let Some(clock) = clock {
-                                    result.samples.push(clock.elapsed().as_nanos() as u64);
-                                }
+                                Sample::finish(&mut ctx.sample, false);
                             }
                             Status::Pending => result.pending += 1,
                             other => panic!("unexpected status {other:?}"),
@@ -352,6 +365,13 @@ fn main() {
                     session.complete_pending(true);
                     result.elapsed = started.elapsed().as_nanos() as u64;
                     result.sum = sum.get();
+                    result.pending_samples = samples.borrow().pending;
+                    result.samples = std::mem::take(&mut samples.borrow_mut().values);
+                    assert_eq!(
+                        result.samples.len(),
+                        expected_samples,
+                        "every sampled request must finish"
+                    );
                     result
                 })
             })
@@ -359,10 +379,12 @@ fn main() {
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
     let (mut elapsed, mut sum, mut pending, mut samples) = (0u64, 0u64, 0u64, Vec::new());
+    let mut pending_samples = 0;
     for result in results {
         elapsed = elapsed.max(result.elapsed);
         sum = sum.wrapping_add(result.sum);
         pending += result.pending;
+        pending_samples += result.pending_samples;
         samples.extend(result.samples);
     }
     samples.sort_unstable();
@@ -377,6 +399,7 @@ fn main() {
             max,
             verify: true,
             sum: digest.clone(),
+            sample: None,
         };
         match session.read(&mut ctx, key) {
             Status::Ok => ctx.add_output(),
@@ -388,7 +411,7 @@ fn main() {
     }
     session.complete_pending(true);
     println!(
-        "{{\"engine\":\"rust\",\"operation\":\"{operation}\",\"threads\":{threads},\"keys\":{keys},\"count\":{count},\"elapsed_ns\":{elapsed},\"p99_ns\":{},\"samples\":{},\"pending\":{pending},\"checksum\":{sum},\"digest\":{}}}",
+        "{{\"engine\":\"rust\",\"operation\":\"{operation}\",\"threads\":{threads},\"keys\":{keys},\"count\":{count},\"elapsed_ns\":{elapsed},\"latency_scope\":\"end_to_end\",\"p99_ns\":{},\"samples\":{},\"pending_samples\":{pending_samples},\"io_threads\":{io_threads},\"pending\":{pending},\"checksum\":{sum},\"digest\":{}}}",
         samples.get(samples.len() * 99 / 100).copied().unwrap_or(0),
         samples.len(),
         digest.get()

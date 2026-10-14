@@ -12,6 +12,7 @@
 #include <vector>
 #include "core/faster.h"
 #include "device/file_system_disk.h"
+#include "latency.h"
 using namespace FASTER::core;
 using Clock = std::chrono::steady_clock;
 using handler_t = FASTER::environment::QueueIoHandler;
@@ -45,6 +46,7 @@ class Request : public IAsyncContext {
   Key key_;
   uint64_t input, output = 0;
   uint64_t* sum;  // Per-thread accumulator for pending completions.
+  LatencySample sample;
   Request(uint64_t key, uint64_t value, uint64_t* sum_) : key_{key}, input(value), sum(sum_) {}
   Request(const Request& other) = default;
   const Key& key() const { return key_; }
@@ -65,6 +67,7 @@ void completed(IAsyncContext* ctxt, Status status) {
   CallbackContext<Request> context{ctxt};
   if (status != Status::Ok) std::abort();
   *context->sum += context->output;
+  context->sample.Finish(true);
 }
 void require(bool condition) { if (!condition) throw std::runtime_error("benchmark contract failed"); }
 uint64_t next(uint64_t& state) { state ^= state << 13; state ^= state >> 7; state ^= state << 17; return state; }
@@ -101,7 +104,7 @@ int main(int argc, char** argv) {
   store.CompletePending(true);
   store.StopSession();
 
-  struct alignas(64) Result { uint64_t elapsed = 0, sum = 0, pending = 0; std::vector<uint64_t> samples; };
+  struct alignas(64) Result { uint64_t elapsed = 0, sum = 0, pending = 0; LatencySamples samples; };
   std::vector<Result> results(threads);
   std::vector<std::thread> workers;
   std::atomic<size_t> enrolled{0};
@@ -109,7 +112,8 @@ int main(int argc, char** argv) {
     workers.emplace_back([&, worker]() {
       store.StartSession();
       auto& result = results[worker];
-      result.samples.reserve(count / threads / stride + 1);
+      result.samples.values.reserve(count / threads / stride + 1);
+      size_t expected_samples = 0;
       uint64_t state = (worker + 1) * 0x9E3779B97F4A7C15ULL;
       enrolled.fetch_add(1);
       while (enrolled.load() != threads) std::this_thread::yield();
@@ -117,11 +121,11 @@ int main(int argc, char** argv) {
       for (size_t i = 0; i < count / threads; ++i) {
         Request context{pick(state, keys, hot), 1, &result.sum};
         bool sampled = (i & (stride - 1)) == ((i / stride) & (stride - 1));
-        auto clock = sampled ? Clock::now() : Clock::time_point{};
+        if (sampled) { ++expected_samples; context.sample.Start(result.samples); }
         Status status = operation != "rmw" ? store.Read(context, completed, i) : store.Rmw(context, completed, i);
         if (status == Status::Ok) {
           result.sum += context.output;
-          if (sampled) result.samples.push_back(nanoseconds(Clock::now() - clock));
+          context.sample.Finish(false);
         } else {
           require(status == Status::Pending);
           ++result.pending;
@@ -130,18 +134,21 @@ int main(int argc, char** argv) {
       }
       store.CompletePending(true);
       result.elapsed = nanoseconds(Clock::now() - started);
+      require(result.samples.values.size() == expected_samples);
       store.StopSession();
     });
   }
   for (auto& worker : workers) worker.join();
 
   uint64_t elapsed = 0, sum = 0, pending = 0;
+  size_t pending_samples = 0;
   std::vector<uint64_t> samples;
   for (auto& result : results) {
     elapsed = std::max(elapsed, result.elapsed);
     sum += result.sum;
     pending += result.pending;
-    samples.insert(samples.end(), result.samples.begin(), result.samples.end());
+    pending_samples += result.samples.pending;
+    samples.insert(samples.end(), result.samples.values.begin(), result.samples.values.end());
   }
   std::sort(samples.begin(), samples.end());
   // Digest: total of all final values, read back through the store.
@@ -158,7 +165,7 @@ int main(int argc, char** argv) {
   store.StopSession();
   std::cout << "{\"engine\":\"cpp\",\"operation\":\"" << operation << "\",\"threads\":" << threads
     << ",\"keys\":" << keys << ",\"count\":" << count << ",\"elapsed_ns\":" << elapsed
-    << ",\"p99_ns\":" << (samples.empty() ? 0 : samples[samples.size() * 99 / 100])
-    << ",\"samples\":" << samples.size() << ",\"pending\":" << pending
+    << ",\"latency_scope\":\"end_to_end\",\"p99_ns\":" << (samples.empty() ? 0 : samples[samples.size() * 99 / 100])
+    << ",\"samples\":" << samples.size() << ",\"pending_samples\":" << pending_samples << ",\"pending\":" << pending
     << ",\"checksum\":" << sum << ",\"digest\":" << digest << "}\n";
 }
