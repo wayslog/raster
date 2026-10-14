@@ -304,7 +304,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     pub(crate) fn copy_record(
         &mut self,
         request: super::compact::CopyRequest<'_, K, V>,
-        failure: &std::rc::Rc<std::cell::Cell<Option<Status>>>,
+        batch: &std::rc::Rc<super::compact::CopyBatch>,
     ) -> Status {
         if self.phase != Phase::Rest {
             self.heavy_enter();
@@ -324,10 +324,11 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     let op = super::compact::PendingCopy {
                         words: request.words.to_vec(),
                         types: std::marker::PhantomData,
-                        failure: failure.clone(),
+                        batch: batch.clone(),
                         search_min: request.search_min,
                         observed,
                     };
+                    batch.pending.set(batch.pending.get() + 1);
                     return self.suspend(outcome, op);
                 }
             }

@@ -298,7 +298,12 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     /// Takes the old-side lock for a request about to go pending in PREPARE.
     /// Returns `Some(marked)`, or `None` if the session must shift to v+1.
     #[inline]
-    fn mark_pending(&self, mode: OpMode, hash: u64, guard: LockGuard<'_>) -> Option<bool> {
+    pub(crate) fn mark_pending(
+        &self,
+        mode: OpMode,
+        hash: u64,
+        guard: LockGuard<'_>,
+    ) -> Option<bool> {
         if mode.phase != Phase::Prepare {
             return Some(mode.holds_old);
         }
