@@ -349,12 +349,18 @@ fn prepare_pending_copy_and_new_version_writer_finish_checkpoint() {
     writer.refresh();
     let update = writer.upsert(&mut CollidingPut(CollidingKey(1)), 2);
     assert!(matches!(update, Status::Ok | Status::Pending));
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline && store.system_state().phase != Phase::Rest {
+    // BytesDevice completes every request inline. Bound state-machine passes
+    // instead of including filesystem metadata persistence in a wall-clock gate.
+    for _ in 0..64 {
+        if store.system_state().phase == Phase::Rest {
+            break;
+        }
         copier.complete_pending(false);
         writer.complete_pending(false);
     }
-    let finished = store.system_state().phase == Phase::Rest;
+    let final_phase = store.system_state().phase;
+    let pending_copies = batch.pending.get();
+    let finished = final_phase == Phase::Rest;
     if !finished {
         // Restore the old chain only to release both sessions after a red run;
         // the verdict above still records the original checkpoint livelock.
@@ -368,7 +374,7 @@ fn prepare_pending_copy_and_new_version_writer_finish_checkpoint() {
     assert_eq!(batch.failure.get(), None);
     assert!(
         finished,
-        "PREPARE copy remained pending behind a v+1 record"
+        "PREPARE copy did not finish after 64 passes: phase={final_phase:?}, pending_copies={pending_copies}"
     );
 }
 
