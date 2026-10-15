@@ -267,7 +267,14 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     return (Gate::Shift, LockGuard::none());
                 }
                 let guard = LockGuard::old(locks(), hash);
-                if record_newer(latest, mode.version) {
+                // A new-version writer can publish and release its lock after
+                // our index snapshot but before we acquire the old side.
+                // Recheck while holding the lock before admitting a v request.
+                let locked_latest = self.index.find(hash).map_or(0, |slot| {
+                    let entry = self.skip_read_cache(slot.entry.address());
+                    self.latest_version(entry, self.hlog.head.load())
+                });
+                if record_newer(latest, mode.version) || record_newer(locked_latest, mode.version) {
                     (Gate::Shift, guard)
                 } else {
                     (Gate::Normal, guard)
@@ -857,5 +864,129 @@ impl Drop for LockGuard<'_> {
                 locks.unlock_old(self.hash);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::kv::ValueSlot;
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Clone)]
+    struct Increment(u64);
+    // SAFETY: The complete fixed-size key is owned and stable.
+    unsafe impl KeyContext<u64> for Increment {
+        fn key(&self) -> &u64 {
+            &self.0
+        }
+    }
+    // SAFETY: Every destination is fully initialized and shared updates are atomic.
+    // Copying an immutable source follows the engine's CPR old/new-side exclusion.
+    unsafe impl RmwContext<u64, AtomicU64> for Increment {
+        fn rmw_initial(&mut self, slot: ValueSlot<'_, AtomicU64>) {
+            slot.write(AtomicU64::new(1));
+        }
+        fn rmw_copy(&mut self, old: &AtomicU64, slot: ValueSlot<'_, AtomicU64>) {
+            slot.write(AtomicU64::new(old.load(Ordering::Relaxed) + 1));
+        }
+        fn rmw_atomic(&mut self, value: &AtomicU64) -> bool {
+            value.fetch_add(1, Ordering::Relaxed);
+            true
+        }
+    }
+
+    #[test]
+    fn prepare_rejects_new_version_published_after_index_snapshot() {
+        let store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
+            index_buckets: 64,
+            log: LogConfig {
+                page_bits: 16,
+                memory_pages: 16,
+                mutable_fraction: 0.5,
+            },
+            ..StoreConfig::default()
+        });
+        let slot = store.epoch.reserve_helper().unwrap();
+        store.epoch.protect_and_drain(&slot);
+        let mut op = Increment(0);
+        let hash = op.key_hash();
+        let rest = OpMode {
+            phase: Phase::Rest,
+            plain: true,
+            version: 1,
+            holds_old: false,
+        };
+        assert!(matches!(
+            store.internal_rmw::<true, _>(&slot, &mut op, rest),
+            Outcome::Done(Status::Ok)
+        ));
+        let locks = Box::into_raw(Box::new(CheckpointLocks::new(64)));
+        store.checkpoint_locks.store(locks, Ordering::Release);
+
+        // Pause the old request after its index/version snapshot. The new
+        // request then publishes under the new-side lock and releases it.
+        let observed = store.index.find(hash).unwrap().entry.address();
+        let snapshot_version = store.latest_version(observed, store.hlog.head.load());
+        assert_eq!(snapshot_version, 1);
+        let new = OpMode {
+            phase: Phase::InProgress,
+            plain: false,
+            version: 2,
+            holds_old: false,
+        };
+        assert!(matches!(
+            store.internal_rmw::<true, _>(&slot, &mut op, new),
+            Outcome::Done(Status::Ok)
+        ));
+        let newest = store.index.find(hash).unwrap().entry.address();
+        assert_eq!(store.latest_version(newest, store.hlog.head.load()), 2);
+        let prepare = OpMode {
+            phase: Phase::Prepare,
+            plain: false,
+            version: 1,
+            holds_old: false,
+        };
+        let (gate, guard) = store.cpr_gate(prepare, hash, snapshot_version);
+        if gate == Gate::Normal {
+            // This is the real disk-completion path after the stale request
+            // retains an old-side lock. A changed index restarts the RMW.
+            assert_eq!(store.mark_pending(prepare, hash, guard), Some(true));
+            let disk_value = AtomicU64::new(1);
+            let pending = OpMode {
+                holds_old: true,
+                ..prepare
+            };
+            assert!(matches!(
+                store.rmw_from_disk::<true, _>(
+                    &slot,
+                    &mut op,
+                    pending,
+                    observed,
+                    Some(&disk_value)
+                ),
+                Outcome::Done(Status::Ok)
+            ));
+            store.locks().unwrap().unlock_old(hash);
+        } else {
+            drop(guard);
+        }
+        // SAFETY: Both initialized records remain protected by the helper slot.
+        let old_value = unsafe { store.record(observed).value().load(Ordering::Relaxed) };
+        // SAFETY: The new initialized record has the same epoch protection.
+        let new_value = unsafe { store.record(newest).value().load(Ordering::Relaxed) };
+        store
+            .checkpoint_locks
+            .store(std::ptr::null_mut(), Ordering::Release);
+        // SAFETY: No operation retains a lock and this test owns the allocation.
+        unsafe { drop(Box::from_raw(locks)) };
+        store.epoch.release(slot);
+        assert_eq!(
+            gate,
+            Gate::Shift,
+            "stale PREPARE must shift; old value={old_value}, new value={new_value}"
+        );
+        assert_eq!(old_value, 1);
+        assert_eq!(new_value, 2);
     }
 }
