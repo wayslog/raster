@@ -2,7 +2,7 @@
 //!
 //! Pages live in a power-of-two ring of frames allocated up front, so
 //! `get(address)` is one shift, mask and add. The tail is a packed
-//! `page:23 | offset:41` word advanced with a bounded CAS. Boundary shifts run as
+//! `page:23 | offset:41` word advanced by bounded reservations. Boundary shifts run as
 //! epoch actions so that no protected session can still use a closed frame.
 use super::address::{Address, AtomicAddress};
 use super::device::{AlignedBuffer, Device, SECTOR};
@@ -215,6 +215,62 @@ impl HybridLog {
                 }
                 Ok(_) => return Allocation::PageFull(page),
                 Err(observed) => word = observed,
+            }
+        }
+    }
+
+    /// Reserves for the engine's bounded set of epoch participants.
+    ///
+    /// # Safety
+    /// The caller must own a slot from this log's epoch and make at most one
+    /// reservation at a time with that slot, keeping it reserved until this
+    /// method returns. Rejected reservations are cancelled before returning,
+    /// so unwinding or slot reuse cannot accumulate offsets on a closed page.
+    /// Public callers without bounded slots must use the CAS in `allocate`.
+    #[inline]
+    pub(crate) unsafe fn reserve_for_session(&self, size: u64) -> Allocation {
+        const {
+            // Each of the 128 epoch slots owns at most one outstanding reservation.
+            // Include the initial page and one boundary-crossing public CAS:
+            // (128 + 2) * 32 MiB = 4,362,076,160 bytes, below the 41-bit offset.
+            assert!(
+                ((super::epoch::MAX_SLOTS as u64 + 2) << Address::OFFSET_BITS)
+                    < (1 << TAIL_OFFSET_BITS)
+            );
+        }
+        assert!(
+            size > 0 && size.is_multiple_of(8) && size <= self.page_size,
+            "record exceeds log page size or is unaligned"
+        );
+        let word = self.tail.0.fetch_add(size, Ordering::AcqRel);
+        let page = word >> TAIL_OFFSET_BITS;
+        let offset = word & ((1 << TAIL_OFFSET_BITS) - 1);
+        if offset + size <= self.page_size {
+            Allocation::Ok(Address::new(page, offset))
+        } else if offset <= self.page_size {
+            Allocation::PageFull(page)
+        } else {
+            self.cancel_rejected_reservation(page, size);
+            Allocation::Retry(page)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn cancel_rejected_reservation(&self, page: u64, size: u64) {
+        let mut current = self.tail.0.load(Ordering::Acquire);
+        while current >> TAIL_OFFSET_BITS == page {
+            // Keep the first boundary-crossing reservation as a closed-page
+            // marker. Only this rejected reservation is removed. If another
+            // caller opens a new page, its offset must never be decremented.
+            match self.tail.0.compare_exchange_weak(
+                current,
+                current - size,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
             }
         }
     }
@@ -562,6 +618,206 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn all_session_slots_and_public_cas_keep_the_tail_offset_bounded() {
+        use super::super::epoch::MAX_SLOTS;
+        let (epoch, log) = small_log();
+        log.tail
+            .0
+            .store((3 << TAIL_OFFSET_BITS) | log.page_size, Ordering::Release);
+        let ready = std::sync::Barrier::new(MAX_SLOTS + 1);
+        let crossed = std::sync::Barrier::new(MAX_SLOTS + 1);
+        std::thread::scope(|scope| {
+            for _ in 0..MAX_SLOTS {
+                scope.spawn(|| {
+                    let slot = epoch.reserve().unwrap();
+                    ready.wait();
+                    crossed.wait();
+                    // SAFETY: each reserved slot performs exactly one call;
+                    // no failed reservation is retried on the closed page.
+                    let result = unsafe { log.reserve_for_session(log.page_size) };
+                    epoch.release(slot);
+                    assert!(matches!(result, Allocation::Retry(3)));
+                });
+            }
+            ready.wait();
+            assert!(matches!(
+                log.allocate(log.page_size),
+                Allocation::PageFull(3)
+            ));
+            crossed.wait();
+        });
+        let expected = (3 << TAIL_OFFSET_BITS) | (2 * log.page_size);
+        assert_eq!(log.tail.0.load(Ordering::Acquire), expected);
+        for _ in 0..100 {
+            assert!(matches!(log.allocate(log.page_size), Allocation::Retry(3)));
+            assert_eq!(log.tail.0.load(Ordering::Acquire), expected);
+        }
+    }
+
+    #[test]
+    fn cancelling_rejected_reservation_preserves_new_page_tail() {
+        let (_, log) = small_log();
+        let expected = (4 << TAIL_OFFSET_BITS) | 24;
+        log.tail.0.store(expected, Ordering::Release);
+        log.cancel_rejected_reservation(3, log.page_size);
+        assert_eq!(log.tail.0.load(Ordering::Acquire), expected);
+    }
+
+    #[test]
+    fn released_slots_do_not_accumulate_rejected_reservations() {
+        let (epoch, log) = small_log();
+        let expected = (3 << TAIL_OFFSET_BITS) | (2 * log.page_size);
+        log.tail.0.store(expected, Ordering::Release);
+        for _ in 0..1000 {
+            let slot = epoch.reserve().unwrap();
+            // SAFETY: this slot owns only this reservation. Rejected internal
+            // reservations must be cancelled before control leaves the method.
+            let result = unsafe { log.reserve_for_session(log.page_size) };
+            epoch.release(slot);
+            assert!(matches!(result, Allocation::Retry(3)));
+            assert_eq!(log.tail.0.load(Ordering::Acquire), expected);
+        }
+    }
+
+    #[test]
+    fn panicking_page_wait_cancels_reservation_before_slot_reuse() {
+        use super::super::epoch::MAX_SLOTS;
+        use super::super::store::{FasterKv, StoreConfig};
+
+        let store = FasterKv::<u64, u64>::with_device(
+            StoreConfig {
+                index_buckets: 16,
+                log: LogConfig {
+                    page_bits: 12,
+                    memory_pages: 4,
+                    mutable_fraction: 0.5,
+                },
+                ..Default::default()
+            },
+            Arc::new(crate::core::device::NullDevice),
+        );
+        let occupied: Vec<_> = (0..MAX_SLOTS - 1)
+            .map(|_| store.epoch.reserve_helper().unwrap())
+            .collect();
+        let slot = store.epoch.reserve().unwrap();
+        store.epoch.protect(&slot);
+        let page_size = store.hlog.page_size();
+        let closed = (3 << TAIL_OFFSET_BITS) | (2 * page_size);
+        store.hlog.tail.0.store(closed, Ordering::Release);
+        // The old protection keeps this action queued until block_allocate
+        // refreshes while waiting for the closed page's frame to become free.
+        store
+            .epoch
+            .bump_with_action(|| panic!("injected page wait failure"));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store.block_allocate(&slot, page_size)
+        }));
+        store.epoch.release(slot);
+        assert!(result.is_err());
+        assert_eq!(store.hlog.tail.0.load(Ordering::Acquire), closed);
+
+        // Every other slot is still occupied, so this must reuse the slot
+        // released after unwinding. No rejected size may survive its reuse.
+        let reused = store.epoch.reserve().unwrap();
+        // SAFETY: this exclusively owned slot makes only one reservation.
+        let allocation = unsafe { store.hlog.reserve_for_session(page_size) };
+        store.epoch.release(reused);
+        for slot in occupied {
+            store.epoch.release(slot);
+        }
+        assert!(matches!(allocation, Allocation::Retry(3)));
+        assert_eq!(store.hlog.tail.0.load(Ordering::Acquire), closed);
+    }
+
+    #[test]
+    fn blocked_store_reservations_remain_bounded_until_a_new_page_opens() {
+        use super::super::store::{FasterKv, StoreConfig};
+        use std::time::{Duration, Instant};
+
+        const WRITERS: usize = 4;
+        let store = FasterKv::<u64, u64>::with_device(
+            StoreConfig {
+                index_buckets: 16,
+                log: LogConfig {
+                    page_bits: 12,
+                    memory_pages: 4,
+                    mutable_fraction: 0.5,
+                },
+                ..Default::default()
+            },
+            Arc::new(crate::core::device::NullDevice),
+        );
+        let pin = store.epoch.reserve().unwrap();
+        store.epoch.protect_and_drain(&pin);
+        let page_size = store.hlog.page_size();
+        for page in 0..4 {
+            let tail = store.hlog.tail();
+            assert_eq!(tail.page(), page);
+            assert!(matches!(
+                store.hlog.allocate(page_size - tail.offset()),
+                Allocation::Ok(_)
+            ));
+            if page < 3 {
+                assert!(store.hlog.new_page(page));
+            }
+        }
+        let ready = std::sync::Barrier::new(WRITERS + 1);
+        let minimum = (3 << TAIL_OFFSET_BITS) | (2 * page_size);
+        let maximum = (3 << TAIL_OFFSET_BITS) | ((WRITERS as u64 + 1) * page_size);
+        let (observed, public_retries, pages) = std::thread::scope(|scope| {
+            let mut workers = Vec::new();
+            for _ in 0..WRITERS {
+                workers.push(scope.spawn(|| {
+                    let slot = store.epoch.reserve().unwrap();
+                    store.epoch.protect_and_drain(&slot);
+                    ready.wait();
+                    let address = store.block_allocate(&slot, page_size);
+                    store.epoch.release(slot);
+                    assert_eq!(address.offset(), 0);
+                    address.page()
+                }));
+            }
+            ready.wait();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while store.hlog.tail.0.load(Ordering::Acquire) < minimum && Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+            // Later arrivals can temporarily reserve before cancelling. The
+            // invariant is the participant bound, not a constant closed offset.
+            let mut observed = Vec::with_capacity(1002);
+            observed.push(store.hlog.tail.0.load(Ordering::Acquire));
+            for _ in 0..1000 {
+                observed.push(store.hlog.tail.0.load(Ordering::Acquire));
+                std::thread::yield_now();
+            }
+            let mut public_retries = true;
+            for _ in 0..100 {
+                public_retries &= matches!(store.hlog.allocate(page_size), Allocation::Retry(3));
+            }
+            observed.push(store.hlog.tail.0.load(Ordering::Acquire));
+            // Always release the old reader before checking the verdict, so
+            // even a red run can drain the allocation threads and retain output.
+            store.epoch.release(pin);
+            let pages: std::collections::BTreeSet<_> = workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect();
+            (observed, public_retries, pages)
+        });
+        assert!(public_retries);
+        assert!(
+            observed
+                .iter()
+                .all(|word| (minimum..=maximum).contains(word)),
+            "blocked reservations exceeded bounds {minimum}..={maximum}: observed {:?}..={:?}",
+            observed.iter().min(),
+            observed.iter().max()
+        );
+        assert_eq!(pages.len(), WRITERS);
+        assert!(pages.iter().all(|page| *page >= 4));
     }
 }
 

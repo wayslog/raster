@@ -226,15 +226,15 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     pub(crate) fn block_allocate(&self, slot: &SlotId, size: u64) -> Address {
         loop {
-            match self.hlog.allocate(size) {
+            // SAFETY: the session retains its reserved epoch slot throughout
+            // this synchronous call and cannot reserve concurrently with it.
+            // Waiting for the closed page also avoids repeated rejected work.
+            match unsafe { self.hlog.reserve_for_session(size) } {
                 Allocation::Ok(address) => return address,
-                Allocation::PageFull(page) => {
+                Allocation::PageFull(page) | Allocation::Retry(page) => {
                     while !self.hlog.new_page(page) {
                         self.epoch.protect_and_drain(slot);
                     }
-                }
-                Allocation::Retry(_) => {
-                    self.epoch.protect_and_drain(slot);
                 }
             }
         }
