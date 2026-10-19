@@ -29,7 +29,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let dirs = self.dirs.as_ref().ok_or(Status::IoError)?;
         let rest = self.state.load();
         let recovering = rest.start(Action::Recover);
-        if rest.phase != Phase::Rest || !self.state.compare_exchange(rest, recovering) {
+        if rest.phase != Phase::Rest
+            || rest.action != Action::None
+            || !self.state.compare_exchange(rest, recovering)
+        {
             return Err(Status::Aborted);
         }
         let result = self.recover_inner(dirs.index(index_token), dirs.log(log_token));
@@ -218,5 +221,36 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     pub fn continue_session(&self, guid: Guid) -> Option<(Session<'_, K, V>, u64)> {
         let serial = self.continue_tokens.lock().unwrap().remove(&guid)?;
         Some((Session::new(self, guid, serial), serial))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::guid::Guid;
+    use crate::core::state::{Action, SystemState};
+    use crate::core::{FasterKv, Status, StoreConfig};
+    use std::sync::atomic::AtomicU64;
+
+    #[test]
+    fn recovery_excludes_other_actions_and_new_sessions() {
+        let dir = std::env::temp_dir().join(format!("raster-recover-excl-{}", std::process::id()));
+        let store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
+            index_buckets: 64,
+            checkpoint_dir: Some(dir),
+            ..StoreConfig::default()
+        });
+        // An action that has started but not yet left REST.
+        store.state.store(SystemState::rest(1).start(Action::Gc));
+        assert_eq!(
+            store.recover(Guid::new(), Guid::new()).err(),
+            Some(Status::Aborted)
+        );
+        // Recovery itself stays in REST while it loads the log.
+        store
+            .state
+            .store(SystemState::rest(1).start(Action::Recover));
+        assert!(store.try_start_session().is_none());
+        store.state.store(SystemState::rest(1));
+        assert!(store.try_start_session().is_some());
     }
 }

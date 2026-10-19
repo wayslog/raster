@@ -297,7 +297,8 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
             return Err(status);
         }
         if shift_begin {
-            while !store.shift_begin_address(until, None, None) {
+            // Another caller may already have moved begin past `until`.
+            while store.hlog.begin.load() < until && !store.shift_begin_address(until, None, None) {
                 self.refresh();
                 std::thread::yield_now();
             }

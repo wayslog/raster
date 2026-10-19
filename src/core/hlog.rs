@@ -70,6 +70,8 @@ pub struct HybridLog {
     /// Serializes clearing frames and publishing safe_head.
     head_order: std::sync::Mutex<()>,
     pending_flushes: AtomicU64,
+    /// Set when a flush write fails; the failed range never becomes flushed.
+    flush_failed: std::sync::atomic::AtomicBool,
 }
 
 // SAFETY: frames are raw page memory shared under epoch protection; all
@@ -104,8 +106,11 @@ impl HybridLog {
                 frame
             })
             .collect();
+        // Opening page T+1 needs the head at T+2-frames, and the head never
+        // passes the read-only boundary at T-mutable_pages, so at least two
+        // frames must stay immutable.
         let mutable_pages =
-            ((frames_len as f64 * config.mutable_fraction) as u64).clamp(1, frames_len - 1);
+            ((frames_len as f64 * config.mutable_fraction) as u64).clamp(1, frames_len - 2);
         let start = Address::new(0, FIRST_VALID_OFFSET);
         Self {
             frames,
@@ -126,6 +131,7 @@ impl HybridLog {
             flush_order: Default::default(),
             head_order: Default::default(),
             pending_flushes: AtomicU64::new(0),
+            flush_failed: Default::default(),
         }
     }
 
@@ -513,8 +519,11 @@ impl HybridLog {
             drop(buffer);
             // SAFETY: `Drop` waits for all pending flushes.
             let log = unsafe { log.log() };
-            result.expect("hybrid log flush failed");
-            log.complete_flush(start, end);
+            match result {
+                Ok(()) => log.complete_flush(start, end),
+                // Leave the range unflushed; waiters observe `flush_failed`.
+                Err(_) => log.flush_failed.store(true, Ordering::Release),
+            }
             log.pending_flushes.fetch_sub(1, Ordering::AcqRel);
             let _ = sent.send(());
         });
@@ -536,6 +545,15 @@ impl HybridLog {
             flushed = Address::from_control(end);
         }
         self.flushed_until.monotonic_update(flushed);
+    }
+}
+
+impl HybridLog {
+    /// Whether a flush write has failed. `flushed_until` then stops below the
+    /// failed range, so checkpoints report an I/O error and allocations that
+    /// need the head to pass it cannot proceed.
+    pub fn flush_failed(&self) -> bool {
+        self.flush_failed.load(Ordering::Acquire)
     }
 }
 
