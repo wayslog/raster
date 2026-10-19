@@ -10,6 +10,7 @@ RasterKV 是 FASTER 的 Rust 实现，按 FASTER C++ 契约重写，性能目标
 | [Rust 改写关键约束](04-Rust改写关键约束.md) | 从 C++ 源码归纳的移植风险与需保留的语义 |
 | [FASTER 契约重写计划](05-FASTER契约重写计划.md) | 当前执行计划：模块结构、阶段 A–E、验收门槛 |
 | [变长键值与收尾计划](06-变长键值与收尾计划.md) | V0–V5、D+、E 的范围、执行记录与验收状态 |
+| [审查修复与重新验收](07-审查修复与重新验收.md) | 并发与健全性修复、资源边界、检查点结果语义及新测量方案 |
 | [ADR 0001](adr/0001-adopt-faster-cpp-contract.md) | 采用 FASTER C++ 契约并重写引擎的决策 |
 | [ADR 0002](adr/0002-variable-length-records.md) | KeyContext、ValueSlot、变长记录与默认操作快路径 |
 

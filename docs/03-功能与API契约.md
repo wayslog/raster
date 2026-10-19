@@ -12,6 +12,8 @@ Rust 入口为 `raster::core::*`。这部分描述当前实现；后面的 C++ A
 - `KeyContext<K>` 提供 `key()`、`key_hash()`、`key_size()`、`key_equals()` 和 unsafe `write_key(dst)`。默认 deep copy 要求 key 引用后确有 key_size 字节；浅键必须覆盖 deep write、hash 和 equality。请求完成前，键、哈希和等值判断必须保持一致，包括重试和 Pending 副本。Pending 的 Clone 必须拥有全部请求数据。
 - `ValueSlot<'_,V>` 提供 `write(V)`、`len()`、`as_mut_ptr()`。原地初始化必须写入全部会被读取的字节，且初始化后的 `V::size()` 必须等于预留长度。
 
+Key、Value、KeyContext、UpsertContext、RmwContext、DeleteContext 均为 **unsafe trait**。实现者必须通过 `unsafe impl` 承诺记录布局、尺寸稳定性、完整初始化、Pending 副本所有权和原地并发安全；固定头必须能承载任意位模式，分级磁盘校验才可以先检查尺寸。只将 Key/Value 改为 unsafe 不足以约束上下文漏写 `put` 或伪造 `key_size`。ReadContext 的读取／完成回调仍为安全方法；正常使用 Session 不要求 unsafe。
+
 | 上下文 | 新记录初始化 | 现有记录访问 |
 | --- | --- | --- |
 | `ReadContext<K,V>` | 无 | `get(&V)` / `get_atomic(&V)` |
@@ -34,15 +36,21 @@ DeleteContext 不携带 V 参数，因此用 None 表达固定头默认值。变
 | `read_with_options(ctx, serial, ReadOptions)` | `abort_if_tombstone=true` 时匹配墓碑返回 Aborted；真正不存在仍为 NotFound |
 | `rmw_with_options(ctx, serial, RmwOptions)` | `create_if_not_exists=false` 时不创建缺失或已删除键 |
 | `delete_with_options(ctx, serial, DeleteOptions)` | `force_tombstone=true` 时为索引中不存在的键也追加墓碑 |
-| `compact(until, shift_begin, threads, checkpoint)` | 查找式压缩；checkpoint=true 时随后完成完整检查点；错误不允许被当成成功截断 |
+| `compact(until, shift_begin, threads, checkpoint)` | 返回 `Result<CompactionResult, Status>`；`until` 和 `begin_address` 表示已完成进度，`checkpoint` 单独表示未请求／成功 token／失败状态。检查点失败不会撤销复制或截断 |
 | `num_active_sessions()` | 观察活跃业务会话数量，不计扫描等内部 helper |
-| `index_distribution()` | 统计每个主桶及溢出链中已发布且地址有效的链头条目，返回直方图；这是并发观测值，不是逻辑键数 |
+| `index_distribution()` | 返回直方图的 Result；无 epoch 槽时返回 OutOfMemory。统计已发布且地址有效的链头条目，是并发观测值，不是逻辑键数 |
 
 `StoreConfig::log_size_budget=0` 默认关闭写侧协作；非零时，超过预算的 Upsert/RMW 会参与正在进行的压缩。它不是无条件拒绝写入的硬容量上限，未启动压缩时不会自动删除数据。旧的扫描版 C++ Compact 不实现，采用 CompactWithLookup 的存活判断。
+
+非零日志预算会使该 store 的会话持续使用配置路径，即使当前处于 REST、未超预算或没有压缩任务；不会回到无缓存且预算为零的 plain 快路径。已有用户 Pending 的会话跳过写侧协助，避免在 Upsert/RMW 内触发其他请求的回调。每批协助只等待本批拷贝，不等待 CPR／GC 回到 Rest。
+
+压缩 `until` 落在记录内部时，在任何复制前返回 InvalidArgument；复制或扫描失败仍不会截断。协助扫描复用现有会话的 epoch 保护；工作线程无法取得会话时由协调器接手。`try_start_session` 在状态机非 Rest 或槽满时返回 None；独立扫描无可用槽时由 `next_page` 返回 OutOfMemory，可稍后重试。自定义 Device 必须返回请求长度的字节；短读会终止为 I/O 错误，不会不断重读同一前缀。缓存页小于记录时跳过缓存插入。
 
 ### TOML 配置
 
 `StoreConfig::from_toml_str` / `from_toml_file` 返回 Result；接受 `[faster.hlog]` 等带 faster 前缀的格式，也接受顶层 `[hlog]`。未知字段、F2、越界尺寸和非法索引/日志几何配置会返回错误。
+
+`filepath` 必填，空字符串明确选择内存设备；hlog.in_mem_size_mb 和 index.table_size 必填。出现 compaction 表时 hlog_size_budget_mb 必填，启用时预算不能小于内存窗口。未启用读缓存时不检查其几何参数。TOML 和直接构造配置的 pre_allocate 默认值均为 false；实际仍沿用 eager allocation。内存窗口最多覆盖日志地址空间的 2^22 个 32 MiB 页，这只是格式上限，不保证宿主内存足够。
 
 ```toml
 [faster]

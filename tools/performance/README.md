@@ -22,6 +22,24 @@ Each C++ driver has a Rust counterpart under `examples/` with the same arguments
 
 `disk` loads `KEYS` keys into a 256 MiB log window, so most of the log is on the device. `OP` is `read|rmw|hotread`; `hotread` sends 9 of 10 reads to the first `KEYS / 32` keys. A non-zero `READ_CACHE_MB` enables a read cache of that size, with 90% of it mutable. The C++ drivers link against `file_system_disk.h` with buffered I/O, so put `DIR` on tmpfs to compare engine overhead rather than storage.
 
+`oracle.cc` independently computes the expected request checksum and final
+digest for the disk and variable-value pairs without importing either engine.
+It replays the deterministic key sequence, counts each key's RMW updates, and
+tracks logical lengths for variable-value writes. RMW sums are independent of
+completion order. Run this correctness-only model outside timed measurements
+and compare both fields with every driver's output. It supplements the full
+readback and payload checks already performed by the drivers.
+
+```sh
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tools/performance/oracle.cc -o target/business-oracle
+target/business-oracle fixed read 4 16000000 2000000
+target/business-oracle varlen rmw 4 16000000 2000000 8 256
+```
+
+Arguments are `fixed|varlen OP THREADS KEYS COUNT [MIN_VALUE MAX_VALUE]`.
+For fixed values, `OP` is `read|hotread|rmw`; variable values use
+`read|upsert|rmw`. These are business expectations, not timing results.
+
 
 ## Variable-value pair
 
@@ -32,175 +50,164 @@ length by round and use disjoint worker key partitions so the final digest is
 deterministic. RMW grows by eight bytes until MAX_VALUE, then updates in place.
 Both engines use the same generation/replaced lock and atomic payload words.
 Verification checks every payload word and includes logical length in the final
-digest. P99 samples only synchronously completed operations, matching `disk`.
+digest. P99 measures submission through completion, including Pending callbacks,
+matching `disk`. Both drivers assert that every selected sample completes and
+report `pending_samples` separately. Historical synchronous-only samples are retained in the evidence archive;
+they are not end-to-end latency evidence.
 
-`varlen_run.py OUTDIR CPP_BIN RUST_BIN LOG_ROOT [resident|disk]` runs three
-alternating rounds on CPU 4 or CPUs 4-7, NUMA node 0. It records binary hashes,
-raw outputs, throughput, P99 and Pending counts. It refuses to record timing
+`varlen_run.py OUTDIR CPP_BIN RUST_BIN LOG_ROOT [resident|disk] [IO_THREADS]` runs
+three alternating rounds with the mandatory role binding described below. The
+default Rust I/O pool has eight threads; pass `1` for a separate sensitivity
+experiment. It records binary and tool hashes, raw outputs, verified affinities,
+throughput, end-to-end P99 and Pending sample counts. It refuses to record timing
 summaries after a checksum/digest mismatch. The resident case uses 8192 keys
 and requires zero Pending operations; the disk case uses 16 million keys with
 a 256 MiB memory window. Both use payloads from 8 to 256 bytes.
 
-For short resident comparisons, bind each worker before it enters application
-code as well as restricting the process CPU mask. On Linux:
+The disk and variable-value drivers drain Pending requests every 256 submitted
+operations and once more at the end. End-to-end P99 includes time waiting for
+that callback processing; this progress cadence is part of the paired workload.
+Rust buffered reads and writes execute in the submitting thread. Its I/O pool
+handles direct reads and writes, while the C++ buffered driver uses libaio submission.
+The one-thread sensitivity run changes the Rust pool only; it does not make
+the two backends identical. Do not attribute buffered-read throughput to eight
+parallel Rust read workers. The tmpfs measurements compare engine overhead,
+not SSD or O_DIRECT performance.
+
+Build the Linux role-binding helper and require it in every runner:
 
 ```sh
 cc -O2 -std=c11 -Wall -Wextra -Werror -shared -fPIC -pthread \
   tools/performance/pin_threads.c -ldl -o target/libpin_threads.so
-LD_PRELOAD="$PWD/target/libpin_threads.so" numactl --physcpubind=4,5,6,7 --membind=0 \
-  target/release/examples/parity upsert uniform 4 2000000 64
+export RASTER_BENCH_PIN_LIBRARY="$PWD/target/libpin_threads.so"
+python3 tools/performance/varlen_run.py RESULTS CPP_BIN RUST_BIN /dev/shm resident
 ```
 
-Apply the identical preload to the baseline, candidate, and C++ processes.
-The helper assigns threads round-robin within the inherited mask; it changes
-neither the workload nor the frozen engine binary. Keep its source/library
-hashes with the results and run a same-binary A/A control first. This helper is
-only for isolated benchmark processes. Prior results without this control must
-remain available rather than being replaced by successful reruns.
+`affinity.py` binds each workload worker to CPU 4-7, the main/coordinator thread
+to CPU 8 and auxiliary/I/O threads to CPU 9, NUMA 0. Confirm that these six CPUs
+are allowed, distinct physical cores before running. It loads the helper only
+after numactl establishes the full mask. The frozen startup contract is explicit:
+Rust device drivers create their configured I/O pool before the workers; the
+memory driver and C++ drivers create workers first. Recovery has no workers.
+Compaction has three spawned workers and one working coordinator. Library
+receipts verify each actual affinity and the expected worker count; any missing
+configuration or receipt fails the run. Changing thread creation requires
+revalidating this contract. This helper is only for isolated benchmark processes.
 
-## Measurement and acceptance
+## Final closeout, 2026-10-19
 
-The fixed Rust baseline is `746c562`; the C++ reference is
-`321d872eabda6a0345c8bd76419f89723ed864ae`. Keep all binaries, source archives,
-raw results and hash manifests from each candidate, including failed runs.
-Host connection details and profiling artifacts stay in the ignored local
-benchmark directory.
+The final frozen runtime is pre-consolidation commit `49f882d`. Acceptance follows
+`docs/08`, including sections 8 and 9. Rust baseline: `746c562`; C++ reference:
+`321d872e`. Only checkpoint comparisons use the explicitly approved private
+reference with `cpp-pending-retry.patch`; the upstream checkout is unchanged.
+The original binary, livelock evidence, failures and diagnostic variants remain
+preserved. No diagnostic driver variant was used for this matrix.
 
-Resident, disk, cache, and variable-value throughput includes the complete
-operation batch and Pending drain. P99 samples only synchronously completed
-operations; it does not measure asynchronous completion latency. The resident
-`retries` output is a placeholder, not an internal CAS retry counter. Checkpoint
-and compaction timings include their completion and business verification is
-performed separately. All current device comparisons use buffered I/O on
-tmpfs; none establishes SSD or O_DIRECT parity.
+The frozen private closeout controllers and evidence are retained under
+`.perf-baseline/closeout/section8-20261019/`. That continuation reused the first
+216 valid samples. The final continuation
+under `.perf-baseline/closeout/checkpoint-final-20261019/` reused all 753 retained
+outputs, reassessed the existing 64 control pairs, and ran only the unstarted
+36-round checkpoint comparison (228 new run/recovery outputs including warmups).
+Source, binary, binding and controller
+hashes are verified. The standalone historical runners retain their earlier
+gates; the closeout controller applies the user-approved docs/08 policy.
+The frozen C++ resident binary omits `pending` while enforcing synchronous
+Status::Ok internally. Only that output may omit the field; an explicit nonzero
+value is rejected, and Rust resident output must still report zero. The fix
+was verified by replaying retained output before resuming any measurements.
 
-The final resident cycle measurements use six alternating perf-stat pairs for
-each case and 24 for `upsert/shared-hot/4`. Each perf-stat process includes
-setup as well as the operation batch. Wall-clock throughput and P99 use the
-three uninstrumented AB/BA rounds. Single perf-stat failures from earlier
-candidates remain in the diagnostic record. Fixed workloads require at least
-98% of baseline throughput; time metrics allow the reciprocal of that bound.
-Variable workloads require throughput at least equal to C++ and P99 no higher
-than C++.
+Resident workloads use six balanced three-engine orders; disk, hotread and
+variable-value workloads use three alternating rounds. Compaction uses one
+warmup per label and six orders. Checkpoint uses two warmups per label, 64
+same-binary pairs, then 36 balanced three-engine rounds. Bootstrap uses seed
+20261014 and 20,000 order-stratified resamples. A/A requires all four 95% intervals
+to lie within [0.98, 1/0.98]; they need not contain one, and there is no separate
+interval-width gate. The original contains-one failure remains preserved.
+Candidate/base checkpoint speed
+interval lower bounds must be at least 0.98. C++ median speed ratios must be at
+least one. No samples were added or excluded after observing results.
 
-Historical failures, diagnostic experiments, and measurement controls are
-recorded in docs/06. The results below describe the frozen runtime source
-commit `b76a975`.
+H1-H5 passed under this policy. Throughput/base ratios below 0.95 would stop
+acceptance; 0.95-0.98 is recorded as a known deviation. P99/base is recorded,
+not gated. C++ P99 is gated except for the two explicitly listed shared-hot
+four-thread updates. All device P99 values include Pending completion. Buffered
+tmpfs results describe engine overhead, not SSD, O_DIRECT or io_uring parity.
+Rust buffered reads and writes execute on the submitting thread; the configured
+eight-thread pool does not imply eight asynchronous buffered readers.
 
-## Frozen implementation `b76a975`
+### Complete matrix
 
-The runtime sources match the frozen benchmark source archive byte for byte.
-Formatting, Clippy, debug/release tests and 30 repetitions of all 11 test
-binaries passed (96 tests passed, one manual timing test ignored).
-Resident fixed-size, device, cache, compaction and all 12 variable-value gates
-passed. The nine-round checkpoint matrix also meets the numerical thresholds,
-but checkpoint acceptance remains open: all three tested affinity configurations
-failed the same-binary A/A control. Passing candidate timings do not settle that
-gate without a stable control. All raw results and frozen artifact hashes are
-retained locally; the evidence archive and its seven artifact hashes were verified.
+Speed ratios are candidate/reference; P99 ratios are duration ratios. Compaction
+speed is reference duration/candidate duration. Missing baseline fields for
+variable values are intentional. See docs/07 for historical A/A widths and
+known P99 deviations, including differences predating the review repairs.
 
-### Resident fixed-size workloads
+| Workload | Speed/C++ | P99/C++ | Speed/base | P99/base | P99 policy |
+|---|---:|---:|---:|---:|---|
+| memory/read/uniform/1 | 3.16041 | 0.53465 | 1.02501 | 0.98182 | gate |
+| memory/read/uniform/4 | 2.86489 | 0.51292 | 1.05206 | 1.02963 | gate |
+| memory/read/worker-hot/1 | 3.30748 | 0.50495 | 1.07974 | 0.98077 | gate |
+| memory/read/worker-hot/4 | 3.30888 | 0.54545 | 1.07979 | 0.98077 | gate |
+| memory/read/shared-hot/1 | 3.25963 | 0.50000 | 1.08198 | 0.98077 | gate |
+| memory/read/shared-hot/4 | 3.22042 | 0.50495 | 1.07102 | 0.98077 | gate |
+| memory/upsert/uniform/1 | 2.22460 | 0.59483 | 1.03197 | 1.01471 | gate |
+| memory/upsert/uniform/4 | 2.17431 | 0.72303 | 1.02076 | 1.04202 | gate |
+| memory/upsert/worker-hot/1 | 2.33376 | 0.57399 | 1.07669 | 1.01587 | gate |
+| memory/upsert/worker-hot/4 | 2.33360 | 0.57399 | 1.07583 | 1.01587 | gate |
+| memory/upsert/shared-hot/1 | 2.33343 | 0.57658 | 1.07614 | 1.01587 | gate |
+| memory/upsert/shared-hot/4 | 1.36777 | 1.03544 | 1.03522 | 1.01247 | record_only |
+| memory/rmw/uniform/1 | 2.11536 | 0.61607 | 1.01519 | 1.00000 | gate |
+| memory/rmw/uniform/4 | 1.85085 | 0.85802 | 0.99627 | 1.13008 | gate |
+| memory/rmw/worker-hot/1 | 2.16399 | 0.59813 | 1.02736 | 1.01587 | gate |
+| memory/rmw/worker-hot/4 | 2.15832 | 0.58879 | 1.02410 | 1.00000 | gate |
+| memory/rmw/shared-hot/1 | 2.13286 | 0.59346 | 1.02851 | 1.00794 | gate |
+| memory/rmw/shared-hot/4 | 1.32886 | 0.83489 | 1.04678 | 0.99828 | record_only |
+| disk/read/0/1 | 2.24621 | 0.19330 | 1.00701 | 1.01162 | gate |
+| disk/read/0/4 | 2.45151 | 0.30797 | 1.01854 | 0.99916 | gate |
+| disk/rmw/0/1 | 2.13777 | 0.20518 | 1.00797 | 1.01230 | gate |
+| disk/rmw/0/4 | 2.33543 | 0.29453 | 1.00543 | 1.00886 | gate |
+| hotread/hotread/0/1 | 2.36917 | 0.25550 | 1.02021 | 1.00468 | gate |
+| hotread/hotread/0/4 | 2.61467 | 0.32186 | 1.01368 | 1.00724 | gate |
+| hotread/hotread/256/1 | 2.04019 | 0.23672 | 1.00563 | 1.00775 | gate |
+| hotread/hotread/256/4 | 2.24524 | 0.34511 | 1.01100 | 1.00390 | gate |
+| varlen-resident/read/0/1 | 1.67768 | 0.99245 | - | - | gate |
+| varlen-resident/read/0/4 | 1.72920 | 0.77273 | - | - | gate |
+| varlen-resident/upsert/0/1 | 1.27681 | 0.87002 | - | - | gate |
+| varlen-resident/upsert/0/4 | 1.32923 | 0.85798 | - | - | gate |
+| varlen-resident/rmw/0/1 | 1.39045 | 0.83571 | - | - | gate |
+| varlen-resident/rmw/0/4 | 1.45629 | 0.67215 | - | - | gate |
+| varlen-disk/read/0/1 | 1.51654 | 0.56205 | - | - | gate |
+| varlen-disk/read/0/4 | 1.68610 | 0.80110 | - | - | gate |
+| varlen-disk/upsert/0/1 | 1.07417 | 0.97835 | - | - | gate |
+| varlen-disk/upsert/0/4 | 1.06955 | 0.84337 | - | - | gate |
+| varlen-disk/rmw/0/1 | 1.49566 | 0.58237 | - | - | gate |
+| varlen-disk/rmw/0/4 | 1.64629 | 0.80459 | - | - | gate |
+| compact/compact/0/4 | 3.81385 | - | 0.99464 | - | gate |
 
-| Workload | Rust/base throughput | Rust/C++ throughput | C++/Rust P99 (ns) | Rust/base cycles |
-| --- | ---: | ---: | ---: | ---: |
-| read/uniform/1 | 0.997 | 3.042 | 101/56 | 1.002 |
-| read/uniform/4 | 1.032 | 2.822 | 130/63 | 0.993 |
-| read/worker-hot/1 | 1.062 | 3.262 | 102/52 | 0.958 |
-| read/worker-hot/4 | 1.061 | 3.257 | 102/51 | 0.956 |
-| read/shared-hot/1 | 1.062 | 3.196 | 101/52 | 0.958 |
-| read/shared-hot/4 | 1.061 | 3.195 | 101/51 | 0.957 |
-| upsert/uniform/1 | 1.039 | 2.230 | 115/71 | 0.970 |
-| upsert/uniform/4 | 1.030 | 2.171 | 177/130 | 0.987 |
-| upsert/worker-hot/1 | 1.080 | 2.341 | 111/63 | 0.945 |
-| upsert/worker-hot/4 | 1.081 | 2.349 | 112/63 | 0.944 |
-| upsert/shared-hot/1 | 1.079 | 2.339 | 111/64 | 0.945 |
-| upsert/shared-hot/4 | 1.043 | 1.351 | 719/734 | 0.947 |
-| rmw/uniform/1 | 1.029 | 2.153 | 111/69 | 0.992 |
-| rmw/uniform/4 | 1.086 | 1.979 | 160/128 | 0.977 |
-| rmw/worker-hot/1 | 1.043 | 2.198 | 107/63 | 0.977 |
-| rmw/worker-hot/4 | 1.044 | 2.189 | 108/64 | 0.975 |
-| rmw/shared-hot/1 | 1.042 | 2.167 | 107/64 | 0.977 |
-| rmw/shared-hot/4 | 1.018 | 1.286 | 696/578 | 1.005 |
+### Checkpoint
 
-For `upsert/shared-hot/4`, the baseline comparison recorded 734/745 ns
-(base/Rust); the independent C++ comparison recorded 719/734 ns (C++/Rust).
-The throughput gates pass, but this workload retains a small P99 gap.
+Speed/base uses the median paired log speed ratio. Speed/C++ uses the ratio
+of the two engines' metric medians. Duration metrics are inverted.
 
-### Fixed-size device and cache workloads
+| Metric | Speed/C++ | Speed/base | Base 95% interval | A/A 95% interval |
+|---|---:|---:|---:|---:|
+| mops | 1.65846 | 1.00007 | 0.99312-1.00858 | 0.99307-1.00128 |
+| checkpoint_ns | 1.03288 | 1.00043 | 0.99897-1.00221 | 0.99957-1.00261 |
+| mops_during | 1.29880 | 0.99479 | 0.99270-0.99954 | 0.99558-1.00202 |
+| recover_ns | 1.52170 | 0.99940 | 0.99884-1.00004 | 0.99906-0.99998 |
 
-Workload labels encode operation, thread count and cache capacity in MiB.
+### Shared-hot P99 record-only cases
 
-| Workload (cache MiB) | C++ Mops/s | Rust Mops/s | Rust/base throughput | Rust/C++ throughput | C++/base/Rust P99 (ns) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| read-1-0 | 0.509 | 1.155 | 1.015 | 2.267 | 706/636/640 |
-| read-4-0 | 1.523 | 3.566 | 1.011 | 2.342 | 698/660/667 |
-| rmw-1-0 | 0.464 | 1.007 | 1.011 | 2.169 | 755/678/678 |
-| rmw-4-0 | 1.392 | 3.187 | 0.995 | 2.289 | 801/735/744 |
-| hotread-1-0 | 0.275 | 0.661 | 1.025 | 2.400 | 796/711/702 |
-| hotread-4-0 | 0.766 | 1.984 | 1.083 | 2.592 | 810/718/718 |
-| hotread-1-256 | 1.140 | 2.163 | 1.009 | 1.898 | 623/582/580 |
-| hotread-4-256 | 3.569 | 7.427 | 1.037 | 2.081 | 626/587/577 |
+These two exceptions follow docs/08 section 8. The diagnostic timing variant
+was not adopted. Their throughput gates remain enforced.
 
-### Variable-value workloads
+| Workload | Candidate P99/ns | C++ P99/ns | Base P99/ns | P99/C++ |
+|---|---:|---:|---:|---:|
+| memory/upsert/shared-hot/4 | 730.5 | 705.5 | 721.5 | 1.03544 |
+| memory/rmw/shared-hot/4 | 581.5 | 696.5 | 582.5 | 0.83489 |
 
-| Workload | C++ Mops/s | Rust Mops/s | Throughput ratio | C++/Rust P99 (ns) | P99 ratio | C++/Rust Pending |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| resident/read/1 | 6.288 | 11.115 | 1.768 | 180/147 | 0.817 | 0/0 |
-| resident/read/4 | 25.083 | 44.270 | 1.765 | 204/151 | 0.740 | 0/0 |
-| resident/upsert/1 | 3.026 | 3.870 | 1.279 | 466/412 | 0.884 | 0/0 |
-| resident/upsert/4 | 13.071 | 17.522 | 1.341 | 508/438 | 0.862 | 0/0 |
-| resident/rmw/1 | 5.217 | 7.407 | 1.420 | 393/323 | 0.822 | 0/0 |
-| resident/rmw/4 | 14.174 | 20.814 | 1.468 | 962/617 | 0.641 | 0/0 |
-| disk/read/1 | 0.212 | 0.320 | 1.514 | 787/766 | 0.973 | 1829328/1829328 |
-| disk/read/4 | 0.609 | 1.039 | 1.707 | 834/759 | 0.910 | 1829265/1829265 |
-| disk/upsert/1 | 2.131 | 2.296 | 1.077 | 738/721 | 0.977 | 0/0 |
-| disk/upsert/4 | 5.798 | 6.914 | 1.192 | 1061/833 | 0.785 | 0/0 |
-| disk/rmw/1 | 0.193 | 0.289 | 1.496 | 1162/1008 | 0.867 | 1863676/1840527 |
-| disk/rmw/4 | 0.569 | 0.938 | 1.647 | 1216/1038 | 0.854 | 1863853/1840662 |
-
-### Compaction
-
-| Metric | C++ | Baseline | Rust | Rust/base ratio | Rust/C++ ratio |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| compact (ms) | 7559.913 | 1985.308 | 1948.441 | 0.981 | 0.258 |
-
-### Checkpoint and recovery
-
-| Metric | C++ | Baseline | Rust | Rust/base ratio | Rust/C++ ratio |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| mops | 10.100 | 16.158 | 16.388 | 1.014 | 1.623 |
-| checkpoint (ms) | 492.002 | 527.573 | 469.087 | 0.889 | 0.953 |
-| mops_during | 8.163 | 10.365 | 10.179 | 0.982 | 1.247 |
-| recover (ms) | 412.473 | 262.963 | 263.741 | 1.003 | 0.639 |
-
-Checkpoint acceptance remains open because the same-binary controls failed.
-These candidate measurements alone do not override that measurement failure.
-
-### Instruction-count diagnostic
-
-Callgrind includes process initialization. The normalized difference divides
-that total difference by 400,000 operations; it is not a pure hot-loop count.
-These diagnostics supplement the throughput, cycle and latency measurements.
-
-| Workload | Baseline instructions | Rust instructions | Difference per operation |
-| --- | ---: | ---: | ---: |
-| read/uniform | 345272689 | 342493127 | -6.95 |
-| upsert/uniform | 374520010 | 370872843 | -9.12 |
-| rmw/worker-hot | 369327332 | 366478036 | -7.12 |
-
-### Checkpoint measurement controls
-
-Each control used the same frozen baseline binary for both labels, with 12
-alternating rounds. The ratios below are B/A medians. The third experiment also
-pinned the coordinator to CPU 7; that experimental affinity helper was not adopted.
-
-| Affinity configuration | Overall throughput | Checkpoint duration | Throughput during checkpoint | Recovery duration |
-| --- | ---: | ---: | ---: | ---: |
-| Per-thread CPU affinity | 1.007 | 1.105 | 1.035 | 1.001 |
-| Process CPU mask | 1.040 | 1.029 | 0.924 | 1.117 |
-| Per-thread affinity with pinned coordinator | 0.986 | 1.070 | 1.018 | 1.000 |
-
-All three controls failed. These results do not establish a scheduling root cause
-or exclude a candidate regression. Final checkpoint acceptance requires a stable
-control followed by an interleaved comparison of the same frozen binaries; the
-original thresholds remain unchanged.
+Historical results and rejected candidates are preserved in the original branch,
+backup tags and `.perf-baseline/closeout/notes/`. They are not acceptance evidence
+for a different source build. F2, real-disk/io_uring comparisons and Azure remain
+outside this closeout. No push was performed.

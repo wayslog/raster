@@ -19,10 +19,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone)]
 struct Put { key: u64, value: u64 }
-impl KeyContext<u64> for Put {
+// SAFETY: the context owns a complete, immutable integer key.
+unsafe impl KeyContext<u64> for Put {
     fn key(&self) -> &u64 { &self.key }
 }
-impl UpsertContext<u64, AtomicU64> for Put {
+// SAFETY: new values are fully initialized; shared updates use an atomic store.
+unsafe impl UpsertContext<u64, AtomicU64> for Put {
     fn put(&mut self, slot: ValueSlot<'_, AtomicU64>) {
         slot.write(AtomicU64::new(self.value));
     }
@@ -33,13 +35,16 @@ impl UpsertContext<u64, AtomicU64> for Put {
 }
 ```
 
-A session protects log memory until its next `refresh`. Call `refresh` periodically and use `complete_pending` to finish asynchronous operations. A Pending operation owns a clone of its context; consume its result through `on_complete`, not the original context. Log keys and values are bytewise-relocatable data and never run destructors. Variable types report their allocation size and initialize their inline payload through `ValueSlot`.
+A session protects log memory until its next `refresh`. Call `refresh` periodically and use `complete_pending` to finish asynchronous operations. A Pending operation owns a clone of its context; consume its result through `on_complete`, not the original context. Log keys and values are bytewise-relocatable data and never run destructors. Variable types report their allocation size and initialize their inline payload through `ValueSlot`. Key, Value, KeyContext and the mutation contexts require unsafe implementations with explicit layout, initialization and synchronization obligations.
+
+`compact` returns completed progress and a separate optional checkpoint result. Inspect `result.checkpoint` when a checkpoint was requested; a checkpoint failure does not roll back completed copying or truncation.
 
 - [Minimal fixed-size example](examples/basic.rs)
 - [Minimal variable-value example](examples/variable.rs)
 - [API and configuration contract](docs/03-功能与API契约.md)
 - [Architecture and terminology](CONTEXT.md)
 - [Implementation and acceptance plan](docs/06-变长键值与收尾计划.md)
+- [Review fixes and renewed acceptance](docs/07-审查修复与重新验收.md)
 - [Benchmark pairs and results](tools/performance/README.md)
 - [Document index](docs/README.md)
 
