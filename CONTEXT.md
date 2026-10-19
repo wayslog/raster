@@ -10,7 +10,7 @@ RasterKV is a Rust implementation of FASTER that follows the FASTER C++ contract
 
 **Serial number:** The monotonic operation identifier supplied by the caller within one session. CPR checkpoints record per-session serial numbers as the recovery boundary.
 
-**Status:** The result of an operation: `Ok`, `Pending`, `NotFound`, `Aborted`, `OutOfMemory`, `IoError`, or `Corruption`. `Pending` means the operation context was copied into the session and completes later through `complete_pending`.
+**Status:** The result of an operation: `Ok`, `Pending`, `NotFound`, `Aborted`, `OutOfMemory`, `IoError`, `Corruption`, or `InvalidArgument`. `Pending` means the operation context was copied into the session and completes later through `complete_pending`.
 
 **Epoch protection:** The light-epoch mechanism that defers reclamation (page eviction, index growth, buffer reuse) until every protected session has moved past the epoch in which the resource was retired.
 
@@ -33,5 +33,7 @@ RasterKV is a Rust implementation of FASTER that follows the FASTER C++ contract
 **Compaction:** Copying live records from the beginning of the log to the tail so that the log begin address can advance.
 
 **Compaction assistance:** A writer above a configured log budget claims a bounded page batch from the active compaction. All page owners must finish their pending copies before truncation.
+
+**Compaction result:** Completed copy and truncation progress plus a separate optional checkpoint outcome. A failed checkpoint does not undo a completed compaction.
 
 **Shift begin address:** Making the oldest part of the log invalid and reclaimable.
