@@ -229,9 +229,18 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.cpr.lock().unwrap().log_meta.sessions.push(guid);
     }
 
+    /// Whether WAIT_FLUSH may finish: the log is durable up to the final
+    /// address, or a flush failed and the checkpoint reports an I/O error.
     pub(crate) fn log_flushed(&self) -> bool {
-        let final_address = self.cpr.lock().unwrap().log_meta.final_address;
-        self.hlog.flushed_until.load() >= final_address
+        let mut run = self.cpr.lock().unwrap();
+        if self.hlog.flushed_until.load() >= run.log_meta.final_address {
+            return true;
+        }
+        if self.hlog.flush_failed() {
+            run.failed = true;
+            return true;
+        }
+        false
     }
 
     pub(crate) fn persist_session(&self, record: SessionRecord) {

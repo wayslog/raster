@@ -233,6 +233,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 Allocation::Ok(address) => return address,
                 Allocation::PageFull(page) | Allocation::Retry(page) => {
                     while !self.hlog.new_page(page) {
+                        assert!(
+                            !self.hlog.flush_failed(),
+                            "hybrid log flush failed; no frame can be freed for a new page"
+                        );
                         self.epoch.protect_and_drain(slot);
                     }
                 }

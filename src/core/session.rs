@@ -67,7 +67,8 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         let slot = store.epoch.reserve()?;
         store.epoch.protect_and_drain(&slot);
         let state = store.state.load();
-        if state.phase != Phase::Rest {
+        // Recovery stays in REST while it loads frames and rebuilds the index.
+        if state.phase != Phase::Rest || state.action == Action::Recover {
             store.epoch.release(slot);
             return None;
         }
