@@ -252,7 +252,7 @@ fn recover_prefix(threads: u64, name: &str) {
         })
     };
 
-    let store = store(&dir);
+    let mut store = store(&dir);
     let info = store.recover(token, token).expect("recovery succeeds");
     assert_eq!(info.version, 1);
     assert_eq!(store.system_state().version, 2);
@@ -454,7 +454,7 @@ fn variable_recovery(mode: &str, large: bool, threads: u64, name: &str) {
         )
     });
     drop(store);
-    let store = variable::store(&dir, false, false);
+    let mut store = variable::store(&dir, false, false);
     let info = store.recover(token, token).unwrap();
     let mut expected = std::collections::BTreeMap::new();
     for (worker, guid) in guids.into_iter().enumerate() {

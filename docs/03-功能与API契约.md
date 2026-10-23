@@ -39,12 +39,17 @@ DeleteContext 不携带 V 参数，因此用 None 表达固定头默认值。变
 | `compact(until, shift_begin, threads, checkpoint)` | 返回 `Result<CompactionResult, Status>`；`until` 和 `begin_address` 表示已完成进度，`checkpoint` 单独表示未请求／成功 token／失败状态。检查点失败不会撤销复制或截断 |
 | `num_active_sessions()` | 观察活跃业务会话数量，不计扫描等内部 helper |
 | `index_distribution()` | 返回直方图的 Result；无 epoch 槽时返回 OutOfMemory。统计已发布且地址有效的链头条目，是并发观测值，不是逻辑键数 |
+| `recover(&mut self, index_token, log_token)` | 独占恢复新建实例；已有日志内容或延迟任务仍持有页存储时返回 Aborted。不能与会话或扫描同时使用 |
 
 `StoreConfig::log_size_budget=0` 默认关闭写侧协作；非零时，超过预算的 Upsert/RMW 会参与正在进行的压缩。它不是无条件拒绝写入的硬容量上限，未启动压缩时不会自动删除数据。旧的扫描版 C++ Compact 不实现，采用 CompactWithLookup 的存活判断。
 
 非零日志预算会使该 store 的会话持续使用配置路径，即使当前处于 REST、未超预算或没有压缩任务；不会回到无缓存且预算为零的 plain 快路径。已有用户 Pending 的会话跳过写侧协助，避免在 Upsert/RMW 内触发其他请求的回调。每批协助只等待本批拷贝，不等待 CPR／GC 回到 Rest。
 
 压缩 `until` 落在记录内部时，在任何复制前返回 InvalidArgument；复制或扫描失败仍不会截断。协助扫描复用现有会话的 epoch 保护；工作线程无法取得会话时由协调器接手。`try_start_session` 在状态机非 Rest 或槽满时返回 None；独立扫描无可用槽时由 `next_page` 返回 OutOfMemory，可稍后重试。自定义 Device 必须返回请求长度的字节；短读会终止为 I/O 错误，不会不断重读同一前缀。缓存页小于记录时跳过缓存插入。
+
+恢复调用方应先用 `let mut store` 创建实例，恢复成功后再共享实例、启动会话或扫描。元数据读取失败且尚未加载页面时可以重试；部分页面加载后失败必须重建实例。`HybridLog::load_page` 和 `recovery_reset` 不再公开，它们要求独占页存储，不能用来覆盖正在使用的日志。检查点地址必须符合当前页几何且有序，否则恢复返回 Corruption。
+
+`HybridLog::shift_read_only_to` 在发布边界前检查地址：页内偏移必须小于配置页大小，不带读缓存标记，且不超过当前 tail；无效请求会 panic，日志边界不变。页末地址使用下一页偏移 0 的规范形式。
 
 ### TOML 配置
 

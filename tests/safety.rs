@@ -3,8 +3,7 @@ use raster::core::address::Address;
 use raster::core::device::{Device, NullDevice, ReadCallback, WriteCallback};
 use raster::core::epoch::LightEpoch;
 use raster::core::hlog::{HybridLog, LogConfig};
-use raster::core::*;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 fn config() -> LogConfig {
@@ -102,31 +101,50 @@ fn out_of_page_pointer_is_safe_to_compute_without_dereferencing() {
 }
 
 #[test]
-fn scanned_atomic_values_can_be_shared_and_updated() {
-    let store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
-        index_buckets: 16,
-        log: config(),
-        ..Default::default()
-    });
-    let mut bytes = vec![0u8; 88];
-    bytes[64..72].copy_from_slice(&(1u64 << 48).to_ne_bytes());
-    bytes[72..80].copy_from_slice(&7u64.to_ne_bytes());
-    bytes[80..88].copy_from_slice(&42u64.to_ne_bytes());
-    store.hlog.load_page(0, &bytes);
-    let begin = Address::new(0, 64);
-    let end = Address::new(0, 88);
-    store.hlog.recovery_reset(begin, begin, end);
-    let mut scanner = store.scan(begin, end);
-    let mut page = scanner.next_page().unwrap().unwrap();
-    let mut records = page.records();
-    let record = records.next().unwrap();
-    assert_eq!(record.size(), 24);
-    assert_eq!(*record.key, 7);
-    let value = record.value.unwrap();
-    value.store(99, Ordering::Relaxed);
-    std::thread::scope(|scope| {
-        scope.spawn(|| record.value.unwrap().fetch_add(1, Ordering::Relaxed));
-        scope.spawn(|| value.fetch_add(1, Ordering::Relaxed));
-    });
-    assert_eq!(value.load(Ordering::Relaxed), 101);
+fn invalid_read_only_boundaries_are_rejected_before_publication() {
+    let epoch = Arc::new(LightEpoch::new());
+    let slot = epoch.reserve().unwrap();
+    epoch.protect(&slot);
+    let device = Arc::new(DeferredWrites::default());
+    let log = HybridLog::new(config(), epoch.clone(), device.clone());
+    let _ = log.allocate(4096 - 64);
+    assert!(log.new_page(0));
+    let _ = log.allocate(512);
+    let tail = log.tail();
+    assert_eq!(tail, Address::new(1, 512));
+    let before = (
+        log.read_only.load(),
+        log.safe_read_only.load(),
+        log.flushed_until.load(),
+    );
+    let before_epoch = epoch.current_epoch();
+    for address in [
+        Address::new(0, 4097),
+        Address::new(0, 4096),
+        Address::new(1, 520),
+        Address::new(2, 0),
+        tail.to_read_cache(),
+    ] {
+        // Keep the epoch protected so a missing check fails without executing
+        // the unsafe flush being tested on the unfixed implementation.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            log.shift_read_only_to(address);
+        }));
+        assert!(
+            result.is_err(),
+            "invalid read-only boundary was accepted: {address:?}"
+        );
+        assert_eq!(
+            (
+                log.read_only.load(),
+                log.safe_read_only.load(),
+                log.flushed_until.load()
+            ),
+            before
+        );
+        assert_eq!(epoch.current_epoch(), before_epoch);
+        assert_eq!(log.tail(), tail);
+        assert_eq!(device.writes.load(Ordering::Relaxed), 0);
+    }
+    epoch.release(slot);
 }

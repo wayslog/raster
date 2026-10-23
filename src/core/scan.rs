@@ -285,3 +285,44 @@ impl<K: Key, V: Value> ScanPage<K, V> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::StoreConfig;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn scanned_atomic_values_can_be_shared_and_updated() {
+        let mut store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
+            index_buckets: 16,
+            log: crate::core::hlog::LogConfig {
+                page_bits: 12,
+                memory_pages: 4,
+                mutable_fraction: 0.5,
+            },
+            ..Default::default()
+        });
+        let mut bytes = vec![0u8; 88];
+        bytes[64..72].copy_from_slice(&(1u64 << 48).to_ne_bytes());
+        bytes[72..80].copy_from_slice(&7u64.to_ne_bytes());
+        bytes[80..88].copy_from_slice(&42u64.to_ne_bytes());
+        store.hlog.load_page(0, &bytes);
+        let begin = Address::new(0, 64);
+        let end = Address::new(0, 88);
+        store.hlog.recovery_reset(begin, begin, end);
+        let mut scanner = store.scan(begin, end);
+        let mut page = scanner.next_page().unwrap().unwrap();
+        let mut records = page.records();
+        let record = records.next().unwrap();
+        assert_eq!(record.size(), 24);
+        assert_eq!(*record.key, 7);
+        let value = record.value.unwrap();
+        value.store(99, Ordering::Relaxed);
+        std::thread::scope(|scope| {
+            scope.spawn(|| record.value.unwrap().fetch_add(1, Ordering::Relaxed));
+            scope.spawn(|| value.fetch_add(1, Ordering::Relaxed));
+        });
+        assert_eq!(value.load(Ordering::Relaxed), 101);
+    }
+}
