@@ -46,6 +46,23 @@ pub enum Allocation {
 #[repr(align(128))]
 struct Padded<T>(T);
 
+/// An address-ordered log with epoch-protected page storage.
+/// Raw recovery writes and boundary resets are internal operations.
+///
+/// ```compile_fail
+/// use raster::core::hlog::HybridLog;
+/// fn overwrite(log: &mut HybridLog) {
+///     log.load_page(0, &[0; 64]);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use raster::core::{address::Address, hlog::HybridLog};
+/// fn reset(log: &mut HybridLog) {
+///     let start = Address::new(0, 64);
+///     log.recovery_reset(start, start, start);
+/// }
+/// ```
 pub struct HybridLog {
     storage: Arc<HybridLogStorage>,
     epoch: Arc<LightEpoch>,
@@ -82,6 +99,8 @@ pub struct HybridLogStorage {
     pending_flushes: AtomicU64,
     /// Set when a flush write fails; the failed range never becomes flushed.
     flush_failed: std::sync::atomic::AtomicBool,
+    /// Recovery may overwrite a fresh log only once, including partial loads.
+    recovery_written: bool,
 }
 
 // SAFETY: frames are raw page memory shared under epoch protection; all
@@ -138,6 +157,7 @@ impl HybridLog {
                 head_order: Default::default(),
                 pending_flushes: AtomicU64::new(0),
                 flush_failed: Default::default(),
+                recovery_written: false,
             }),
             epoch,
             device,
@@ -368,29 +388,76 @@ impl HybridLog {
         self.frames.len() as u64
     }
 
-    /// Copies recovered bytes into the frame of `page`, starting at offset 0.
-    /// Only for recovery, before any session exists.
-    pub fn load_page(&self, page: u64, bytes: &[u8]) {
+    /// Whether a fresh log can be restored without readers, queued actions or
+    /// I/O retaining its storage. The owning store is exclusively borrowed.
+    pub(crate) fn recovery_ready(&mut self) -> bool {
+        let start = Address::new(0, FIRST_VALID_OFFSET);
+        if self.tail() != start
+            || [
+                &self.begin,
+                &self.head,
+                &self.safe_head,
+                &self.read_only,
+                &self.safe_read_only,
+                &self.flushed_until,
+            ]
+            .iter()
+            .any(|boundary| boundary.load() != start)
+        {
+            return false;
+        }
+        Arc::get_mut(&mut self.storage).is_some_and(|storage| {
+            !storage.recovery_written && !storage.flush_failed.load(Ordering::Acquire)
+        })
+    }
+
+    /// Whether the address uses this log's page geometry and no cache tag.
+    pub(crate) fn valid_address(&self, address: Address) -> bool {
+        address.page() <= Address::MAX_PAGE && address.offset() < self.page_size
+    }
+
+    /// Copies recovered bytes into exclusively owned page storage. Only the
+    /// store's exclusive recovery path may overwrite initialized log records.
+    pub(crate) fn load_page(&mut self, page: u64, bytes: &[u8]) {
         assert!(bytes.len() as u64 <= self.page_size);
-        let frame = self.frames[(page & self.frame_mask) as usize];
-        // SAFETY: no session exists during recovery, so the frame is unshared.
+        assert!(page <= Address::MAX_PAGE);
+        let storage =
+            Arc::get_mut(&mut self.storage).expect("recovery requires exclusive log storage");
+        let frame = storage.frames[(page & storage.frame_mask) as usize];
+        storage.recovery_written = true;
+        // SAFETY: the store excludes sessions/scanners via &mut self, and the
+        // unique Arc excludes deferred actions and I/O that could use frames.
+        // The source is initialized, disjoint and bounded by the page size.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), frame, bytes.len()) };
     }
 
     /// Restores the in-memory window after recovery (FASTER `RecoveryReset`):
     /// everything below `tail` is durable and read-only.
-    pub fn recovery_reset(&self, begin: Address, head: Address, tail: Address) {
-        for boundary in [&self.begin, &self.head, &self.safe_head] {
-            boundary.store(if std::ptr::eq(boundary, &self.begin) {
+    pub(crate) fn recovery_reset(&mut self, begin: Address, head: Address, tail: Address) {
+        assert!(begin <= head && head <= tail);
+        assert!(
+            [begin, head, tail]
+                .into_iter()
+                .all(|address| self.valid_address(address))
+        );
+        let storage =
+            Arc::get_mut(&mut self.storage).expect("recovery requires exclusive log storage");
+        storage.recovery_written = true;
+        for boundary in [&storage.begin, &storage.head, &storage.safe_head] {
+            boundary.store(if std::ptr::eq(boundary, &storage.begin) {
                 begin
             } else {
                 head
             });
         }
-        for boundary in [&self.read_only, &self.safe_read_only, &self.flushed_until] {
+        for boundary in [
+            &storage.read_only,
+            &storage.safe_read_only,
+            &storage.flushed_until,
+        ] {
             boundary.store(tail);
         }
-        self.tail.0.store(
+        storage.tail.0.store(
             (tail.page() << TAIL_OFFSET_BITS) | tail.offset(),
             Ordering::Release,
         );
@@ -430,7 +497,16 @@ impl HybridLog {
 
     /// Makes everything below `address` read-only. Once every session has
     /// observed the shift, the newly read-only range is flushed.
+    ///
+    /// # Panics
+    /// Before changing state, if the offset is outside the configured page,
+    /// the address carries a cache tag, or it is beyond the current tail.
+    /// A page-end boundary must use offset zero on the following page.
     pub fn shift_read_only_to(&self, address: Address) {
+        assert!(
+            self.valid_address(address) && address <= self.tail(),
+            "read-only boundary must be within the configured log page and tail"
+        );
         if self.read_only.monotonic_update(address) {
             let log = self.storage.clone();
             let device = self.device.clone();
@@ -673,6 +749,68 @@ mod tests {
             Arc::new(crate::core::device::NullDevice),
         );
         (epoch, log)
+    }
+
+    #[test]
+    fn recovery_mutation_rejects_deferred_and_inflight_flushes() {
+        use crate::core::device::{ReadCallback, WriteCallback};
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct DeferredWrite(Mutex<Option<WriteCallback>>);
+
+        impl Device for DeferredWrite {
+            unsafe fn write_async(&self, _: u64, _: *const u8, _: usize, done: WriteCallback) {
+                assert!(self.0.lock().unwrap().replace(done).is_none());
+            }
+
+            fn read_async(&self, _: u64, _: usize, _: ReadCallback) {
+                panic!("unexpected read");
+            }
+        }
+
+        let epoch = Arc::new(LightEpoch::new());
+        let slot = epoch.reserve().unwrap();
+        epoch.protect(&slot);
+        let device = Arc::new(DeferredWrite::default());
+        let mut log = HybridLog::new(
+            LogConfig {
+                page_bits: 12,
+                memory_pages: 4,
+                mutable_fraction: 0.5,
+            },
+            epoch.clone(),
+            device.clone(),
+        );
+        let begin = log.begin.load();
+        let _ = log.allocate(448);
+        let tail = log.tail();
+        log.shift_read_only_to(tail);
+        assert!(device.0.lock().unwrap().is_none());
+        for _ in 0..2 {
+            let overwritten = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                log.load_page(0, &[7; 512]);
+            }));
+            assert!(overwritten.is_err());
+            let reset = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                log.recovery_reset(begin, begin, begin);
+            }));
+            assert!(reset.is_err());
+            assert_eq!(log.tail(), tail);
+            assert_eq!(log.read_only.load(), tail);
+            assert_eq!(log.flushed_until.load(), begin);
+            // SAFETY: the page is resident and initialized; neither rejected
+            // recovery operation may modify it while the flush owns it.
+            assert_eq!(unsafe { *log.get(begin) }, 0);
+            epoch.protect_and_drain(&slot);
+            assert!(device.0.lock().unwrap().is_some());
+        }
+        device.0.lock().unwrap().take().unwrap()(Ok(()));
+        assert_eq!(log.flushed_until.load(), tail);
+        epoch.release(slot);
+        // Once both the action and callback have released their references,
+        // the internal helper can access the exclusively owned storage.
+        log.load_page(0, &[7; 512]);
     }
 
     #[test]

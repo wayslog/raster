@@ -25,8 +25,32 @@ const INVALID_BIT: u64 = 1 << 61;
 impl<K: Key, V: Value> FasterKv<K, V> {
     /// Restores a freshly created store, built on the same log device, from
     /// an index checkpoint and a hybrid-log checkpoint with the same version.
-    pub fn recover(&self, index_token: Guid, log_token: Guid) -> Result<RecoveryInfo, Status> {
+    /// Recovery requires exclusive access, including exclusion of scanners.
+    ///
+    /// ```compile_fail
+    /// use raster::core::{FasterKv, StoreConfig, guid::Guid};
+    /// let mut store = FasterKv::<u64, u64>::new(StoreConfig::default());
+    /// let session = store.start_session();
+    /// let _ = store.recover(Guid::new(), Guid::new());
+    /// drop(session);
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use raster::core::{FasterKv, StoreConfig, guid::Guid};
+    /// let mut store = FasterKv::<u64, u64>::new(StoreConfig::default());
+    /// let scanner = store.scan(store.hlog.begin.load(), store.hlog.tail());
+    /// let _ = store.recover(Guid::new(), Guid::new());
+    /// drop(scanner);
+    /// ```
+    /// Returns Aborted for a used log or storage still retained by deferred
+    /// work. After a partial page load fails, retry with a fresh store.
+    pub fn recover(&mut self, index_token: Guid, log_token: Guid) -> Result<RecoveryInfo, Status> {
         let dirs = self.dirs.as_ref().ok_or(Status::IoError)?;
+        let index_dir = dirs.index(index_token);
+        let log_dir = dirs.log(log_token);
+        if !self.hlog.recovery_ready() {
+            return Err(Status::Aborted);
+        }
         let rest = self.state.load();
         let recovering = rest.start(Action::Recover);
         if rest.phase != Phase::Rest
@@ -35,7 +59,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         {
             return Err(Status::Aborted);
         }
-        let result = self.recover_inner(dirs.index(index_token), dirs.log(log_token));
+        let result = self.recover_inner(index_dir, log_dir);
         let version = result
             .as_ref()
             .map_or(rest.version, |info| info.version + 1);
@@ -44,7 +68,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     fn recover_inner(
-        &self,
+        &mut self,
         index_dir: std::path::PathBuf,
         log_dir: std::path::PathBuf,
     ) -> Result<RecoveryInfo, Status> {
@@ -52,6 +76,18 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let index_meta = IndexMetadata::read(&index_dir).map_err(io)?;
         let log_meta = LogMetadata::read(&log_dir).map_err(io)?;
         if index_meta.version != log_meta.version || log_meta.use_snapshot_file {
+            return Err(Status::Corruption);
+        }
+        let begin = index_meta.log_begin_address;
+        let start = index_meta.checkpoint_start_address;
+        let end = log_meta.final_address;
+        if ![begin, start, end]
+            .into_iter()
+            .all(|address| self.hlog.valid_address(address))
+            || begin < Address::new(0, super::hlog::FIRST_VALID_OFFSET)
+            || begin > start
+            || start > end
+        {
             return Err(Status::Corruption);
         }
         let mut tokens = std::collections::HashMap::new();
@@ -65,8 +101,6 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.index
             .read_checkpoint(&index_dir.join("ht.dat"), &index_dir.join("ofb.dat"))
             .map_err(|_| Status::Corruption)?;
-        let start = index_meta.checkpoint_start_address;
-        let end = log_meta.final_address;
         let mut page = start.page();
         while Address::new(page, 0) < end {
             self.recover_page(page, start, end, log_meta.version)?;
@@ -200,8 +234,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     /// Loads the last pages into memory and resets the log boundaries.
-    fn restore_hybrid_log(&self, begin: Address, tail: Address) -> Result<(), Status> {
-        if begin > tail {
+    fn restore_hybrid_log(&mut self, begin: Address, tail: Address) -> Result<(), Status> {
+        if begin > tail || !self.hlog.valid_address(begin) || !self.hlog.valid_address(tail) {
             return Err(Status::Corruption);
         }
         if begin == tail {
@@ -263,7 +297,7 @@ mod tests {
     #[test]
     fn empty_recovery_window_never_reads_a_truncated_segment() {
         let device = Arc::new(NoReads::default());
-        let store = FasterKv::<u64, AtomicU64>::with_device(
+        let mut store = FasterKv::<u64, AtomicU64>::with_device(
             StoreConfig {
                 index_buckets: 16,
                 log: LogConfig {
@@ -286,12 +320,18 @@ mod tests {
             store.restore_hybrid_log(Address::new(33, 0), Address::new(32, 0)),
             Err(Status::Corruption)
         );
+        for boundary in [Address::new(0, 4097), Address::new(1, 0).to_read_cache()] {
+            assert_eq!(
+                store.restore_hybrid_log(boundary, boundary),
+                Err(Status::Corruption)
+            );
+        }
     }
 
     #[test]
     fn recovery_excludes_other_actions_and_new_sessions() {
         let dir = std::env::temp_dir().join(format!("raster-recover-excl-{}", std::process::id()));
-        let store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
+        let mut store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
             index_buckets: 64,
             checkpoint_dir: Some(dir),
             ..StoreConfig::default()
@@ -309,5 +349,48 @@ mod tests {
         assert!(store.try_start_session().is_none());
         store.state.store(SystemState::rest(1));
         assert!(store.try_start_session().is_some());
+    }
+
+    #[test]
+    fn recovery_rejects_used_and_partially_restored_logs() {
+        let dir = std::env::temp_dir().join(format!("raster-recover-fresh-{}", Guid::new()));
+        let config = StoreConfig {
+            index_buckets: 16,
+            log: LogConfig {
+                page_bits: 12,
+                memory_pages: 4,
+                mutable_fraction: 0.5,
+            },
+            checkpoint_dir: Some(dir),
+            ..Default::default()
+        };
+        let mut store = FasterKv::<u64, u64>::new(config.clone());
+        // Metadata errors before a page load still allow a corrected retry.
+        for _ in 0..2 {
+            assert_eq!(
+                store.recover(Guid::new(), Guid::new()).err(),
+                Some(Status::IoError)
+            );
+        }
+        let _ = store.hlog.allocate(8);
+        assert_eq!(
+            store.recover(Guid::new(), Guid::new()).err(),
+            Some(Status::Aborted)
+        );
+
+        for reset in [false, true] {
+            let mut store = FasterKv::<u64, u64>::new(config.clone());
+            let start = store.hlog.tail();
+            if reset {
+                store.hlog.recovery_reset(start, start, start);
+            } else {
+                store.hlog.load_page(0, &[0; 64]);
+            }
+            assert_eq!(store.hlog.tail(), start);
+            assert_eq!(
+                store.recover(Guid::new(), Guid::new()).err(),
+                Some(Status::Aborted)
+            );
+        }
     }
 }

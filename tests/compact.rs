@@ -525,7 +525,7 @@ fn compaction_checkpoint_recovers_variable_values() {
             .expect("checkpoint succeeds")
     };
     drop(store);
-    let store = variable::store(&dir, false, false);
+    let mut store = variable::store(&dir, false, false);
     store.recover(token, token).unwrap();
     let mut session = store.start_session();
     for id in 0..600 {

@@ -86,7 +86,7 @@ fn main() {
     let keys: u64 = args[2].parse().unwrap();
     let dir = std::path::PathBuf::from(&args[4]);
     let device = Arc::new(FileDevice::open_with(dir.join("log"), 30, 8, false).unwrap());
-    let store = FasterKv::<u64, AtomicU64>::with_device(
+    let mut store = FasterKv::<u64, AtomicU64>::with_device(
         StoreConfig {
             index_buckets: 1 << 22,
             filepath: None,

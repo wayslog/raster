@@ -311,7 +311,7 @@ fn checkpoint_writes_log_addresses_for_cached_entries() {
         token
     };
     drop(store);
-    let store = self::store(&dir, 1 << 10);
+    let mut store = self::store(&dir, 1 << 10);
     store.recover(token, token).expect("recovery succeeds");
     let mut session = store.start_session();
     for key in 0..KEYS {

@@ -122,7 +122,7 @@ fn checkpoint_after_truncation(retained: u64) {
     drop(session);
     drop(store);
 
-    let recovered = make_store();
+    let mut recovered = make_store();
     recovered
         .recover(token, token)
         .expect("valid checkpoint after GC");
