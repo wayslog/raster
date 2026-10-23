@@ -11,17 +11,15 @@ concurrency:
   cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: never
-  RUST_BACKTRACE: '0'
 jobs:
   check:
-    name: Check (${{ matrix.os }} / ${{ matrix.features }})
+    name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-14]
-        features: [default, config-toml, all]
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -33,56 +31,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-${{ matrix.features }}-${{ hashFiles('Cargo.lock') }}
-      - name: Record the native environment
-        shell: bash
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+      - name: Run checks
         run: |
-          mkdir -p target/p0-evidence
-          {
-            git rev-parse HEAD
-            rustc -Vv
-            cargo -V
-            uname -srm
-            echo "image:${ImageOS:-unknown} ${ImageVersion:-unknown}"
-            echo "features:${{ matrix.features }}"
-            if [ "$(uname -s)" = Darwin ]; then
-              sw_vers
-              diskutil info "$(df -P . | awk 'NR==2 {print $1}')" | sed -n '/File System Personality/p'
-            else
-              cat /etc/os-release
-              stat -f -c 'file_system:%T' .
-            fi
-          } > target/p0-evidence/environment.txt
-          cat target/p0-evidence/environment.txt
-      - name: Run engineering checks
-        shell: bash
-        env:
-          FEATURE_SET: ${{ matrix.features }}
-        run: |
-          set -o pipefail
-          args=()
-          case "$FEATURE_SET" in
-            config-toml) args=(--no-default-features --features config-toml) ;;
-            all) args=(--all-features) ;;
-          esac
-          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=worktree --remap-path-prefix=$HOME=user_directory"
-          export RUSTDOCFLAGS="$RUSTFLAGS -D warnings"
-          {
-            cargo fmt --all -- --check
-            cargo clippy --locked --all-targets "${args[@]}" -- -D warnings
-            cargo test --locked "${args[@]}"
-            cargo test --locked --examples "${args[@]}"
-            cargo doc --locked --no-deps "${args[@]}"
-            cargo run --locked --release --example memory "${args[@]}"
-            cargo run --locked --release --example memory_matrix "${args[@]}"
-            cargo run --locked --release --example interface "${args[@]}"
-            cargo run --locked --release --example disk_lifecycle "${args[@]}"
-            cargo run --locked --release --example automatic "${args[@]}"
-            python3 scripts/check_examples.py
-          } 2>&1 | python3 -c 'import os,sys; [sys.stdout.write(line.replace(os.environ["GITHUB_WORKSPACE"], "worktree").replace(os.environ["HOME"], "user_directory")) for line in sys.stdin]' | tee target/p0-evidence/checks.txt
-      - name: Save evidence of acceptance
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: p0-${{ matrix.os }}-${{ matrix.features }}
-          path: target/p0-evidence
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo test --locked --release

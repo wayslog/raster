@@ -1,0 +1,11 @@
+diff --git a/cc/src/core/faster.h b/cc/src/core/faster.h
+--- a/cc/src/core/faster.h
++++ b/cc/src/core/faster.h
+@@ -1207,6 +1207,6 @@ inline void FasterKv<K, V, D, H, OH>::CompleteRetryRequests(ExecutionContext& context) {
+   // If we can't complete a request, it will be pushed back onto the deque. Retry each request
+   // only once.
+-  while (!context.retry_requests.empty()) {
++  for (size_t remaining = context.retry_requests.size(); remaining > 0; --remaining) {
+     CallbackContext<pending_context_t> pending_context{ context.retry_requests.front() };
+     context.retry_requests.pop_front();
+     // Issue retry command

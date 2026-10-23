@@ -1,5 +1,96 @@
 # C++ 实现的功能与 API 契约
 
+## 当前 RasterKV API
+
+Rust 入口为 `raster::core::*`。这部分描述当前实现；后面的 C++ API 调查保留历史证据，不代表 Rust 已提供 F2 或全部设备后端。
+
+### 键、值和上下文
+
+- `Key: Eq + Send + Sync + 'static`：`hash()` 必需；`size()` 默认返回固定头大小。键不再要求 `Copy`。尺寸和字节在发布后不可变。
+- `Value: Send + Sync + 'static`：`size()` 默认返回固定头大小；`initialize_empty(ValueSlot)` 必需，为墓碑和放弃的分配写入合法、尺寸等于 slot 的值。常用整数、浮点数及 32/64 位原子整数有显式实现；不再提供 blanket implementation。
+- Key/Value 是可按字节搬移的日志数据，不会执行 Drop，不得持有堆资源、引用或恢复后失效的指针。size 方法只读取固定头，不能依赖尾部已到齐。当前对齐上限为 8 字节，完整记录必须不超过一页。
+- `KeyContext<K>` 提供 `key()`、`key_hash()`、`key_size()`、`key_equals()` 和 unsafe `write_key(dst)`。默认 deep copy 要求 key 引用后确有 key_size 字节；浅键必须覆盖 deep write、hash 和 equality。请求完成前，键、哈希和等值判断必须保持一致，包括重试和 Pending 副本。Pending 的 Clone 必须拥有全部请求数据。
+- `ValueSlot<'_,V>` 提供 `write(V)`、`len()`、`as_mut_ptr()`。原地初始化必须写入全部会被读取的字节，且初始化后的 `V::size()` 必须等于预留长度。
+
+Key、Value、KeyContext、UpsertContext、RmwContext、DeleteContext 均为 **unsafe trait**。实现者必须通过 `unsafe impl` 承诺记录布局、尺寸稳定性、完整初始化、Pending 副本所有权和原地并发安全；固定头必须能承载任意位模式，分级磁盘校验才可以先检查尺寸。只将 Key/Value 改为 unsafe 不足以约束上下文漏写 `put` 或伪造 `key_size`。ReadContext 的读取／完成回调仍为安全方法；正常使用 Session 不要求 unsafe。
+
+| 上下文 | 新记录初始化 | 现有记录访问 |
+| --- | --- | --- |
+| `ReadContext<K,V>` | 无 | `get(&V)` / `get_atomic(&V)` |
+| `UpsertContext<K,V>` | `value_size()`、`put(ValueSlot<V>)` | `put_atomic(&V) -> bool` |
+| `RmwContext<K,V>` | `initial_value_size()`、`copy_value_size(&V)`、`rmw_initial(slot)`、`rmw_copy(&V,slot)` | `rmw_atomic(&V) -> bool` |
+| `DeleteContext<K>` | `value_size() -> Option<u32>`；None 使用 V 固定头大小 | 由引擎写墓碑 |
+
+DeleteContext 不携带 V 参数，因此用 None 表达固定头默认值。变长上下文可返回 Some；Value::initialize_empty 负责写入准确的分配尺寸。所有上下文均继承 KeyContext，并有 `on_complete(Status)`。
+
+`put_atomic` / `rmw_atomic` 返回 false 时追加记录。并发的可变长值应在尺寸不足时用 replaced 位冻结旧值，再允许其他线程复制；仅返回 false 而继续允许原地更新会丢失更新。示例见测试共用的 generation lock。缩短逻辑长度不能缩小记录的分配尺寸。
+
+### 会话和维护
+
+默认 `read/upsert/rmw/delete` 保持原契约；Pending 请求复制上下文并由 `complete_pending` 完成，原上下文不会自动得到副本的输出。
+
+上下文回调必须正常返回，不能 panic。当前不提供回调展开后的会话恢复；在 Pending 回调中 panic 可能使析构等待无法结束。
+
+| 入口 | 行为 |
+| --- | --- |
+| `read_with_options(ctx, serial, ReadOptions)` | `abort_if_tombstone=true` 时匹配墓碑返回 Aborted；真正不存在仍为 NotFound |
+| `rmw_with_options(ctx, serial, RmwOptions)` | `create_if_not_exists=false` 时不创建缺失或已删除键 |
+| `delete_with_options(ctx, serial, DeleteOptions)` | `force_tombstone=true` 时为索引中不存在的键也追加墓碑 |
+| `compact(until, shift_begin, threads, checkpoint)` | 返回 `Result<CompactionResult, Status>`；`until` 和 `begin_address` 表示已完成进度，`checkpoint` 单独表示未请求／成功 token／失败状态。检查点失败不会撤销复制或截断 |
+| `num_active_sessions()` | 观察活跃业务会话数量，不计扫描等内部 helper |
+| `index_distribution()` | 返回直方图的 Result；无 epoch 槽时返回 OutOfMemory。统计已发布且地址有效的链头条目，是并发观测值，不是逻辑键数 |
+| `recover(&mut self, index_token, log_token)` | 独占恢复新建实例；已有日志内容或延迟任务仍持有页存储时返回 Aborted。不能与会话或扫描同时使用 |
+
+`StoreConfig::log_size_budget=0` 默认关闭写侧协作；非零时，超过预算的 Upsert/RMW 会参与正在进行的压缩。它不是无条件拒绝写入的硬容量上限，未启动压缩时不会自动删除数据。旧的扫描版 C++ Compact 不实现，采用 CompactWithLookup 的存活判断。
+
+非零日志预算会使该 store 的会话持续使用配置路径，即使当前处于 REST、未超预算或没有压缩任务；不会回到无缓存且预算为零的 plain 快路径。已有用户 Pending 的会话跳过写侧协助，避免在 Upsert/RMW 内触发其他请求的回调。每批协助只等待本批拷贝，不等待 CPR／GC 回到 Rest。
+
+压缩 `until` 落在记录内部时，在任何复制前返回 InvalidArgument；复制或扫描失败仍不会截断。协助扫描复用现有会话的 epoch 保护；工作线程无法取得会话时由协调器接手。`try_start_session` 在状态机非 Rest 或槽满时返回 None；独立扫描无可用槽时由 `next_page` 返回 OutOfMemory，可稍后重试。自定义 Device 必须返回请求长度的字节；短读会终止为 I/O 错误，不会不断重读同一前缀。缓存页小于记录时跳过缓存插入。
+
+恢复调用方应先用 `let mut store` 创建实例，恢复成功后再共享实例、启动会话或扫描。元数据读取失败且尚未加载页面时可以重试；部分页面加载后失败必须重建实例。`HybridLog::load_page` 和 `recovery_reset` 不再公开，它们要求独占页存储，不能用来覆盖正在使用的日志。检查点的 begin/start/end 地址必须符合当前页几何、按 8 字节对齐且有序，否则在读取索引和日志页前返回 Corruption。初始空库的成功检查点可以恢复：空重放区间不读取尚未写入的日志页，恢复后仍可继续会话并写入。
+
+扫描仍将范围夹紧到日志 begin 和 safe_read_only，`Address::MAX` 可用作上界。夹紧后的非空范围若包含超出配置页大小的偏移，`next_page` 返回 InvalidArgument，且不复制内存、不提交磁盘读取；页末必须表示为下一页偏移 0。空范围返回 None。单次读取的长度按当前页剩余空间计算，不从未校验的设备偏移相减推导。
+
+`HybridLog::shift_read_only_to` 在发布边界前检查地址：页内偏移必须小于配置页大小，不带读缓存标记，且不超过当前 tail；无效请求会 panic，日志边界不变。页末地址使用下一页偏移 0 的规范形式。
+
+### TOML 配置
+
+`StoreConfig::from_toml_str` / `from_toml_file` 返回 Result；接受 `[faster.hlog]` 等带 faster 前缀的格式，也接受顶层 `[hlog]`。未知字段、F2、越界尺寸和非法索引/日志几何配置会返回错误。
+
+`filepath` 必填，空字符串明确选择内存设备；hlog.in_mem_size_mb 和 index.table_size 必填。出现 compaction 表时 hlog_size_budget_mb 必填，启用时预算不能小于内存窗口。未启用读缓存时不检查其几何参数。TOML 和直接构造配置的 pre_allocate 默认值均为 false；实际仍沿用 eager allocation。内存窗口最多覆盖日志地址空间的 2^22 个 32 MiB 页，这只是格式上限，不保证宿主内存足够。
+
+```toml
+[faster]
+filepath = "store-data"
+checkpoint_dir = "checkpoints"
+[faster.index]
+table_size = 1024
+[faster.hlog]
+in_mem_size_mb = 256
+mutable_fraction = 0.9
+pre_allocate = true
+[faster.hlog.compaction]
+enabled = true
+hlog_size_budget_mb = 1024
+trigger_pct = 0.8
+compact_pct = 0.2
+max_compacted_size_mb = 512
+check_interval_ms = 250
+num_threads = 4
+[faster.read_cache]
+enabled = false
+in_mem_size_mb = 256
+mutable_fraction = 0.9
+pre_allocate = true
+```
+
+`FasterKv::open(config)` 使用 filepath 打开本地 buffered 文件设备，空路径选择 NullDevice；`new` 和 `with_device` 保留显式设备选择。配置中的 read_cache 自动应用。后台压缩采用显式生命周期：构造 Arc<Store>，将解析所得的 auto_compaction 配置传给 spawn_auto_compaction 并保存返回的句柄；丢弃句柄会停止并等待后台线程。
+
+配置文件的内存尺寸为 MiB，页为 32 MiB；窗口必须为至少 128 MiB 的二次幂。pre_allocate 目前作为配置提示保留，两个取值都在构造时分配全部页帧，未实现惰性页分配。Rust 拒绝未知字段，区别于 C++ 的警告后忽略行为。配置解析用法依据 [toml 官方 API](https://docs.rs/toml/latest/toml/fn.from_str.html)。
+
+## 历史 C++ API 调查
+
+
 本文面向将 `FASTER/cc` 改写为 Rust 的前期调查。依据是当前工作区源代码的静态阅读；未编译、未运行测试、未验证崩溃恢复或性能。文中 API 标识符保留原文，解释使用中文；行号对应本次调查快照。这里的“公共 API”指 C++ 模板与头文件接口，不是 HTTP API、RPC 或稳定 C ABI。
 
 ## 1. 能力清单与实现边界
@@ -170,6 +261,8 @@ Status Delete(DC& context, AsyncCallback callback, uint64_t monotonic_serial_num
 **静态阅读发现，待验证：** `F2Kv::Recover` 的 `version` 引用参数没有赋值；底层任一层恢复失败会在将 F2 阶段复位前直接返回，留下 `RECOVER`；两层版本不一致只记警告。上述是可定位的源码行为，不是已复现测试失败，也不应作为需要原样复制到 Rust 的理想契约。证据：[f2.h:695](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/core/f2.h#L695)。
 
 ## 7. 扫描、设备和平台扩展
+
+Rust 扫描页拥有记录副本，`ScannedRecord` 借用该页并提供 `address`、`info`、类型化 `key` / `value` 和 `size()`。不公开原始 `words` 切片，避免与值内部的原子访问重叠；原先用 `words.len() * 8` 取得记录长度的调用方应改用 `size()`。日志句柄移动或销毁后，已排队的 epoch 动作和 I/O 回调仍通过共享所有权保持页帧存活，详见 [ADR 0003](adr/0003-deferred-log-ownership.md)。
 
 `LogRecordIterator<F>` 构造签名为 `(hlog_t* log, Buffering mode, Address begin, Address end, disk_t* disk)`，`GetNext(Address& record_address)` 同时返回记录指针和地址，也有无地址输出的 `GetNext()`。缓冲选项是 `UN_BUFFERED`、`SINGLE_PAGE`、`DOUBLE_PAGE`；同文件还包含页级以及并发页级迭代器。它读取日志物理记录，不能自动解释为去重、排除墓碑的逻辑快照。返回指针关联日志/缓冲存活期，Rust 需重新表达其借用边界。证据：[log_scan.h:784](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/core/log_scan.h#L784)、[log_scan.h:834](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/core/log_scan.h#L834)。
 
