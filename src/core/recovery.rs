@@ -201,8 +201,19 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// Loads the last pages into memory and resets the log boundaries.
     fn restore_hybrid_log(&self, begin: Address, tail: Address) -> Result<(), Status> {
+        if begin > tail {
+            return Err(Status::Corruption);
+        }
+        if begin == tail {
+            self.hlog.recovery_reset(begin, begin, tail);
+            return Ok(());
+        }
         let end_page = tail.page() + (tail.offset() > 0) as u64;
-        let start_page = end_page.saturating_sub(self.hlog.frames().saturating_sub(4).max(1));
+        // GC may have deleted every segment before begin. Only the retained
+        // window can be read, even when it is smaller than the memory window.
+        let start_page = end_page
+            .saturating_sub(self.hlog.frames().saturating_sub(4).max(1))
+            .max(begin.page());
         for page in start_page..end_page {
             let bytes = self.read_page_prefix(page, tail)?;
             self.hlog.load_page(page, &bytes);
@@ -226,10 +237,56 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::address::Address;
+    use crate::core::device::{Device, ReadCallback, WriteCallback};
     use crate::core::guid::Guid;
+    use crate::core::hlog::LogConfig;
     use crate::core::state::{Action, SystemState};
     use crate::core::{FasterKv, Status, StoreConfig};
-    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct NoReads(AtomicU64);
+
+    impl Device for NoReads {
+        unsafe fn write_async(&self, _: u64, _: *const u8, _: usize, done: WriteCallback) {
+            done(Ok(()));
+        }
+
+        fn read_async(&self, _: u64, _: usize, done: ReadCallback) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            done(Err(std::io::Error::other("segment was truncated")));
+        }
+    }
+
+    #[test]
+    fn empty_recovery_window_never_reads_a_truncated_segment() {
+        let device = Arc::new(NoReads::default());
+        let store = FasterKv::<u64, AtomicU64>::with_device(
+            StoreConfig {
+                index_buckets: 16,
+                log: LogConfig {
+                    page_bits: 12,
+                    memory_pages: 16,
+                    mutable_fraction: 0.5,
+                },
+                ..Default::default()
+            },
+            device.clone(),
+        );
+        for tail in [Address::new(32, 0), Address::new(32, 72)] {
+            assert_eq!(store.restore_hybrid_log(tail, tail), Ok(()));
+            assert_eq!(store.hlog.begin.load(), tail);
+            assert_eq!(store.hlog.head.load(), tail);
+            assert_eq!(store.hlog.tail(), tail);
+        }
+        assert_eq!(device.0.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            store.restore_hybrid_log(Address::new(33, 0), Address::new(32, 0)),
+            Err(Status::Corruption)
+        );
+    }
 
     #[test]
     fn recovery_excludes_other_actions_and_new_sessions() {

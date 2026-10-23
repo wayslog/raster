@@ -30,14 +30,50 @@ pub struct ScanPage<K, V> {
 }
 
 /// A record inside a [`ScanPage`].
+///
+/// Only typed access is exposed: raw words could overlap an atomic value and
+/// allow a non-atomic read while another thread updates that value.
+///
+/// ```compile_fail
+/// use raster::core::scan::ScannedRecord;
+/// use std::sync::atomic::AtomicU64;
+/// fn raw_value(record: &ScannedRecord<'_, u64, AtomicU64>) -> u64 {
+///     record.words[2]
+/// }
+/// ```
 pub struct ScannedRecord<'p, K, V> {
     pub address: Address,
     pub info: RecordInfo,
     pub key: &'p K,
     /// `None` for tombstones, whose initialized value only preserves record size.
     pub value: Option<&'p V>,
-    /// The record's raw words, header first.
-    pub words: &'p [u64],
+    raw: *const u64,
+    size: usize,
+}
+
+// SAFETY: safe access is limited to shared references to K and V, whose Sync
+// bounds permit moving those references across threads. The page remains
+// borrowed for 'p and raw access has a separate unsafe contract.
+unsafe impl<K: Sync, V: Sync> Send for ScannedRecord<'_, K, V> {}
+// SAFETY: as above; sharing the view only shares its typed references.
+unsafe impl<K: Sync, V: Sync> Sync for ScannedRecord<'_, K, V> {}
+
+impl<K, V> ScannedRecord<'_, K, V> {
+    /// Total encoded size in bytes, including the record header.
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Raw bytes for internal compaction of a privately owned scan page.
+    ///
+    /// # Safety
+    /// No key or value may be mutated, including through atomics or other
+    /// interior mutability, for the lifetime of the returned slice.
+    pub(crate) unsafe fn raw_words(&self) -> &[u64] {
+        // SAFETY: the iterator validated this aligned range and its page stays
+        // borrowed; the caller excludes mutation through the typed references.
+        unsafe { std::slice::from_raw_parts(self.raw, self.size / 8) }
+    }
 }
 
 impl<K: Key, V: Value> FasterKv<K, V> {
@@ -238,16 +274,13 @@ impl<K: Key, V: Value> ScanPage<K, V> {
                 // SAFETY: as above.
                 unsafe { &*(record.value() as *const V) }
             });
-            // SAFETY: the record's words lie inside the buffer.
-            let words = unsafe {
-                std::slice::from_raw_parts(ptr.add(offset - size).cast::<u64>(), size / 8)
-            };
             Some(ScannedRecord {
                 address,
                 info,
                 key,
                 value,
-                words,
+                raw: ptr.wrapping_add(offset - size).cast(),
+                size,
             })
         })
     }
