@@ -255,6 +255,8 @@ Status Delete(DC& context, AsyncCallback callback, uint64_t monotonic_serial_num
 
 ## 7. 扫描、设备和平台扩展
 
+Rust 扫描页拥有记录副本，`ScannedRecord` 借用该页并提供 `address`、`info`、类型化 `key` / `value` 和 `size()`。不公开原始 `words` 切片，避免与值内部的原子访问重叠；原先用 `words.len() * 8` 取得记录长度的调用方应改用 `size()`。日志句柄移动或销毁后，已排队的 epoch 动作和 I/O 回调仍通过共享所有权保持页帧存活，详见 [ADR 0003](adr/0003-deferred-log-ownership.md)。
+
 `LogRecordIterator<F>` 构造签名为 `(hlog_t* log, Buffering mode, Address begin, Address end, disk_t* disk)`，`GetNext(Address& record_address)` 同时返回记录指针和地址，也有无地址输出的 `GetNext()`。缓冲选项是 `UN_BUFFERED`、`SINGLE_PAGE`、`DOUBLE_PAGE`；同文件还包含页级以及并发页级迭代器。它读取日志物理记录，不能自动解释为去重、排除墓碑的逻辑快照。返回指针关联日志/缓冲存活期，Rust 需重新表达其借用边界。证据：[log_scan.h:784](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/core/log_scan.h#L784)、[log_scan.h:834](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/core/log_scan.h#L834)。
 
 设备是模板协议：提供文件/日志文件类型、文件创建、检查点路径和目录、I/O 完成推进；文件核心接口包括 `Open` / `Close` / `Delete`、`ReadAsync(source,dest,length,callback,context)`、`WriteAsync(source,dest,length,callback,context)`、`alignment()`、`Truncate(...)`。I/O 回调签名为 `void(IAsyncContext*, Status, size_t bytes_transferred)`，区别于键值操作回调。`FileSystemFile` 自身的 `Truncate` 是仅回调的空操作，实际日志分段层负责相应回收，不能假设每一层都执行物理截断。证据：[file_system_disk.h:25](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/device/file_system_disk.h#L25)、[async.h:24](https://github.com/microsoft/FASTER/blob/321d872eabda6a0345c8bd76419f89723ed864ae/cc/src/core/async.h#L24)。

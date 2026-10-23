@@ -13,5 +13,6 @@ RasterKV 是 FASTER 的 Rust 实现，按 FASTER C++ 契约重写，性能目标
 | [审查修复与重新验收](07-审查修复与重新验收.md) | 并发与健全性修复、资源边界、检查点结果语义及新测量方案 |
 | [ADR 0001](adr/0001-adopt-faster-cpp-contract.md) | 采用 FASTER C++ 契约并重写引擎的决策 |
 | [ADR 0002](adr/0002-variable-length-records.md) | KeyContext、ValueSlot、变长记录与默认操作快路径 |
+| [ADR 0003](adr/0003-deferred-log-ownership.md) | 延迟日志任务的所有权、扫描借用边界与审查修复 |
 
 01–04 首先说明当前 Rust 实现，再保留对 FASTER C++ 固定提交 `321d872eabda6a0345c8bd76419f89723ed864ae` 的历史源码调研；其中 `cc/` 路径相对于 FASTER 根目录。

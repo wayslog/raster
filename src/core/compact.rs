@@ -356,9 +356,7 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
         };
         let mut boundary = false;
         for record in page.records() {
-            if record.address == until
-                || record.address.add((record.words.len() * 8) as u64) == until
-            {
+            if record.address == until || record.address.add(record.size() as u64) == until {
                 boundary = true;
                 break;
             }
@@ -438,7 +436,9 @@ fn copy_pages<K: Key, V: Value>(
                     continue;
                 }
                 let request = CopyRequest {
-                    words: record.words,
+                    // SAFETY: this scan page belongs only to this copy batch;
+                    // its typed key and value are never shared or mutated.
+                    words: unsafe { record.raw_words() },
                     types: std::marker::PhantomData,
                     search_min: record.address,
                 };

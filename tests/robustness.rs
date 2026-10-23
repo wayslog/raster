@@ -122,10 +122,10 @@ fn read_cache_with_high_mutable_fraction_keeps_caching_after_it_fills() {
         for key in 0..KEYS / 2 {
             let _ = read(&mut session, key);
         }
-        // A key read again right away must now be served from the cache.
-        assert_eq!(read(&mut session, 7), Status::Pending);
+        // The most recent insertion must be cached; earlier keys need not
+        // have been evicted at any particular point in the replacement cycle.
         assert_eq!(
-            read(&mut session, 7),
+            read(&mut session, KEYS / 2 - 1),
             Status::Ok,
             "read cache stopped caching"
         );

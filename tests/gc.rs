@@ -60,6 +60,97 @@ fn read(session: &mut Session<'_, u64, AtomicU64>, key: u64, serial: u64) -> (St
     out.get().expect("read finished")
 }
 
+fn checkpoint_after_truncation(retained: u64) {
+    let dir = std::env::temp_dir().join(format!(
+        "raster-gc-recovery-{retained}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let make_store = || {
+        FasterKv::<u64, AtomicU64>::with_device(
+            StoreConfig {
+                index_buckets: 1 << 12,
+                log: LogConfig {
+                    page_bits: 12,
+                    memory_pages: 16,
+                    mutable_fraction: 0.5,
+                },
+                checkpoint_dir: Some(dir.join("checkpoints")),
+                ..Default::default()
+            },
+            Arc::new(FileDevice::open(dir.join("log"), 14, 1).unwrap()),
+        )
+    };
+    let store = make_store();
+    let mut session = store.start_session();
+    const KEYS: u64 = 4_000;
+    for key in 0..KEYS {
+        assert_eq!(session.upsert(&mut Op::new(key, key), key), Status::Ok);
+    }
+    let cut = store.hlog.tail();
+    for key in KEYS..KEYS + retained {
+        assert_eq!(session.upsert(&mut Op::new(key, key), key), Status::Ok);
+    }
+    let tail = store.hlog.tail();
+    store.hlog.shift_read_only_to(tail);
+    while store.hlog.safe_read_only.load() < tail {
+        session.refresh();
+    }
+    let truncated = Arc::new(AtomicU64::new(0));
+    let observed = truncated.clone();
+    assert!(store.shift_begin_address(
+        cut,
+        Some(Box::new(move |offset| {
+            observed.store(offset, Ordering::Release)
+        })),
+        None,
+    ));
+    assert!(session.complete_pending(true));
+    assert!(truncated.load(Ordering::Acquire) >= 1 << 14);
+    let completed = Arc::new(Mutex::new(None));
+    let observed = completed.clone();
+    let token = store
+        .checkpoint(
+            None,
+            Some(Arc::new(move |status, _| {
+                *observed.lock().unwrap() = Some(status)
+            })),
+        )
+        .unwrap();
+    assert!(session.complete_pending(true));
+    assert_eq!(*completed.lock().unwrap(), Some(Status::Ok));
+    drop(session);
+    drop(store);
+
+    let recovered = make_store();
+    recovered
+        .recover(token, token)
+        .expect("valid checkpoint after GC");
+    assert_eq!(recovered.hlog.begin.load(), cut);
+    assert_eq!(recovered.hlog.tail(), tail);
+    let mut session = recovered.start_session();
+    assert_eq!(read(&mut session, 0, 0).0, Status::NotFound);
+    for key in KEYS..KEYS + retained {
+        assert_eq!(read(&mut session, key, key), (Status::Ok, key));
+    }
+    let key = KEYS + retained;
+    assert_eq!(session.upsert(&mut Op::new(key, 99), key), Status::Ok);
+    assert_eq!(read(&mut session, key, key + 1), (Status::Ok, 99));
+    drop(session);
+    drop(recovered);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn recovery_after_gc_with_an_empty_log() {
+    checkpoint_after_truncation(0);
+}
+
+#[test]
+fn recovery_after_gc_with_a_partial_page() {
+    checkpoint_after_truncation(16);
+}
+
 #[test]
 fn shift_begin_address_truncates_segments_and_index() {
     let dir = std::env::temp_dir().join(format!("raster-gc-{}", std::process::id()));

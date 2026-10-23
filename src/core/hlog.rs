@@ -47,6 +47,18 @@ pub enum Allocation {
 struct Padded<T>(T);
 
 pub struct HybridLog {
+    storage: Arc<HybridLogStorage>,
+    epoch: Arc<LightEpoch>,
+    device: Arc<dyn Device>,
+}
+
+/// Stable storage shared by the log handle and its deferred work.
+///
+/// This type is exposed only to preserve access to the log boundaries through
+/// `HybridLog`. It owns neither the epoch nor the device, so their queued work
+/// can keep frames alive without creating an ownership cycle.
+#[doc(hidden)]
+pub struct HybridLogStorage {
     frames: Box<[*mut u8]>,
     frame_mask: u64,
     page_size: u64,
@@ -58,8 +70,6 @@ pub struct HybridLog {
     pub read_only: AtomicAddress,
     pub safe_read_only: AtomicAddress,
     pub flushed_until: AtomicAddress,
-    epoch: Arc<LightEpoch>,
-    device: Arc<dyn Device>,
     page_bits: u32,
     /// Completed flush ranges (start -> end control words) not yet merged
     /// into `flushed_until`. Flushes are rare, so a lock is fine here.
@@ -76,19 +86,16 @@ pub struct HybridLog {
 
 // SAFETY: frames are raw page memory shared under epoch protection; all
 // mutation of page bytes follows the record publication protocol.
-unsafe impl Send for HybridLog {}
+unsafe impl Send for HybridLogStorage {}
 // SAFETY: see above.
-unsafe impl Sync for HybridLog {}
+unsafe impl Sync for HybridLogStorage {}
 
-struct LogPtr(*const HybridLog);
-// SAFETY: epoch actions only run while the store, which owns the log, is alive.
-unsafe impl Send for LogPtr {}
-impl LogPtr {
-    /// # Safety
-    /// The log must still be alive.
-    unsafe fn log(&self) -> &HybridLog {
-        // SAFETY: guaranteed by the caller.
-        unsafe { &*self.0 }
+impl std::ops::Deref for HybridLog {
+    type Target = HybridLogStorage;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.storage
     }
 }
 
@@ -113,25 +120,27 @@ impl HybridLog {
             ((frames_len as f64 * config.mutable_fraction) as u64).clamp(1, frames_len - 2);
         let start = Address::new(0, FIRST_VALID_OFFSET);
         Self {
-            frames,
-            frame_mask: frames_len - 1,
-            page_size,
-            mutable_pages,
-            tail: Padded(AtomicU64::new(FIRST_VALID_OFFSET)),
-            begin: AtomicAddress::new(start),
-            head: AtomicAddress::new(start),
-            safe_head: AtomicAddress::new(start),
-            read_only: AtomicAddress::new(start),
-            safe_read_only: AtomicAddress::new(start),
-            flushed_until: AtomicAddress::new(start),
+            storage: Arc::new(HybridLogStorage {
+                frames,
+                frame_mask: frames_len - 1,
+                page_size,
+                mutable_pages,
+                tail: Padded(AtomicU64::new(FIRST_VALID_OFFSET)),
+                begin: AtomicAddress::new(start),
+                head: AtomicAddress::new(start),
+                safe_head: AtomicAddress::new(start),
+                read_only: AtomicAddress::new(start),
+                safe_read_only: AtomicAddress::new(start),
+                flushed_until: AtomicAddress::new(start),
+                page_bits: config.page_bits,
+                completed_flushes: Default::default(),
+                flush_order: Default::default(),
+                head_order: Default::default(),
+                pending_flushes: AtomicU64::new(0),
+                flush_failed: Default::default(),
+            }),
             epoch,
             device,
-            page_bits: config.page_bits,
-            completed_flushes: Default::default(),
-            flush_order: Default::default(),
-            head_order: Default::default(),
-            pending_flushes: AtomicU64::new(0),
-            flush_failed: Default::default(),
         }
     }
 
@@ -146,13 +155,13 @@ impl HybridLog {
 
     /// Pointer to the bytes at `address`.
     ///
-    /// The caller must be epoch-protected and have checked `address >= head`
-    /// after protecting; the frame then stays valid until its next refresh.
+    /// Computing the pointer is safe for any address. Dereferencing it requires
+    /// an in-page offset and epoch protection after checking `address >= head`;
+    /// the frame then stays valid until the next refresh.
     #[inline(always)]
     pub fn get(&self, address: Address) -> *mut u8 {
         let frame = self.frames[(address.page() & self.frame_mask) as usize];
-        // SAFETY: offset < page_size for every allocated address.
-        unsafe { frame.add(address.offset() as usize) }
+        frame.wrapping_add(address.offset() as usize)
     }
 
     /// Hints that the record at `address` is about to be updated, so its cache
@@ -334,10 +343,8 @@ impl HybridLog {
             before_evict(current, head);
         }
         if self.head.monotonic_update(head) {
-            let log = LogPtr(self);
+            let log = self.storage.clone();
             self.epoch.bump_with_action(move || {
-                // SAFETY: as above.
-                let log = unsafe { log.log() };
                 // Clear the frames before publishing safe_head: `new_page`
                 // reuses a frame as soon as safe_head passes its old page.
                 let _order = log.head_order.lock().unwrap();
@@ -412,7 +419,7 @@ impl HybridLog {
     /// Byte offset of `address` on the device.
     #[inline(always)]
     pub fn device_offset(&self, address: Address) -> u64 {
-        (address.page() << self.page_bits) | address.offset()
+        self.storage.device_offset(address)
     }
 
     /// Reads `len` bytes at `address` from the device.
@@ -425,23 +432,29 @@ impl HybridLog {
     /// observed the shift, the newly read-only range is flushed.
     pub fn shift_read_only_to(&self, address: Address) {
         if self.read_only.monotonic_update(address) {
-            let log = LogPtr(self);
+            let log = self.storage.clone();
+            let device = self.device.clone();
             self.epoch.bump_with_action(move || {
-                // SAFETY: the store keeps the log alive while actions can run.
-                let log = unsafe { log.log() };
                 let _order = log.flush_order.lock().unwrap();
                 let previous = log.safe_read_only.fetch_max(address);
                 if previous < address {
-                    log.flush_range(previous, address);
+                    log.flush_range(device.as_ref(), previous, address);
                 }
             });
         }
+    }
+}
+
+impl HybridLogStorage {
+    #[inline(always)]
+    fn device_offset(&self, address: Address) -> u64 {
+        (address.page() << self.page_bits) | address.offset()
     }
 
     /// Flushes `[from, to)`, which is read-only and therefore stable, split at
     /// page boundaries. A trailing partial sector is copied so that bytes past
     /// `to`, which may still be written, are never read.
-    fn flush_range(&self, from: Address, to: Address) {
+    fn flush_range(self: &Arc<Self>, device: &dyn Device, from: Address, to: Address) {
         let mut start = from;
         while start < to {
             let page_end = Address::new(start.page() + 1, 0);
@@ -465,8 +478,8 @@ impl HybridLog {
                 // reused before `flushed_until` passes this range.
                 let data = unsafe { frame.add(aligned_start as usize) };
                 self.write_range(
-                    start,
-                    range_end,
+                    device,
+                    start..range_end,
                     page_base + aligned_start,
                     data,
                     (aligned_end - aligned_start) as usize,
@@ -488,8 +501,8 @@ impl HybridLog {
                 let range_start = start.max(Address::new(start.page(), tail_start));
                 let data = copy.as_ptr();
                 self.write_range(
-                    range_start,
-                    end,
+                    device,
+                    range_start..end,
                     page_base + tail_start,
                     data,
                     SECTOR as usize,
@@ -501,26 +514,24 @@ impl HybridLog {
     }
 
     fn write_range(
-        &self,
-        start: Address,
-        end: Address,
+        self: &Arc<Self>,
+        device: &dyn Device,
+        range: std::ops::Range<Address>,
         offset: u64,
         data: *const u8,
         len: usize,
         buffer: Option<AlignedBuffer>,
     ) {
         self.pending_flushes.fetch_add(1, Ordering::AcqRel);
-        let log = LogPtr(self);
+        let log = self.clone();
         // A zero-padded partial sector must land before any later write of the
         // same sector, so wait for it; full-sector writes never overlap.
         let wait = buffer.is_some();
         let (sent, finished) = std::sync::mpsc::channel();
         let done = Box::new(move |result: std::io::Result<()>| {
             drop(buffer);
-            // SAFETY: `Drop` waits for all pending flushes.
-            let log = unsafe { log.log() };
             match result {
-                Ok(()) => log.complete_flush(start, end),
+                Ok(()) => log.complete_flush(range.start, range.end),
                 // Leave the range unflushed; waiters observe `flush_failed`.
                 Err(_) => log.flush_failed.store(true, Ordering::Release),
             }
@@ -528,8 +539,8 @@ impl HybridLog {
             let _ = sent.send(());
         });
         // SAFETY: `data` is either stable frame memory (see `flush_range`) or
-        // `buffer`, which the callback keeps alive until completion.
-        unsafe { self.device.write_async(offset, data, len, done) };
+        // `buffer`. The callback owns the storage and buffer until completion.
+        unsafe { device.write_async(offset, data, len, done) };
         if wait {
             let _ = finished.recv();
         }
@@ -562,9 +573,15 @@ impl Drop for HybridLog {
         while self.pending_flushes.load(Ordering::Acquire) != 0 {
             std::thread::yield_now();
         }
-        let layout = Self::frame_layout(self.page_size);
+    }
+}
+
+impl Drop for HybridLogStorage {
+    fn drop(&mut self) {
+        let layout = HybridLog::frame_layout(self.page_size);
         for &frame in self.frames.iter() {
-            // SAFETY: allocated in `new` with the same layout.
+            // SAFETY: allocated in `new` with the same layout; all deferred
+            // actions and I/O callbacks have released their storage owners.
             unsafe { dealloc(frame, layout) };
         }
     }
@@ -573,6 +590,75 @@ impl Drop for HybridLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_and_full_mutable_fractions_allow_bounded_rollover() {
+        for frames in [4, 8, 16] {
+            for fraction in [LogConfig::default().mutable_fraction, 1.0] {
+                let epoch = Arc::new(LightEpoch::new());
+                let log = HybridLog::new(
+                    LogConfig {
+                        page_bits: 12,
+                        memory_pages: frames,
+                        mutable_fraction: fraction,
+                    },
+                    epoch.clone(),
+                    Arc::new(crate::core::device::NullDevice),
+                );
+                let slot = epoch.reserve().unwrap();
+                epoch.protect(&slot);
+                for _ in 0..frames * 4 {
+                    let mut allocated = false;
+                    for _ in 0..100 {
+                        match log.allocate(log.page_size()) {
+                            Allocation::Ok(_) => {
+                                allocated = true;
+                                break;
+                            }
+                            Allocation::PageFull(page) | Allocation::Retry(page) => {
+                                log.new_page(page);
+                                epoch.protect_and_drain(&slot);
+                            }
+                        }
+                    }
+                    assert!(
+                        allocated,
+                        "rollover stalled: {frames} frames, {fraction} mutable"
+                    );
+                }
+                assert!(log.safe_head.load().page() > frames);
+                epoch.release(slot);
+            }
+        }
+    }
+
+    #[test]
+    fn deferred_work_does_not_keep_the_epoch_alive() {
+        let epoch = Arc::new(LightEpoch::new());
+        let log = HybridLog::new(
+            LogConfig {
+                page_bits: 12,
+                memory_pages: 4,
+                mutable_fraction: 0.5,
+            },
+            epoch.clone(),
+            Arc::new(crate::core::device::NullDevice),
+        );
+        let slot = epoch.reserve().unwrap();
+        epoch.protect(&slot);
+        let storage = Arc::downgrade(&log.storage);
+        let _ = log.allocate(448);
+        log.shift_read_only_to(log.tail());
+        drop(log);
+        assert!(storage.upgrade().is_some(), "queued work owns its frames");
+        let observer = Arc::downgrade(&epoch);
+        drop(epoch);
+        assert!(observer.upgrade().is_none(), "no epoch ownership cycle");
+        assert!(
+            storage.upgrade().is_none(),
+            "discarded work releases its frames"
+        );
+    }
 
     fn small_log() -> (Arc<LightEpoch>, HybridLog) {
         let epoch = Arc::new(LightEpoch::new());

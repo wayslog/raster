@@ -323,7 +323,10 @@ fn prepare_pending_copy_and_new_version_writer_finish_checkpoint() {
     let words = {
         let mut scanner = store.scan(source, until);
         let mut page = scanner.next_page().unwrap().unwrap();
-        page.records().next().unwrap().words.to_vec()
+        let record = page.records().next().unwrap();
+        // SAFETY: this scan page is private and its typed fields are neither
+        // shared nor mutated while copying the record.
+        unsafe { record.raw_words() }.to_vec()
     };
     store.hlog.head.store(until);
     let mut writer = store.start_session();
