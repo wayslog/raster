@@ -116,6 +116,8 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
 
     /// Copies the next page range, or returns `None` at the end of the scan.
     /// Returns OutOfMemory if no helper epoch slot is available; callers may retry.
+    /// Returns InvalidArgument if a nonempty clamped range has an offset
+    /// outside the configured page. Page ends use the next page at offset zero.
     pub fn next_page(&mut self) -> Result<Option<ScanPage<K, V>>, Status> {
         if self.next >= self.until {
             return Ok(None);
@@ -146,13 +148,23 @@ impl<K: Key, V: Value> LogScanner<'_, K, V> {
         if self.next >= self.until {
             return Ok(None);
         }
-        let slot = borrowed.or(self.slot.as_ref()).ok_or(Status::OutOfMemory)?;
         let start = self.next;
-        let page_end = Address::new(start.page() + 1, 0);
-        let end = self.until.min(page_end);
-        self.next = page_end;
-        let len =
-            (self.store.hlog.device_offset(end) - self.store.hlog.device_offset(start)) as usize;
+        if !self.store.hlog.valid_address(start) || !self.store.hlog.valid_address(self.until) {
+            return Err(Status::InvalidArgument);
+        }
+        let slot = borrowed.or(self.slot.as_ref()).ok_or(Status::OutOfMemory)?;
+        let (end, end_offset) = if start.page() == self.until.page() {
+            (self.until, self.until.offset())
+        } else {
+            (
+                Address::new(start.page() + 1, 0),
+                self.store.hlog.page_size(),
+            )
+        };
+        // Both offsets are bounded by this page, so subtraction cannot wrap
+        // and the copied or requested prefix cannot cross the frame boundary.
+        let len = (end_offset - start.offset()) as usize;
+        self.next = end;
         let mut words = vec![0u64; len.div_ceil(8)];
         if borrowed.is_none() {
             self.store.epoch.protect_and_drain(slot);

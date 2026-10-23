@@ -6,6 +6,113 @@ use raster::core::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[test]
+fn scan_rejects_out_of_page_ranges_before_reading_memory_or_disk() {
+    use raster::core::device::{Device, ReadCallback, WriteCallback};
+    use raster::core::hlog::Allocation;
+
+    #[derive(Default)]
+    struct ReadCounter(AtomicU64);
+
+    impl Device for ReadCounter {
+        unsafe fn write_async(&self, _: u64, _: *const u8, _: usize, done: WriteCallback) {
+            done(Ok(()));
+        }
+
+        fn read_async(&self, _: u64, _: usize, done: ReadCallback) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            done(Err(std::io::Error::other("unexpected scan read")));
+        }
+    }
+
+    let device = Arc::new(ReadCounter::default());
+    let store = FasterKv::<u64, u64>::with_device(
+        StoreConfig {
+            index_buckets: 16,
+            log: LogConfig {
+                page_bits: 12,
+                memory_pages: 4,
+                mutable_fraction: 0.5,
+            },
+            ..Default::default()
+        },
+        device.clone(),
+    );
+    assert!(matches!(store.hlog.allocate(4096 - 64), Allocation::Ok(_)));
+    store.hlog.shift_read_only_to(store.hlog.tail());
+    for on_disk in [false, true] {
+        if on_disk {
+            for _ in 0..8 {
+                loop {
+                    match store.hlog.allocate(4096) {
+                        Allocation::Ok(_) => break,
+                        Allocation::PageFull(page) | Allocation::Retry(page) => {
+                            store.hlog.new_page(page);
+                        }
+                    }
+                }
+            }
+            assert!(store.hlog.head.load().page() > 0);
+        }
+        for (begin, until) in [
+            (Address::new(0, 64), Address::new(0, 4097)),
+            (Address::new(0, 64), Address::new(0, 4096)),
+            (Address::new(0, 4096), Address::new(1, 0)),
+            (Address::new(0, 8192), Address::new(1, 0)),
+        ] {
+            let mut scanner = store.scan(begin, until);
+            for _ in 0..2 {
+                assert!(
+                    matches!(scanner.next_page(), Err(Status::InvalidArgument)),
+                    "invalid scan range accepted: {begin:?}..{until:?}, on_disk={on_disk}"
+                );
+            }
+        }
+        assert_eq!(device.0.load(Ordering::Relaxed), 0);
+    }
+}
+
+#[test]
+fn scan_preserves_clamping_empty_ranges_and_canonical_page_ends() {
+    use raster::core::hlog::Allocation;
+
+    let store = FasterKv::<u64, u64>::new(StoreConfig {
+        index_buckets: 16,
+        log: LogConfig {
+            page_bits: 12,
+            memory_pages: 4,
+            mutable_fraction: 0.5,
+        },
+        ..Default::default()
+    });
+    assert!(matches!(store.hlog.allocate(4096 - 64), Allocation::Ok(_)));
+    assert!(store.hlog.new_page(0));
+    assert!(matches!(store.hlog.allocate(4096), Allocation::Ok(_)));
+    assert!(store.hlog.new_page(1));
+    assert!(matches!(store.hlog.allocate(24), Allocation::Ok(_)));
+    let end = store.hlog.tail();
+    store.hlog.shift_read_only_to(end);
+
+    let mut scanner = store.scan(Address::new(0, 0), Address::MAX);
+    assert_eq!(scanner.until(), end);
+    for base in [Address::new(0, 64), Address::new(1, 0), Address::new(2, 0)] {
+        let mut page = scanner.next_page().unwrap().unwrap();
+        assert_eq!(page.base(), base);
+        assert!(page.records().next().is_none());
+    }
+    assert!(scanner.next_page().unwrap().is_none());
+
+    let mut page = store.scan(Address::new(1, 0), Address::new(2, 0));
+    assert_eq!(
+        page.next_page().unwrap().unwrap().base(),
+        Address::new(1, 0)
+    );
+    assert!(page.next_page().unwrap().is_none());
+    for begin in [end, Address::new(3, 0)] {
+        assert!(store.scan(begin, end).next_page().unwrap().is_none());
+    }
+}
+
 #[derive(Clone)]
 struct Put {
     key: u64,
