@@ -83,7 +83,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let end = log_meta.final_address;
         if ![begin, start, end]
             .into_iter()
-            .all(|address| self.hlog.valid_address(address))
+            .all(|address| self.hlog.valid_address(address) && address.offset().is_multiple_of(8))
             || begin < Address::new(0, super::hlog::FIRST_VALID_OFFSET)
             || begin > start
             || start > end
@@ -101,10 +101,14 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         self.index
             .read_checkpoint(&index_dir.join("ht.dat"), &index_dir.join("ofb.dat"))
             .map_err(|_| Status::Corruption)?;
-        let mut page = start.page();
-        while Address::new(page, 0) < end {
-            self.recover_page(page, start, end, log_meta.version)?;
-            page += 1;
+        // An empty replay interval has no records to read, even when its
+        // address has a nonzero offset in a page that was never written.
+        if start < end {
+            let mut page = start.page();
+            while Address::new(page, 0) < end {
+                self.recover_page(page, start, end, log_meta.version)?;
+                page += 1;
+            }
         }
         self.restore_hybrid_log(index_meta.log_begin_address, end)?;
         *self.continue_tokens.lock().unwrap() = tokens;
@@ -392,5 +396,60 @@ mod tests {
                 Some(Status::Aborted)
             );
         }
+    }
+
+    #[test]
+    fn recovery_rejects_unaligned_metadata_before_reading_pages() {
+        use crate::core::checkpoint::{CheckpointDirs, IndexMetadata, LogMetadata};
+        use crate::core::index::HashIndex;
+
+        let root = std::env::temp_dir().join(format!("raster-recover-alignment-{}", Guid::new()));
+        let dirs = CheckpointDirs { root: root.clone() };
+        let token = Guid::new();
+        dirs.create(token).unwrap();
+        let ofb_count = HashIndex::new(16)
+            .write_checkpoint(
+                &dirs.index(token).join("ht.dat"),
+                &dirs.index(token).join("ofb.dat"),
+                &|address| address,
+            )
+            .unwrap();
+        let device = Arc::new(NoReads::default());
+        for [begin, start, end] in [[64, 65, 96], [65, 72, 96], [64, 64, 89]] {
+            IndexMetadata {
+                version: 1,
+                table_size: 16,
+                ofb_count,
+                log_begin_address: Address::new(0, begin),
+                checkpoint_start_address: Address::new(0, start),
+            }
+            .write(&dirs.index(token))
+            .unwrap();
+            LogMetadata {
+                version: 1,
+                flushed_address: Address::new(0, begin),
+                final_address: Address::new(0, end),
+                ..Default::default()
+            }
+            .write(&dirs.log(token))
+            .unwrap();
+            let mut store = FasterKv::<u64, u64>::with_device(
+                StoreConfig {
+                    index_buckets: 16,
+                    checkpoint_dir: Some(root.clone()),
+                    log: LogConfig {
+                        page_bits: 12,
+                        memory_pages: 4,
+                        mutable_fraction: 0.5,
+                    },
+                    ..Default::default()
+                },
+                device.clone(),
+            );
+            assert_eq!(store.recover(token, token).err(), Some(Status::Corruption));
+            assert_eq!(device.0.load(Ordering::Relaxed), 0);
+            assert_eq!(store.hlog.tail(), Address::new(0, 64));
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -62,6 +62,56 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn initial_empty_checkpoint_recovers_and_accepts_new_writes() {
+    let dir = temp_dir("ckpt-empty-recover");
+    let (token, guid) = {
+        let store = store(&dir);
+        let mut session = store.start_session();
+        let completed = Arc::new(AtomicBool::new(false));
+        let observed = completed.clone();
+        let token = store
+            .checkpoint(
+                None,
+                Some(Arc::new(move |status, serial| {
+                    assert_eq!(status, Status::Ok);
+                    assert_eq!(serial, 0);
+                    observed.store(true, Ordering::Release);
+                })),
+            )
+            .unwrap();
+        assert!(session.complete_pending(true));
+        assert!(completed.load(Ordering::Acquire));
+        (token, session.guid())
+    };
+    assert_eq!(std::fs::read_dir(dir.join("log")).unwrap().count(), 0);
+    let mut store = store(&dir);
+    let recovered = store
+        .recover(token, token)
+        .expect("empty checkpoint recovers");
+    assert_eq!(recovered.version, 1);
+    assert_eq!(recovered.sessions, vec![guid]);
+    assert_eq!(std::fs::read_dir(dir.join("log")).unwrap().count(), 0);
+    let (mut session, serial) = store.continue_session(guid).unwrap();
+    assert_eq!(serial, 0);
+    assert_eq!(session.rmw(&mut Incr { key: 0 }, 1), Status::Ok);
+    let value = std::rc::Rc::new(std::cell::Cell::new(None));
+    assert_eq!(
+        session.read(
+            &mut Get {
+                key: 0,
+                out: value.clone()
+            },
+            2
+        ),
+        Status::Ok
+    );
+    assert_eq!(value.get(), Some(1));
+    drop(session);
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn full_checkpoint_completes_under_concurrent_rmw() {
     let dir = temp_dir("ckpt-smoke");
     let store = store(&dir);
