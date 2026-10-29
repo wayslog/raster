@@ -1,7 +1,7 @@
 # C++ comparison driver
 
-Latest acceptance: the [2026-10-29 premerge validation](#pr1-premerge-validation-2026-10-29-stopped)
-stopped after the sole permitted repair still failed the throughput gate.
+Latest acceptance: the [second premerge repair](#second-premerge-repair-2026-10-29-checkpoint-gate-failed)
+passed the six failed Read cases but stopped at the checkpoint throughput gate.
 Earlier passing matrices below apply only to their named frozen runtimes.
 
 `memory.cc` runs resident integer Read, Upsert, and RMW workloads directly against FASTER C++ at the pinned commit. The Rust counterpart (`examples/parity.rs`) must keep identical keys, hashing, values, refresh cadence, timing, sampling, and output fields so that both engines produce identical checksums and digests.
@@ -294,3 +294,69 @@ and cancellation receipts are retained there. Historical P99 control widths
 and known deviations are in docs/07; no new causal attribution was made.
 Disk, hotread, variable-length and compaction matrices were outside this rerun.
 F2, real-disk/O_DIRECT/io_uring work, and Azure remain outside this closeout.
+
+## Second premerge repair, 2026-10-29: checkpoint gate failed
+
+The user explicitly authorized a second repair. Frozen runtime `a6a3d2b`
+checks inline read_only before following shared safe_read_only on a read hit.
+Since safe_read_only cannot exceed read_only, mutable-tail hits can select
+get_atomic immediately; reads in the fuzzy region retain the original safe
+boundary check. Callback ownership and exclusive recovery are unchanged.
+No driver changes, extra samples, or third repair were made. No push or merge.
+
+### Six previously failed Read cases
+
+Each case uses six balanced three-engine orders. All H2/H3/H4 and the 0.98
+baseline-throughput gate pass. The other 12 resident cases were not rerun and
+retain their `5535671` evidence; they are not measurements of this runtime.
+
+| Workload | Speed/C++ | P99/C++ | Speed/base | P99/base | Result |
+|---|---:|---:|---:|---:|---|
+| memory/read/uniform/1 | 3.03595 | 0.55385 | 0.98692 | 0.98182 | passed |
+| memory/read/uniform/4 | 2.90263 | 0.47518 | 1.05530 | 0.95035 | passed |
+| memory/read/worker-hot/1 | 3.06137 | 0.50000 | 1.00004 | 0.98077 | passed |
+| memory/read/worker-hot/4 | 3.06298 | 0.50495 | 1.00083 | 0.98077 | passed |
+| memory/read/shared-hot/1 | 3.00953 | 0.50246 | 1.00014 | 0.98077 | passed |
+| memory/read/shared-hot/4 | 3.01240 | 0.50495 | 0.99930 | 0.98077 | passed |
+
+Read/uniform/1 improved from 0.93900 to 0.98692 against the Rust baseline,
+remaining approximately 1.31% below it within the authorized tolerance.
+All six P99/base ratios are at most one. Previously recorded write-workload
+P99 differences are unaffected as evidence; they were not remeasured here.
+
+### Checkpoint
+
+The accepted 64-pair control from this day was reused with identical baseline,
+binding, and statistical-helper hashes. The 36-round comparison, two warmups
+per label, seed 20261014, and 20,000 order-stratified bootstrap samples remain
+unchanged. All recovery business checks and affinity receipts passed.
+
+| Metric | Speed/C++ | Speed/base | Base 95% interval | H5 |
+|---|---:|---:|---:|---|
+| mops | 1.63272 | 0.97440 | 0.966890-0.979881 | failed |
+| checkpoint_ns | 1.03551 | 0.99905 | 0.998772-1.002305 | passed |
+| mops_during | 1.30716 | 0.99386 | 0.990308-1.000997 | passed |
+| recover_ns | 1.51610 | 1.00010 | 0.999053-1.000726 | passed |
+
+Overall throughput still fails H5: its lower bound is 0.966890, below 0.98.
+The other three H5 metrics and all four C++ metrics pass. The prior `de1c56f`
+checkpoint comparison was never run, so these results do not isolate the cause
+of the remaining regression to the new read condition.
+
+Fmt, Clippy with -D warnings, Debug/Release (145 runtime and 11 compile-fail
+tests each), seven existing Miri safety checks, and 13 release binaries x 30
+rounds passed. The new atomic-read boundary regression passes natively. Miri
+could not finish it: first the isolated REALTIME clock, then the existing
+prefetch inline assembly were unsupported. Both outputs are retained; no
+engine change was made to hide this coverage limitation.
+
+Each of three checkpoint stress processes completed 33/200 rounds: 99 passes,
+zero test failures, and three in-flight runs cancelled after H5 failed. The
+600-run requirement and final acceptance remain incomplete. The second repair
+remains local for user review; no third repair or automatic rollback followed.
+
+Evidence in `.perf-baseline/pr1-premerge-second-20261029/` contains 108 resident
+outputs, 228 checkpoint run/recovery outputs, SHA256-verified archives and
+source/binary manifests, independent recomputation, and stop receipts. Earlier
+failure evidence remains unchanged. Disk, hotread, variable-length, compaction,
+F2, real-disk/O_DIRECT/io_uring and Azure scope did not expand.
