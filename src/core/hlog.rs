@@ -416,6 +416,11 @@ impl HybridLog {
         address.page() <= Address::MAX_PAGE && address.offset() < self.page_size
     }
 
+    /// Checks page geometry and alignment, without inspecting record contents.
+    pub(crate) fn valid_record_boundary(&self, address: Address) -> bool {
+        self.valid_address(address) && address.offset().is_multiple_of(8)
+    }
+
     /// Copies recovered bytes into exclusively owned page storage. Only the
     /// store's exclusive recovery path may overwrite initialized log records.
     pub(crate) fn load_page(&mut self, page: u64, bytes: &[u8]) {

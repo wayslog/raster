@@ -26,7 +26,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     /// begin address and the safe read-only address. `truncated` receives the
     /// device offset storage was released up to; `complete` runs once no
     /// index entry points below `address`. Returns false if another
-    /// state-machine action is running or `address` is out of range.
+    /// state-machine action is running, `address` is out of range, or its
+    /// page geometry or eight-byte alignment is invalid.
     /// Sessions must keep refreshing for the truncation to finish.
     pub fn shift_begin_address(
         &self,
@@ -38,7 +39,10 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         if rest.phase != Phase::Rest || rest.action != Action::None {
             return false;
         }
-        if address < self.hlog.begin.load() || address > self.hlog.safe_read_only.load() {
+        if !self.hlog.valid_record_boundary(address)
+            || address < self.hlog.begin.load()
+            || address > self.hlog.safe_read_only.load()
+        {
             return false;
         }
         let started = rest.start(Action::Gc);

@@ -1,4 +1,5 @@
 //! Log truncation with ShiftBeginAddress, after FASTER's GC tests.
+use raster::core::address::Address;
 use raster::core::device::FileDevice;
 use raster::core::hlog::LogConfig;
 use raster::core::*;
@@ -149,6 +150,35 @@ fn recovery_after_gc_with_an_empty_log() {
 #[test]
 fn recovery_after_gc_with_a_partial_page() {
     checkpoint_after_truncation(16);
+}
+
+#[test]
+fn shift_begin_address_rejects_invalid_record_boundaries() {
+    let store = FasterKv::<u64, AtomicU64>::new(StoreConfig {
+        index_buckets: 64,
+        log: LogConfig {
+            page_bits: 12,
+            memory_pages: 16,
+            mutable_fraction: 0.5,
+        },
+        ..Default::default()
+    });
+    let mut session = store.start_session();
+    for key in 0..512 {
+        assert_eq!(session.upsert(&mut Op::new(key, key), key), Status::Ok);
+    }
+    let tail = store.hlog.tail();
+    store.hlog.shift_read_only_to(tail);
+    while store.hlog.safe_read_only.load() < tail {
+        session.refresh();
+    }
+    let begin = store.hlog.begin.load();
+    for invalid in [Address::new(0, 65), Address::new(0, 4096)] {
+        assert!(invalid > begin && invalid < tail);
+        assert!(!store.shift_begin_address(invalid, None, None));
+        assert_eq!(store.hlog.begin.load(), begin);
+        assert_eq!(store.system_state().action, state::Action::None);
+    }
 }
 
 #[test]

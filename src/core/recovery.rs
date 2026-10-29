@@ -83,7 +83,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         let end = log_meta.final_address;
         if ![begin, start, end]
             .into_iter()
-            .all(|address| self.hlog.valid_address(address) && address.offset().is_multiple_of(8))
+            .all(|address| self.hlog.valid_record_boundary(address))
             || begin < Address::new(0, super::hlog::FIRST_VALID_OFFSET)
             || begin > start
             || start > end
