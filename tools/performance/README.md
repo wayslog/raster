@@ -1,8 +1,8 @@
 # C++ comparison driver
 
-Latest acceptance: the [third premerge repair](#third-premerge-repair-2026-10-29-checkpoint-gate-still-failed)
-improved the checkpoint throughput estimate, but its confidence interval still
-fails the unchanged H5 gate. Earlier matrices retain their named runtimes.
+Latest acceptance: the [fourth premerge repair](#fourth-premerge-repair-2026-10-29-checkpoint-gates-passed)
+passes the unchanged checkpoint gates and all required local validation.
+Resident measurements retain the separate runtimes identified in that section.
 
 `memory.cc` runs resident integer Read, Upsert, and RMW workloads directly against FASTER C++ at the pinned commit. The Rust counterpart (`examples/parity.rs`) must keep identical keys, hashing, values, refresh cadence, timing, sampling, and output fields so that both engines produce identical checksums and digests.
 
@@ -421,3 +421,68 @@ The archive SHA256 is
 `3ea3f5e9c92f28a175731691132d08a39c2229621b2f1ce8508b66d988210bd4`.
 Disk, hotread, variable-length, compaction, F2, real-disk/O_DIRECT/io_uring and
 Azure scope did not expand.
+
+## Fourth premerge repair, 2026-10-29: checkpoint gates passed
+
+The explicitly authorized fourth repair freezes runtime `cae705f`. RMW now
+uses the Record found during key traversal for the mutable update, avoiding
+another resolution of the same frame. Prefetch placement, boundary snapshots,
+read-cache processing, CPR gates and guard lifetime are unchanged. Declined
+mutable updates still append; fuzzy/disk classification, source revalidation,
+deferred ownership and exclusive recovery retain their existing behavior.
+
+Static assembly confirms two frame resolutions for a normal hit instead of
+three. Worker size changes from 3,056 to 3,089 bytes; its stack stays at 456
+bytes. The baseline also contains the repeated resolution, so this is evidence
+of removed work, not proof of the complete historical regression cause.
+The new collision-chain test covers correct key matching, in-place mutation,
+append after a declined update, read-only copying, tombstones, missing keys,
+CREATE=false, recreation and final values. It passes before and after the
+change as a behavior-preservation check; the prior H5 failure remains the
+performance regression signal.
+
+Only the checkpoint comparison was rerun: 36 balanced rounds, two warmups per
+label, the accepted 64-pair control, seed 20261014 and 20,000 order-stratified
+bootstrap samples. Control data, reference binaries and helper hashes match.
+The three measurement helpers are byte-identical to the preceding attempt;
+no driver changes, sample removal, additional samples or gate changes occurred.
+
+| Metric | Speed/C++ | Speed/base | Base 95% interval | H5 |
+|---|---:|---:|---:|---|
+| mops | 1.65043 | 0.98805 | 0.983432-1.000324 | passed |
+| checkpoint_ns | 1.03683 | 0.99880 | 0.998081-1.000576 | passed |
+| mops_during | 1.30922 | 0.99776 | 0.994359-1.003314 | passed |
+| recover_ns | 1.51067 | 0.99998 | 0.999029-1.000646 | passed |
+
+All four H5 lower confidence limits exceed 0.98; all four C++ median speed
+ratios exceed one. Recovery business checks and affinity receipts pass.
+Overall throughput remains approximately 1.19% below the baseline at the
+paired point estimate. The estimate is not higher than the third attempt's
+0.98997; the unchanged confidence-limit requirement now passes. Candidate
+absolute median throughput increased from 18.28417 to 18.54249 Mops/s, while
+the baseline also increased from 18.44918 to 18.71824 Mops/s. Do not attribute
+all between-batch changes to the code or claim superiority over the baseline.
+
+Fmt, Clippy with -D warnings, Debug/Release (146 runtime and 11 compile-fail
+tests each, one existing ignored timing test) and seven existing Miri checks
+passed. All 13 release binaries passed 30 rounds each, totaling 390 passes.
+Three checkpoint stress processes each completed 200 rounds: 600 passes,
+zero failures and zero cancellations. Counts belong solely to this frozen
+runtime. The new collision test was validated natively, without claiming
+additional Miri coverage.
+
+No resident case was remeasured: the 12 Upsert/RMW cases retain `5535671`
+evidence and the six Read cases retain `a6a3d2b` evidence under the targeted
+rerun rule. They are not new measurements of `cae705f`. The two shared-hot/4
+P99 recording exceptions, other known P99 differences and the Read boundary
+test's documented Miri limitation remain explicit.
+
+Evidence in `.perf-baseline/pr1-premerge-fourth-20261029/` includes 228 raw
+checkpoint run/recovery outputs, 940 SHA256-verified archived files, exact
+statistical recomputation, frozen source/binary manifests, assembly and all
+functional/stress logs. All 91 frozen source files, release binaries and four
+earlier evidence archives were unchanged through validation. The archive SHA256
+is `4b6062fd5dcc10e3be004289c36aac7e0c480abf779d4cdcf53fac7227aeb670`.
+Earlier failures remain intact. Disk, hotread, variable-length, compaction,
+F2, real-disk/O_DIRECT/io_uring and Azure scope did not expand. These are local
+acceptance results; no push, remote CI for the new commits, or merge occurred.
