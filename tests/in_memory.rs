@@ -342,6 +342,67 @@ fn upsert_read_variable_keys_with_dummy_hash() {
 }
 
 #[test]
+fn rmw_collision_chain_preserves_matching_record_and_append_paths() {
+    let store = variable_store::<true>();
+    let mut session = store.start_session();
+    for id in 0..3 {
+        let mut op = VarRequest::new(id, 8, 8);
+        op.data = ((id + 1) * 10).to_le_bytes().to_vec();
+        assert_eq!(session.upsert(&mut op, id), Status::Ok);
+    }
+
+    // The oldest key sits behind two different keys with the same hash.
+    let mut first = VarRequest::new(0, 8, 8);
+    first.increment = 7;
+    let tail = store.hlog.tail();
+    assert_eq!(session.rmw(&mut first, 3), Status::Ok);
+    assert_eq!(store.hlog.tail(), tail);
+
+    // Declining an in-place update must append, without entering fuzzy retry.
+    first.increment = 1;
+    first.suffix = vec![9; 16];
+    assert_eq!(session.rmw(&mut first, 4), Status::Ok);
+    assert!(store.hlog.tail() > tail);
+
+    let boundary = store.hlog.tail();
+    store.hlog.shift_read_only_to(boundary);
+    session.refresh();
+    assert_eq!(store.hlog.safe_read_only.load(), boundary);
+    let mut second = VarRequest::new(1, 8, 8);
+    second.increment = 5;
+    assert_eq!(session.rmw(&mut second, 5), Status::Ok);
+    assert!(store.hlog.tail() > boundary);
+
+    let mut deleted = VarRequest::new(2, 8, 8);
+    assert_eq!(session.delete(&deleted, 6), Status::Ok);
+    let tail = store.hlog.tail();
+    for id in [2, 3] {
+        let mut absent = VarRequest::new(id, 8, 8);
+        absent.increment = 1;
+        assert_eq!(
+            session.rmw_with_options(
+                &mut absent,
+                7,
+                RmwOptions {
+                    create_if_not_exists: false
+                }
+            ),
+            Status::NotFound
+        );
+        assert_eq!(store.hlog.tail(), tail);
+    }
+    deleted.increment = 4;
+    assert_eq!(session.rmw(&mut deleted, 8), Status::Ok);
+
+    for (id, value, suffix) in [(0, 18u64, vec![9; 16]), (1, 25, vec![]), (2, 4, vec![])] {
+        let mut op = VarRequest::new(id, 8, 8);
+        let mut expected = value.to_le_bytes().to_vec();
+        expected.extend(suffix);
+        assert_eq!(op.read(&mut session, 9), (Status::Ok, expected, false));
+    }
+}
+
+#[test]
 fn upsert_read_resize_value_concurrent() {
     let store = variable_store::<false>();
     std::thread::scope(|scope| {
