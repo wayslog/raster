@@ -64,18 +64,6 @@ struct Padded<T>(T);
 /// }
 /// ```
 pub struct HybridLog {
-    storage: Arc<HybridLogStorage>,
-    epoch: Arc<LightEpoch>,
-    device: Arc<dyn Device>,
-}
-
-/// Stable storage shared by the log handle and its deferred work.
-///
-/// This type is exposed only to preserve access to the log boundaries through
-/// `HybridLog`. It owns neither the epoch nor the device, so their queued work
-/// can keep frames alive without creating an ownership cycle.
-#[doc(hidden)]
-pub struct HybridLogStorage {
     frames: Box<[*mut u8]>,
     frame_mask: u64,
     page_size: u64,
@@ -83,8 +71,26 @@ pub struct HybridLogStorage {
     tail: Padded<AtomicU64>,
     pub begin: AtomicAddress,
     pub head: AtomicAddress,
-    pub safe_head: AtomicAddress,
     pub read_only: AtomicAddress,
+    page_bits: u32,
+    storage: Arc<HybridLogStorage>,
+    epoch: Arc<LightEpoch>,
+    device: Arc<dyn Device>,
+}
+
+/// Page ownership and completion state shared with deferred work.
+///
+/// This type is exposed only to preserve access to the log boundaries through
+/// `HybridLog`. Deferred actions update safe boundaries and flush completion
+/// after the handle may have moved or been dropped. Hot fields stay in the
+/// handle; its frame pointers borrow pages owned here. This storage owns neither
+/// the epoch nor the device, avoiding cycles through their queued work.
+#[doc(hidden)]
+pub struct HybridLogStorage {
+    frames: Box<[*mut u8]>,
+    frame_mask: u64,
+    page_size: u64,
+    pub safe_head: AtomicAddress,
     pub safe_read_only: AtomicAddress,
     pub flushed_until: AtomicAddress,
     page_bits: u32,
@@ -109,6 +115,14 @@ unsafe impl Send for HybridLogStorage {}
 // SAFETY: see above.
 unsafe impl Sync for HybridLogStorage {}
 
+// SAFETY: the inline frame pointers borrow pages owned by storage, which the
+// handle retains. Moving the handle does not move pages or callback state.
+// Page mutation uses the same epoch and publication protocol as storage.
+unsafe impl Send for HybridLog {}
+// SAFETY: shared page access follows that protocol; inline boundaries and the
+// tail are atomic, and the frame table and page geometry are immutable.
+unsafe impl Sync for HybridLog {}
+
 impl std::ops::Deref for HybridLog {
     type Target = HybridLogStorage;
 
@@ -124,7 +138,7 @@ impl HybridLog {
         let frames_len = config.memory_pages.max(4).next_power_of_two();
         let page_size = 1u64 << config.page_bits;
         let layout = Self::frame_layout(page_size);
-        let frames = (0..frames_len)
+        let frames: Box<[*mut u8]> = (0..frames_len)
             .map(|_| {
                 // SAFETY: non-zero size, valid alignment.
                 let frame = unsafe { alloc_zeroed(layout) };
@@ -139,16 +153,19 @@ impl HybridLog {
             ((frames_len as f64 * config.mutable_fraction) as u64).clamp(1, frames_len - 2);
         let start = Address::new(0, FIRST_VALID_OFFSET);
         Self {
+            frame_mask: frames_len - 1,
+            page_size,
+            mutable_pages,
+            tail: Padded(AtomicU64::new(FIRST_VALID_OFFSET)),
+            begin: AtomicAddress::new(start),
+            head: AtomicAddress::new(start),
+            read_only: AtomicAddress::new(start),
+            page_bits: config.page_bits,
             storage: Arc::new(HybridLogStorage {
-                frames,
+                frames: frames.clone(),
                 frame_mask: frames_len - 1,
                 page_size,
-                mutable_pages,
-                tail: Padded(AtomicU64::new(FIRST_VALID_OFFSET)),
-                begin: AtomicAddress::new(start),
-                head: AtomicAddress::new(start),
                 safe_head: AtomicAddress::new(start),
-                read_only: AtomicAddress::new(start),
                 safe_read_only: AtomicAddress::new(start),
                 flushed_until: AtomicAddress::new(start),
                 page_bits: config.page_bits,
@@ -159,6 +176,7 @@ impl HybridLog {
                 flush_failed: Default::default(),
                 recovery_written: false,
             }),
+            frames,
             epoch,
             device,
         }
@@ -448,21 +466,14 @@ impl HybridLog {
         let storage =
             Arc::get_mut(&mut self.storage).expect("recovery requires exclusive log storage");
         storage.recovery_written = true;
-        for boundary in [&storage.begin, &storage.head, &storage.safe_head] {
-            boundary.store(if std::ptr::eq(boundary, &storage.begin) {
-                begin
-            } else {
-                head
-            });
-        }
-        for boundary in [
-            &storage.read_only,
-            &storage.safe_read_only,
-            &storage.flushed_until,
-        ] {
+        self.begin.store(begin);
+        self.head.store(head);
+        storage.safe_head.store(head);
+        self.read_only.store(tail);
+        for boundary in [&storage.safe_read_only, &storage.flushed_until] {
             boundary.store(tail);
         }
-        storage.tail.0.store(
+        self.tail.0.store(
             (tail.page() << TAIL_OFFSET_BITS) | tail.offset(),
             Ordering::Release,
         );
@@ -491,7 +502,7 @@ impl HybridLog {
     /// Byte offset of `address` on the device.
     #[inline(always)]
     pub fn device_offset(&self, address: Address) -> u64 {
-        self.storage.device_offset(address)
+        (address.page() << self.page_bits) | address.offset()
     }
 
     /// Reads `len` bytes at `address` from the device.
