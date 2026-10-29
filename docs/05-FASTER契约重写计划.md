@@ -147,6 +147,8 @@ GrowIndex、ShiftBeginAddress、Compact（含 ConditionalInsert/lookup 版本）
 - 已完成 12 项/216 份样本复用，旧失败和诊断变体保留，没有重复实验或新增性能优化。
 - 仅在 review/alloc-fix-closeout 整理文档提交，原分支与备份保留，不 push；F2、真实磁盘/io_uring 和 Azure 范围不变。
 
+- 2026-10-29：按 docs/09 完成 begin 校验与恢复失败隔离；唯一一次热字段内联修复 `de1c56f` 复测仍未达 0.98（0.93900），按停止条件结束，最终压测仅 87/600 次，未 push／合入，详见 [docs/07](07-审查修复与重新验收.md)。
+
 ## 6. 后续事项
 
 - F2 冷热两级存储暂缓，包括冷索引、冷热压缩与恢复及对应测试；本轮操作选项作为其前置能力。
