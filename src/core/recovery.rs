@@ -43,7 +43,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     /// drop(scanner);
     /// ```
     /// Returns Aborted for a used log or storage still retained by deferred
-    /// work. After a partial page load fails, retry with a fresh store.
+    /// work. A failure once index loading starts leaves the store unavailable:
+    /// new sessions and recovery retries are rejected. Use a fresh store.
     pub fn recover(&mut self, index_token: Guid, log_token: Guid) -> Result<RecoveryInfo, Status> {
         let dirs = self.dirs.as_ref().ok_or(Status::IoError)?;
         let index_dir = dirs.index(index_token);
@@ -59,11 +60,16 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         {
             return Err(Status::Aborted);
         }
-        let result = self.recover_inner(index_dir, log_dir);
+        let mut index_load_started = false;
+        let result = self.recover_inner(index_dir, log_dir, &mut index_load_started);
         let version = result
             .as_ref()
             .map_or(rest.version, |info| info.version + 1);
-        self.state.store(SystemState::rest(version));
+        // Keeping Action::Recover after a possibly partial index load poisons
+        // this store through the existing session and action admission checks.
+        if result.is_ok() || !index_load_started {
+            self.state.store(SystemState::rest(version));
+        }
         result
     }
 
@@ -71,6 +77,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         &mut self,
         index_dir: std::path::PathBuf,
         log_dir: std::path::PathBuf,
+        index_load_started: &mut bool,
     ) -> Result<RecoveryInfo, Status> {
         let io = |_| Status::IoError;
         let index_meta = IndexMetadata::read(&index_dir).map_err(io)?;
@@ -98,6 +105,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         if tokens.len() != log_meta.sessions.len() {
             return Err(Status::Corruption);
         }
+        *index_load_started = true;
         self.index
             .read_checkpoint(&index_dir.join("ht.dat"), &index_dir.join("ofb.dat"))
             .map_err(|_| Status::Corruption)?;
@@ -449,6 +457,68 @@ mod tests {
             assert_eq!(store.recover(token, token).err(), Some(Status::Corruption));
             assert_eq!(device.0.load(Ordering::Relaxed), 0);
             assert_eq!(store.hlog.tail(), Address::new(0, 64));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_page_read_failure_poisoned_after_index_load() {
+        use crate::core::checkpoint::{CheckpointDirs, IndexMetadata, LogMetadata};
+        use crate::core::index::HashIndex;
+
+        let root = std::env::temp_dir().join(format!("raster-recover-poison-{}", Guid::new()));
+        let dirs = CheckpointDirs { root: root.clone() };
+        let token = Guid::new();
+        dirs.create(token).unwrap();
+        let index = HashIndex::new(16);
+        let begin = Address::new(0, 64);
+        let end = Address::new(0, 88);
+        assert!(index.find_or_create(1).try_update(begin));
+        let ofb_count = index
+            .write_checkpoint(
+                &dirs.index(token).join("ht.dat"),
+                &dirs.index(token).join("ofb.dat"),
+                &|address| address,
+            )
+            .unwrap();
+        for start in [begin, end] {
+            IndexMetadata {
+                version: 1,
+                table_size: 16,
+                ofb_count,
+                log_begin_address: begin,
+                checkpoint_start_address: start,
+            }
+            .write(&dirs.index(token))
+            .unwrap();
+            LogMetadata {
+                version: 1,
+                flushed_address: begin,
+                final_address: end,
+                ..Default::default()
+            }
+            .write(&dirs.log(token))
+            .unwrap();
+            let device = Arc::new(NoReads::default());
+            let mut store = FasterKv::<u64, u64>::with_device(
+                StoreConfig {
+                    index_buckets: 16,
+                    checkpoint_dir: Some(root.clone()),
+                    log: LogConfig {
+                        page_bits: 12,
+                        memory_pages: 4,
+                        mutable_fraction: 0.5,
+                    },
+                    ..Default::default()
+                },
+                device.clone(),
+            );
+            assert_eq!(store.recover(token, token).err(), Some(Status::IoError));
+            assert_eq!(device.0.load(Ordering::Relaxed), 1);
+            assert_eq!(store.index.find(1).unwrap().entry.address(), begin);
+            assert!(store.try_start_session().is_none());
+            assert_eq!(store.recover(token, token).err(), Some(Status::Aborted));
+            assert_eq!(device.0.load(Ordering::Relaxed), 1);
         }
         std::fs::remove_dir_all(root).unwrap();
     }
