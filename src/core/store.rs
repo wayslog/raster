@@ -700,6 +700,29 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 None => Attempt::Shift,
             };
         }
+        self.rmw_append::<CREATE, C>(
+            slot_id,
+            ctx,
+            slot,
+            RecordInfo::new(entry, mode.version, false),
+            address,
+            head,
+        )
+    }
+
+    /// Keeps allocation and copying out of the in-place update's hot path.
+    /// The caller retains its CPR guard until this attempt returns.
+    #[cold]
+    #[inline(never)]
+    fn rmw_append<const CREATE: bool, C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        slot: super::index::Slot<'_>,
+        info: RecordInfo,
+        address: Address,
+        head: Address,
+    ) -> Attempt {
         let source = (address >= head)
             .then(|| self.record(address))
             .filter(|record| !record.info().tombstone());
@@ -718,7 +741,6 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
         );
         let record = self.record(new_address);
-        let info = RecordInfo::new(entry, mode.version, false);
         if source.is_some() && address < self.hlog.head.load() {
             // Allocation refreshed the epoch and evicted the source. Write a
             // valid size header so scans can skip this abandoned allocation.
