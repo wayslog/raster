@@ -109,6 +109,63 @@ fn upsert_then_read() {
 }
 
 #[test]
+fn reads_remain_atomic_until_the_read_only_shift_is_epoch_safe() {
+    #[derive(Clone)]
+    struct ObservedRead {
+        key: u64,
+        atomic: Option<bool>,
+        output: u64,
+    }
+    // SAFETY: the context owns its complete fixed-size key across clones.
+    unsafe impl KeyContext<u64> for ObservedRead {
+        fn key(&self) -> &u64 {
+            &self.key
+        }
+    }
+    impl ReadContext<u64, AtomicU64> for ObservedRead {
+        fn get(&mut self, value: &AtomicU64) {
+            self.atomic = Some(false);
+            self.output = value.load(Ordering::Relaxed);
+        }
+        fn get_atomic(&mut self, value: &AtomicU64) {
+            self.atomic = Some(true);
+            self.output = value.load(Ordering::SeqCst);
+        }
+    }
+    let store = small_store(64);
+    let mut session = store.start_session();
+    let first = store.hlog.tail();
+    assert_eq!(session.upsert(&mut Op::new(0, 10), 1), Status::Ok);
+    let mut read = ObservedRead {
+        key: 0,
+        atomic: None,
+        output: 0,
+    };
+    assert_eq!(session.read(&mut read, 2), Status::Ok);
+    assert_eq!((read.atomic, read.output), (Some(true), 10));
+
+    let boundary = store.hlog.tail();
+    store.hlog.shift_read_only_to(boundary);
+    assert_eq!(store.hlog.read_only.load(), boundary);
+    assert_eq!(store.hlog.safe_read_only.load(), first);
+    read.atomic = None;
+    assert_eq!(session.read(&mut read, 3), Status::Ok);
+    assert_eq!((read.atomic, read.output), (Some(true), 10));
+
+    session.refresh();
+    assert_eq!(store.hlog.safe_read_only.load(), boundary);
+    read.atomic = None;
+    assert_eq!(session.read(&mut read, 4), Status::Ok);
+    assert_eq!((read.atomic, read.output), (Some(false), 10));
+
+    assert_eq!(session.upsert(&mut Op::new(1, 20), 5), Status::Ok);
+    read.key = 1;
+    read.atomic = None;
+    assert_eq!(session.read(&mut read, 6), Status::Ok);
+    assert_eq!((read.atomic, read.output), (Some(true), 20));
+}
+
+#[test]
 fn records_age_into_read_only_region_and_copy_on_update() {
     let store = small_store(1 << 12);
     let mut session = store.start_session();
