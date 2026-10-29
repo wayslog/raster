@@ -1,5 +1,9 @@
 # C++ comparison driver
 
+Latest acceptance: the [2026-10-29 premerge validation](#pr1-premerge-validation-2026-10-29-stopped)
+stopped after the sole permitted repair still failed the throughput gate.
+Earlier passing matrices below apply only to their named frozen runtimes.
+
 `memory.cc` runs resident integer Read, Upsert, and RMW workloads directly against FASTER C++ at the pinned commit. The Rust counterpart (`examples/parity.rs`) must keep identical keys, hashing, values, refresh cadence, timing, sampling, and output fields so that both engines produce identical checksums and digests.
 
 ```sh
@@ -211,3 +215,82 @@ Historical results and rejected candidates are preserved in the original branch,
 backup tags and `.perf-baseline/closeout/notes/`. They are not acceptance evidence
 for a different source build. F2, real-disk/io_uring comparisons and Azure remain
 outside this closeout. No push was performed.
+
+## PR1 premerge validation, 2026-10-29: stopped
+
+Acceptance under docs/09 is incomplete. Correctness repairs are `d594403`
+(shared GC/recovery boundary validation) and `5535671` (reject sessions and
+recovery retries after an index-load-stage failure). The sole permitted hot-field
+repair is `de1c56f`; it remains local and failed the throughput gate. No push,
+merge, second repair, added samples, or diagnostic workload was performed.
+
+At `de1c56f`, fmt, Clippy with `-D warnings`, Debug/Release (144 runtime and
+11 compile-fail tests each), seven Miri checks, and 13 release binaries x 30
+rounds passed. The three checkpoint stress processes each completed 29 of 200
+rounds: 87 passes, zero test failures, and three in-flight processes cancelled
+at the performance stop. This does not satisfy the 600-run requirement. Earlier
+stress results from `5535671` are separate and cannot be pooled with these.
+
+### Initial frozen runtime: 5535671
+
+Each resident case has six balanced three-engine orders. C++ is `321d872e`,
+Rust baseline is `746c562`. H2, applicable H3, and business checks passed;
+six Read cases failed the 0.98 baseline-throughput gate. These results do not
+constitute a complete matrix for `de1c56f`.
+
+| Workload | Speed/C++ | P99/C++ | Speed/base | P99/base | Result |
+|---|---:|---:|---:|---:|---|
+| memory/read/uniform/1 | 2.63035 | 0.54455 | 0.85350 | 1.00000 | throughput failed |
+| memory/read/uniform/4 | 2.47807 | 0.56504 | 0.90963 | 1.03731 | throughput failed |
+| memory/read/worker-hot/1 | 2.75167 | 0.50980 | 0.89687 | 1.00000 | throughput failed |
+| memory/read/worker-hot/4 | 2.75063 | 0.51232 | 0.89496 | 1.00000 | throughput failed |
+| memory/read/shared-hot/1 | 2.68707 | 0.51232 | 0.89728 | 1.00000 | throughput failed |
+| memory/read/shared-hot/4 | 2.68368 | 0.51232 | 0.89387 | 1.00000 | throughput failed |
+| memory/upsert/uniform/1 | 2.21403 | 0.60944 | 1.02450 | 1.04412 | passed |
+| memory/upsert/uniform/4 | 2.28836 | 0.68908 | 1.06934 | 1.03361 | passed |
+| memory/upsert/worker-hot/1 | 2.30405 | 0.58036 | 1.06182 | 1.03175 | passed |
+| memory/upsert/worker-hot/4 | 2.28603 | 0.58036 | 1.06487 | 1.03175 | passed |
+| memory/upsert/shared-hot/1 | 2.31769 | 0.58559 | 1.06795 | 1.03175 | passed |
+| memory/upsert/shared-hot/4 | 1.29521 | 1.09670 | 1.00043 | 1.05079 | P99 record only |
+| memory/rmw/uniform/1 | 2.07587 | 0.61607 | 0.99525 | 1.00000 | passed |
+| memory/rmw/uniform/4 | 2.01518 | 0.78683 | 1.07075 | 1.05462 | passed |
+| memory/rmw/worker-hot/1 | 2.12541 | 0.61215 | 1.00961 | 1.03150 | passed |
+| memory/rmw/worker-hot/4 | 2.12828 | 0.59535 | 1.00957 | 1.01587 | passed |
+| memory/rmw/shared-hot/1 | 2.09310 | 0.59813 | 1.00939 | 1.01587 | passed |
+| memory/rmw/shared-hot/4 | 1.26116 | 0.84342 | 0.98045 | 1.01630 | P99 record only |
+
+All four fresh 64-pair A/A intervals fit [0.98, 1/0.98]. The subsequent
+36-round comparison used two warmups per label, seed 20261014, and 20,000
+order-stratified bootstrap samples. All recovery checks passed. Overall
+throughput failed H5; the other three H5 metrics and all four C++ metrics passed.
+
+| Metric | Speed/C++ | Speed/base | Base 95% interval | A/A 95% interval |
+|---|---:|---:|---:|---:|
+| mops | 1.67502 | 0.98445 | 0.979413-0.989311 | 0.993424-1.007872 |
+| checkpoint_ns | 1.04591 | 1.00236 | 1.001788-1.003889 | 0.996746-1.002853 |
+| mops_during | 1.31262 | 0.99110 | 0.988694-0.993740 | 0.995792-1.002940 |
+| recover_ns | 1.50804 | 0.99231 | 0.991321-0.994520 | 0.998936-1.000972 |
+
+### Sole repair: de1c56f
+
+Hot tail, frame pointers, page geometry, begin/head/read_only are inline again.
+Page ownership and asynchronously updated safe boundaries remain shared so that
+moving or dropping a handle does not invalidate callbacks. Exclusive recovery
+is preserved. The first failed resident workload was retested with six orders:
+
+| Workload | Speed/C++ | P99/C++ | Speed/base | P99/base | Result |
+|---|---:|---:|---:|---:|---|
+| memory/read/uniform/1 | 2.89729 | 0.52941 | 0.93900 | 0.98182 | failed; stopped |
+
+The baseline ratio improved from 0.85350 to 0.93900, still below 0.98. The
+remaining five failed Read cases and the repaired checkpoint comparison were
+not run after this stop. The approved A/A was retained without rerunning it.
+
+The initial 816 engine outputs and the repair's 18 outputs were archived,
+SHA256-verified, and independently replayed for business, affinity, and statistics.
+Evidence: `.perf-baseline/pr1-premerge-20261029/` and
+`.perf-baseline/pr1-premerge-hotfields-20261029/`. Source/archive/binary hashes
+and cancellation receipts are retained there. Historical P99 control widths
+and known deviations are in docs/07; no new causal attribution was made.
+Disk, hotread, variable-length and compaction matrices were outside this rerun.
+F2, real-disk/O_DIRECT/io_uring work, and Azure remain outside this closeout.
