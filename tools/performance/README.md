@@ -1,8 +1,8 @@
 # C++ comparison driver
 
-Latest acceptance: the [second premerge repair](#second-premerge-repair-2026-10-29-checkpoint-gate-failed)
-passed the six failed Read cases but stopped at the checkpoint throughput gate.
-Earlier passing matrices below apply only to their named frozen runtimes.
+Latest acceptance: the [third premerge repair](#third-premerge-repair-2026-10-29-checkpoint-gate-still-failed)
+improved the checkpoint throughput estimate, but its confidence interval still
+fails the unchanged H5 gate. Earlier matrices retain their named runtimes.
 
 `memory.cc` runs resident integer Read, Upsert, and RMW workloads directly against FASTER C++ at the pinned commit. The Rust counterpart (`examples/parity.rs`) must keep identical keys, hashing, values, refresh cadence, timing, sampling, and output fields so that both engines produce identical checksums and digests.
 
@@ -360,3 +360,64 @@ outputs, 228 checkpoint run/recovery outputs, SHA256-verified archives and
 source/binary manifests, independent recomputation, and stop receipts. Earlier
 failure evidence remains unchanged. Disk, hotread, variable-length, compaction,
 F2, real-disk/O_DIRECT/io_uring and Azure scope did not expand.
+
+## Third premerge repair, 2026-10-29: checkpoint gate still failed
+
+The user authorized a third targeted repair without changing acceptance gates
+or allowing a push. Frozen runtime `56f0385` extracts RMW allocation, copying,
+and publication into a cold, non-inlined rmw_append helper. The caller retains
+its CPR guard through the call. The original index slot and address/head
+snapshots, pre-allocation source size, post-allocation head check, invalid
+record initialization, CREATE=false behavior and retries are preserved.
+Deferred callback ownership and exclusive recovery are unchanged.
+
+Descriptive analysis of the second attempt placed 99.25% of its net extra
+elapsed time outside the checkpoint window. That interval also includes
+startup, completion and draining, so it is not a pure REST measurement.
+The frozen worker shrank from 3,759 to 3,056 bytes, with its stack frame reduced
+from 488 to 456 bytes. Static code size does not establish performance acceptance.
+
+Only the failed checkpoint comparison was rerun: 36 balanced rounds, two
+warmups per label, the accepted 64-pair control, seed 20261014, and 20,000
+order-stratified bootstrap samples. The runner, statistics and affinity helpers
+are byte-identical to the second attempt. Control data and all reference hashes
+were verified; no driver changes, omitted samples or additional samples occurred.
+
+| Metric | Speed/C++ | Speed/base | Base 95% interval | H5 |
+|---|---:|---:|---:|---|
+| mops | 1.61784 | 0.98997 | 0.978282-1.001217 | failed |
+| checkpoint_ns | 1.03500 | 0.99944 | 0.998987-1.001942 | passed |
+| mops_during | 1.30181 | 1.00136 | 0.995961-1.003990 | passed |
+| recover_ns | 1.51310 | 1.00039 | 0.999579-1.001232 | passed |
+
+Overall throughput improved from the preceding batch's 0.97440 estimate to
+0.98997, about 1.00% below the fixed Rust baseline. Its lower confidence limit,
+0.978282, remains below 0.98. The other three H5 metrics, all four C++ median
+speed gates, recovery business checks and affinity receipts pass. The point
+estimate cannot substitute for the confidence-limit requirement.
+
+Fmt, Clippy with -D warnings, Debug/Release (145 runtime and 11 compile-fail
+tests each, one existing ignored timing test), and seven existing Miri checks
+passed. All 13 release binaries passed 30 rounds each, totaling 390 passes.
+Checkpoint stress stopped at 43/200 rounds per process: 129 passes, zero test
+failures, and three in-flight runs cancelled after H5 failed. The required
+600 stress runs and final acceptance remain incomplete. There was no fourth
+repair, automatic rollback, push or merge.
+
+No resident case was measured for this runtime. Under the targeted rerun rule,
+the 12 Upsert/RMW cases retain their `5535671` evidence and the six Read cases
+retain their `a6a3d2b` evidence. They are not new measurements of `56f0385`.
+The two shared-hot/4 P99 recording exceptions, other known P99 differences,
+and the new Read test's previously documented Miri limitation remain explicit.
+
+Evidence in `.perf-baseline/pr1-premerge-third-20261029/` includes 228 raw
+checkpoint run/recovery outputs, 940 SHA256-verified archived files, source and
+binary manifests, static assembly, independent recomputation and stop receipts.
+All 91 frozen source files, release binaries and three earlier evidence archives
+were unchanged at stop. The local median-speed recomputation for checkpoint_ns
+differed by one ULP (about 1.11e-16); the failed exact comparison was retained.
+All confidence limits match exactly and no tolerance was applied to the H5 gate.
+The archive SHA256 is
+`3ea3f5e9c92f28a175731691132d08a39c2229621b2f1ce8508b66d988210bd4`.
+Disk, hotread, variable-length, compaction, F2, real-disk/O_DIRECT/io_uring and
+Azure scope did not expand.
