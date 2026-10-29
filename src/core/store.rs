@@ -678,27 +678,38 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Gate::Shift => return Attempt::Shift,
             Gate::RetryLater => return Attempt::RetryLater(mode.holds_old),
         }
-        let address = self.trace_back(ctx, entry, head);
-        if address >= read_only {
-            if gate == Gate::Normal {
-                let record = self.record(address);
-                // SAFETY: published record in the mutable region.
-                if !record.info().tombstone() && ctx.rmw_atomic(unsafe { record.value() }) {
+        let mut address = entry;
+        while address >= head {
+            let record = self.record(address);
+            // SAFETY: published record protected by the session's epoch.
+            if ctx.key_equals(unsafe { record.key() }) {
+                // Reuse the matching record instead of resolving its frame again.
+                if address >= read_only
+                    && gate == Gate::Normal
+                    && !record.info().tombstone()
+                    // SAFETY: published record in the mutable region.
+                    && ctx.rmw_atomic(unsafe { record.value() })
+                {
                     return Attempt::Done(Status::Ok);
                 }
+                break;
             }
-        } else if address >= self.hlog.safe_read_only.load() {
-            // Fuzzy region: another session may still update in place, so a
-            // copy could lose its update. Retry once safe_read_only advances.
-            return match self.mark_pending(mode, hash, guard) {
-                Some(marked) => Attempt::RetryLater(marked),
-                None => Attempt::Shift,
-            };
-        } else if address >= self.hlog.begin.load() && address < head {
-            return match self.mark_pending(mode, hash, guard) {
-                Some(marked) => Attempt::Disk(address, entry, marked),
-                None => Attempt::Shift,
-            };
+            address = record.info().previous();
+        }
+        if address < read_only {
+            if address >= self.hlog.safe_read_only.load() {
+                // Fuzzy region: another session may still update in place, so a
+                // copy could lose its update. Retry once safe_read_only advances.
+                return match self.mark_pending(mode, hash, guard) {
+                    Some(marked) => Attempt::RetryLater(marked),
+                    None => Attempt::Shift,
+                };
+            } else if address >= self.hlog.begin.load() && address < head {
+                return match self.mark_pending(mode, hash, guard) {
+                    Some(marked) => Attempt::Disk(address, entry, marked),
+                    None => Attempt::Shift,
+                };
+            }
         }
         self.rmw_append::<CREATE, C>(
             slot_id,
