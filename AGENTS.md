@@ -1,5 +1,12 @@
 # Agent work agreement
 
+## Language
+
+Use Chinese when communicating with the user. Write source code, comments,
+diagnostics, tests, scripts, and configuration files in English, including GitHub
+Actions workflows. Standalone documents under `docs/` may remain in Chinese;
+configuration examples under that directory must use English.
+
 ## Agent skills
 
 ### Issue tracker

@@ -1,37 +1,39 @@
 # RasterKV domain terminology
 
-RasterKV is a Rust embedded key-value store that reproduces the functional and behavioral baseline of FASTER C++. Phase I uses an independent on-disk format. F2 and hot/cold tiering are deferred to a later phase.
+RasterKV is a Rust implementation of FASTER that follows the FASTER C++ contract. Terms below match the upstream concepts.
 
 ## Language
 
-**Storage instance (RasterKV):** The complete keyspace, index, log, and recovery history. Do not call it a session.
+**Store (RasterKV):** The complete keyspace, hash index, hybrid log, and checkpoint history. Do not call it a session.
 
-**Session:** An ordered stream of application operations with an independent identity and resumable progress. Do not use "affair" or "connection" for this concept.
+**Session:** A thread's execution context against the store. It holds epoch protection, the serial number, the current phase and version, and its pending and retry queues. A session must call `refresh` periodically; an unrefreshed session blocks memory reclamation and phase changes.
 
-**Operation number (serial):** The monotonic identifier supplied for a commit operation within one session. It is distinct from a log address, completion order, and global transaction number.
+**Serial number:** The monotonic operation identifier supplied by the caller within one session. CPR checkpoints record per-session serial numbers as the recovery boundary.
 
-**Operation completion:** An operation has final results that the caller can collect. Completion does not imply persistence or checkpoint submission.
+**Status:** The result of an operation: `Ok`, `Pending`, `NotFound`, `Aborted`, `OutOfMemory`, `IoError`, `Corruption`, or `InvalidArgument`. `Pending` means the operation context was copied into the session and completes later through `complete_pending`.
 
-**Durable progress:** The session recovery boundary guaranteed by successful checkpoints. It is not simply the largest sequence number returned to the caller.
+**Epoch protection:** The light-epoch mechanism that defers reclamation (page eviction, index growth, buffer reuse) until every protected session has moved past the epoch in which the resource was retired.
 
-**Checkpoint:** Persistable index state, log state, or both, together with the recovery information that binds them.
+**Log address:** A 48-bit location in the hybrid-log address space, composed of a page number and an offset within the page. It is not a memory pointer.
 
-**Recovery set:** A composable index checkpoint and log checkpoint plus the information required to verify that they match.
+**Hybrid log:** The address-ordered record space with a mutable in-memory tail, a read-only in-memory region, and a stable on-disk region. Boundaries are the begin, head, read-only, and tail addresses.
 
-**Log address:** The location of a record in the hybrid-log address space. It is not a memory pointer or a count of valid keys.
+**Record:** An 8-byte `RecordInfo` header (previous address, checkpoint version, invalid, tombstone, final bits) followed by the inline key and value. Keys and values may have trailing inline payloads; their `size()` reports allocation size, including that payload. A complete record fits in one log page.
 
-**Hybrid log:** An address-ordered record space containing mutable in-memory records as well as stable log and disk history. It is not an append-only WAL abstraction.
+**Key context:** The operation's key view. A shallow context may own external request bytes and provide hashing, equality, allocation size, and deep writing without materializing a complete inline key.
 
-**Tombstone:** A record that marks a key as deleted and masks older records. It does not mean that a physical file was deleted.
+**Value slot:** Exclusive unpublished storage supplied to the context for initializing a new value. It includes the fixed header and any inline payload.
 
-**Blind delete:** A delete that does not read old disk records to determine whether a live value existed. Success means that the delete took effect; the returned result still depends on discoverable index entries.
+**In-place update:** An update applied directly to a record in the mutable region. Concurrency safety of in-place updates is the responsibility of the value type.
 
-**Forced tombstone:** A delete that retains a queryable tombstone and keeps the corresponding index entry reachable. Later overwrites and explicit truncation still follow the normal lifecycle.
+**Tombstone:** A record that marks a key as deleted and masks older records.
 
-**Safe frontier:** The location after participating access has met the required safety conditions, so disk flush or recycling can proceed. Do not call this the target boundary.
+**CPR checkpoint:** A concurrent prefix-recovery checkpoint of the index, the hybrid log, or both, using the phases Prepare, InProgress, WaitPending, WaitFlush, PersistenceCallback, and Rest.
 
-**Compaction:** Identify and migrate records that must be retained in order to reduce expired history. It is not byte compression or unconditional truncation.
+**Compaction:** Copying live records from the beginning of the log to the tail so that the log begin address can advance.
 
-**Shift begin:** Make an old part of the log fall outside the valid address range. It does not automatically preserve the newest value in the truncated range.
+**Compaction assistance:** A writer above a configured log budget claims a bounded page batch from the active compaction. All page owners must finish their pending copies before truncation.
 
-**Record scan:** Traverse physical records by log address. It is not a current valid-key snapshot or a range-ordered query.
+**Compaction result:** Completed copy and truncation progress plus a separate optional checkpoint outcome. A failed checkpoint does not undo a completed compaction.
+
+**Shift begin address:** Making the oldest part of the log invalid and reclaimable.
