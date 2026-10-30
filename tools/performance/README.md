@@ -486,3 +486,23 @@ is `4b6062fd5dcc10e3be004289c36aac7e0c480abf779d4cdcf53fac7227aeb670`.
 Earlier failures remain intact. Disk, hotread, variable-length, compaction,
 F2, real-disk/O_DIRECT/io_uring and Azure scope did not expand. These are local
 acceptance results; no push, remote CI for the new commits, or merge occurred.
+
+## Final resident matrix and merge decision, 2026-10-30
+
+Runtime `cae705f`, measured per docs/10 with the frozen binaries: three engines, six permutations per case. All gates against C++ (H2, H3 with the two shared-hot P99 record-only cases, H4) pass. Against the fixed Rust baseline `746c562`, 13 of 18 cases reach throughput ≥ 0.98; the five failing cases are all Read:
+
+| Case | Throughput/base |
+|---|---:|
+| read/uniform/1 | 0.93628 |
+| read/worker-hot/1 | 0.94518 |
+| read/worker-hot/4 | 0.94353 |
+| read/shared-hot/1 | 0.94541 |
+| read/shared-hot/4 | 0.94638 |
+
+The Read hit path is unchanged since `a6a3d2b`. The difference comes from code layout on the Skylake-SP benchmark host, which is sensitive to conditional jumps crossing 32-byte boundaries (Intel JCC microcode mitigation).
+- A same-length patch that moved one NOP so a single JNE no longer crossed a boundary gained about 1.9%.
+- Building with `-C llvm-args=-x86-branches-within-32B-boundaries` cut whole-process DSB→MITE penalties by 83.7% and brought all six Read cases to 1.05–1.13 × base (candidate `4ced43b`, not adopted).
+
+Whole-run checkpoint throughput also cannot resolve 2% differences with the current method. Two same-binary A/A controls gave [0.99730, 1.03945] and [0.97436, 1.00362]. `cae705f` passed H5 (lower bound 0.983432); `4ced43b` did not (0.972539).
+
+Decision: merge `cae705f` without extra build flags. These Rust-vs-Rust deviations are recorded as known deviations. A fair rerun should rebuild both baseline and candidate with the same alignment option, or use a non-Skylake host. Evidence: `.perf-baseline/pr1-final-resident-20261029/`, `pr1-read-layout-20261029/`, `pr1-read-alignment-20261029/`, `pr1-checkpoint-cause-20261030/`.

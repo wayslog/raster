@@ -155,6 +155,8 @@ GrowIndex、ShiftBeginAddress、Compact（含 ConditionalInsert/lookup 版本）
 
 - 2026-10-29 第四次追加授权：`cae705f` 复用 RMW 查找命中的记录，普通命中减少一次帧解析。36 轮检查点四项 H5 及对 C++ 门槛全过；全程吞吐点估计 0.98805，原 95% 下界门槛按 0.983432 通过。完整功能、390 次重复和独立 600 次压力验证全过；驻留沿用具名提交证据，旧失败保留，未 push／合入，详见 docs/07。
 
+- 2026-10-30：按用户决策以 `cae705f` 合入。`cae705f` 驻留 13/18 项满足对基线 0.98，5 项 Read 约 0.94，根因为基准机 Skylake 的分支对齐敏感性；检查点全程吞吐的同二进制对照分辨不出 2% 差异。对 C++ 门槛与功能门槛全部通过；偏差与证据见 docs/07 首节。
+
 ## 6. 后续事项
 
 - F2 冷热两级存储暂缓，包括冷索引、冷热压缩与恢复及对应测试；本轮操作选项作为其前置能力。
@@ -162,3 +164,4 @@ GrowIndex、ShiftBeginAddress、Compact（含 ConditionalInsert/lookup 版本）
 - Azure Blob／本地分层存储按既定范围不实现。
 - snapshot 日志检查点不列为当前缺口：固定 C++ 版本的 fold_over_snapshot 为编译期 true，snapshot 路径不可达。
 - 可选 Stats 计数器本轮不增加。
+- 在统一分支对齐选项或非 Skylake 机器上重做 Rust 对 Rust 基线对比；评估发布构建是否默认启用分支 32 字节对齐。
