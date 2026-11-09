@@ -230,6 +230,11 @@ fn auto_compaction_keeps_the_log_near_its_budget() {
             });
         }
     });
+    // Give the background worker time to compact the final writes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while store.log_size() >= 4 * BUDGET && std::time::Instant::now() < deadline {
+        std::thread::sleep(config.check_interval);
+    }
     drop(compactor);
     assert!(
         store.hlog.begin.load() > begin,
