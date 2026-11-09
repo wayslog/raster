@@ -112,6 +112,10 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         self.serial
     }
 
+    pub(crate) fn set_serial(&mut self, serial: u64) {
+        self.serial = serial;
+    }
+
     /// Number of operations still waiting in `complete_pending`.
     pub fn pending_count(&self) -> usize {
         self.pending.len()
@@ -132,7 +136,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
-        self.read_configured::<false, C>(ctx, serial)
+        self.read_configured::<false, C, _>(ctx, serial, C::on_complete)
     }
 
     pub fn read_with_options<C>(&mut self, ctx: &mut C, serial: u64, options: ReadOptions) -> Status
@@ -140,16 +144,22 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         C: ReadContext<K, V> + Clone + 'static,
     {
         if options.abort_if_tombstone {
-            self.read_configured::<true, C>(ctx, serial)
+            self.read_configured::<true, C, _>(ctx, serial, C::on_complete)
         } else {
-            self.read_configured::<false, C>(ctx, serial)
+            self.read_configured::<false, C, _>(ctx, serial, C::on_complete)
         }
     }
 
     #[inline]
-    fn read_configured<const ABORT: bool, C>(&mut self, ctx: &mut C, serial: u64) -> Status
+    pub(crate) fn read_configured<const ABORT: bool, C, F>(
+        &mut self,
+        ctx: &mut C,
+        serial: u64,
+        complete: F,
+    ) -> Status
     where
         C: ReadContext<K, V> + Clone + 'static,
+        F: FnMut(&mut C, Status) + 'static,
     {
         if self.phase != Phase::Rest {
             self.heavy_enter();
@@ -169,8 +179,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     };
                     return self.suspend(
                         outcome,
-                        PendingRead::<C, ABORT> {
+                        PendingRead::<C, F, ABORT> {
                             ctx: ctx.clone(),
+                            complete,
                             observed,
                             truncations: self
                                 .store
@@ -199,8 +210,9 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             Outcome::Done(status) => status,
             Outcome::Disk { .. } => self.suspend(
                 outcome,
-                PendingRead::<C, false> {
+                PendingRead::<C, _, false> {
                     ctx: ctx.clone(),
+                    complete: C::on_complete,
                     observed: entry,
                     truncations: self
                         .store
@@ -257,7 +269,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     where
         C: RmwContext<K, V> + Clone + 'static,
     {
-        self.rmw_configured::<true, C>(ctx, serial)
+        self.rmw_configured::<true, false, C, _>(ctx, serial, C::on_complete)
     }
 
     pub fn rmw_with_options<C>(&mut self, ctx: &mut C, serial: u64, options: RmwOptions) -> Status
@@ -265,16 +277,22 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         C: RmwContext<K, V> + Clone + 'static,
     {
         if options.create_if_not_exists {
-            self.rmw_configured::<true, C>(ctx, serial)
+            self.rmw_configured::<true, false, C, _>(ctx, serial, C::on_complete)
         } else {
-            self.rmw_configured::<false, C>(ctx, serial)
+            self.rmw_configured::<false, false, C, _>(ctx, serial, C::on_complete)
         }
     }
 
     #[inline(always)]
-    fn rmw_configured<const CREATE: bool, C>(&mut self, ctx: &mut C, serial: u64) -> Status
+    pub(crate) fn rmw_configured<const CREATE: bool, const ABORT: bool, C, F>(
+        &mut self,
+        ctx: &mut C,
+        serial: u64,
+        complete: F,
+    ) -> Status
     where
         C: RmwContext<K, V> + Clone + 'static,
+        F: FnMut(&mut C, Status) + 'static,
     {
         if !self.plain {
             self.heavy_enter();
@@ -287,7 +305,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         loop {
             match self
                 .store
-                .internal_rmw::<CREATE, C>(self.slot(), ctx, self.mode())
+                .internal_rmw::<CREATE, ABORT, C>(self.slot(), ctx, self.mode())
             {
                 Outcome::Done(status) => return status,
                 Outcome::Shift => self.shift(previous, serial),
@@ -296,14 +314,36 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                         Outcome::Disk { observed, .. } => observed,
                         _ => Address::default(),
                     };
-                    let op = PendingRmw::<C, CREATE> {
+                    let op = PendingRmw::<C, F, CREATE, ABORT> {
                         ctx: ctx.clone(),
+                        complete,
                         observed,
                     };
                     return self.suspend(outcome, op);
                 }
             }
         }
+    }
+
+    pub(crate) fn rmw_head(&self, hash: u64) -> Address {
+        self.store
+            .index
+            .find(hash)
+            .map_or(Address::INVALID, |slot| {
+                self.store.skip_read_cache(slot.entry.address())
+            })
+    }
+
+    pub(crate) fn insert_rmw_if_head<C: RmwContext<K, V>>(
+        &self,
+        ctx: &mut C,
+        expected: Address,
+        source: Option<&V>,
+    ) -> Status {
+        // Routed sessions drain before starting a hot checkpoint.
+        debug_assert_eq!(self.phase, Phase::Rest);
+        self.store
+            .insert_rmw_if_head(self.slot(), ctx, self.version, expected, source)
     }
 
     #[inline]

@@ -169,6 +169,20 @@ pub trait ReadContext<K: Key, V: Value>: KeyContext<K> {
     fn get_atomic(&mut self, value: &V) {
         self.get(value)
     }
+    /// # Safety
+    /// The pointer covers the complete initialized value allocation during
+    /// this call. Access must use the atomic protocol when `atomic` is true.
+    #[doc(hidden)]
+    #[inline(always)]
+    unsafe fn get_from_log(&mut self, value: *const V, atomic: bool) {
+        // SAFETY: the caller supplies a live value for the callback.
+        let value = unsafe { &*value };
+        if atomic {
+            self.get_atomic(value);
+        } else {
+            self.get(value);
+        }
+    }
     fn on_complete(&mut self, _status: crate::core::Status) {}
 }
 

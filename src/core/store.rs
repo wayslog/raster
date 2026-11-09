@@ -400,16 +400,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     Status::NotFound
                 });
             }
-            // SAFETY: published record; the value lives while we are protected.
-            let value = unsafe { record.value() };
             // safe_read_only never exceeds read_only. Mutable-tail reads can
             // use the inline boundary without following shared flush state;
             // the fuzzy region still needs the epoch-safe boundary.
-            if address >= self.hlog.read_only.load() || address >= self.hlog.safe_read_only.load() {
-                ctx.get_atomic(value);
-            } else {
-                ctx.get(value);
-            }
+            let atomic =
+                address >= self.hlog.read_only.load() || address >= self.hlog.safe_read_only.load();
+            // SAFETY: The complete published value stays live under the epoch.
+            unsafe { ctx.get_from_log(record.value_ptr(), atomic) };
             Outcome::Done(Status::Ok)
         } else if address < self.hlog.begin.load() {
             Outcome::Done(Status::NotFound)
@@ -566,36 +563,42 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     }
 
     #[inline(always)]
-    pub(crate) fn internal_rmw<const CREATE: bool, C: RmwContext<K, V>>(
+    pub(crate) fn internal_rmw<const CREATE: bool, const ABORT: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
         if mode.plain {
-            self.rmw_loop::<true, false, CREATE, C>(slot_id, ctx, mode)
+            self.rmw_loop::<true, false, CREATE, ABORT, C>(slot_id, ctx, mode)
         } else {
-            self.rmw_general::<CREATE, C>(slot_id, ctx, mode)
+            self.rmw_general::<CREATE, ABORT, C>(slot_id, ctx, mode)
         }
     }
 
     /// RMWs outside the plain fast path, kept out of line.
     #[inline(never)]
-    fn rmw_general<const CREATE: bool, C: RmwContext<K, V>>(
+    fn rmw_general<const CREATE: bool, const ABORT: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
     ) -> Outcome {
         if mode.phase == Phase::Rest {
-            self.rmw_loop::<true, true, CREATE, C>(slot_id, ctx, mode)
+            self.rmw_loop::<true, true, CREATE, ABORT, C>(slot_id, ctx, mode)
         } else {
-            self.rmw_loop::<false, true, CREATE, C>(slot_id, ctx, mode)
+            self.rmw_loop::<false, true, CREATE, ABORT, C>(slot_id, ctx, mode)
         }
     }
 
     #[inline(always)]
-    fn rmw_loop<const REST: bool, const RC: bool, const CREATE: bool, C: RmwContext<K, V>>(
+    fn rmw_loop<
+        const REST: bool,
+        const RC: bool,
+        const CREATE: bool,
+        const ABORT: bool,
+        C: RmwContext<K, V>,
+    >(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -603,7 +606,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     ) -> Outcome {
         let hash = ctx.key_hash();
         loop {
-            match self.rmw_attempt::<REST, RC, CREATE, C>(slot_id, ctx, mode, hash) {
+            match self.rmw_attempt::<REST, RC, CREATE, ABORT, C>(slot_id, ctx, mode, hash) {
                 Attempt::Done(status) => return Outcome::Done(status),
                 Attempt::Disk(address, observed, marked) => {
                     return Outcome::Disk {
@@ -621,18 +624,18 @@ impl<K: Key, V: Value> FasterKv<K, V> {
 
     /// Continues an RMW whose source came from the device (`None` if the key
     /// was not found there). Restarts if a newer record was published meanwhile.
-    pub(crate) fn rmw_from_disk<const CREATE: bool, C: RmwContext<K, V>>(
+    pub(crate) fn rmw_from_disk<const CREATE: bool, const ABORT: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
         mode: OpMode,
         observed: Address,
-        source: Option<&V>,
+        source: Option<(&V, bool)>,
     ) -> Outcome {
         let hash = ctx.key_hash();
         let slot = self.index.find_or_create(hash);
         if self.skip_and_invalidate(slot.entry.address(), ctx) != observed {
-            return self.internal_rmw::<CREATE, C>(slot_id, ctx, mode);
+            return self.internal_rmw::<CREATE, ABORT, C>(slot_id, ctx, mode);
         }
         // The request released any checkpoint lock when it went pending, so
         // apply the CPR rules again before appending: a v+1 copy must not
@@ -652,9 +655,55 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 };
             }
         }
-        if !CREATE && source.is_none() {
-            return Outcome::Done(Status::NotFound);
+        let value = source
+            .filter(|(_, tombstone)| !tombstone)
+            .map(|(value, _)| value);
+        if !CREATE && value.is_none() {
+            return Outcome::Done(if ABORT && source.is_some() {
+                Status::Aborted
+            } else {
+                Status::NotFound
+            });
         }
+        if self.publish_rmw(slot_id, ctx, slot, observed, mode.version, value) {
+            Outcome::Done(Status::Ok)
+        } else {
+            self.internal_rmw::<CREATE, ABORT, C>(slot_id, ctx, mode)
+        }
+    }
+
+    /// Publishes a routed RMW only against the hot chain it checked before
+    /// falling back. Read-cache insertion and eviction preserve that chain.
+    pub(crate) fn insert_rmw_if_head<C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        version: u32,
+        expected: Address,
+        source: Option<&V>,
+    ) -> Status {
+        let slot = self.index.find_or_create(ctx.key_hash());
+        if self.skip_read_cache(slot.entry.address()) != expected {
+            return Status::Aborted;
+        }
+        self.skip_and_invalidate(slot.entry.address(), ctx);
+        if self.publish_rmw(slot_id, ctx, slot, expected, version, source) {
+            Status::Ok
+        } else {
+            Status::Aborted
+        }
+    }
+
+    /// Appends from an owned source that cannot be evicted by allocation.
+    fn publish_rmw<C: RmwContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        slot: super::index::Slot<'_>,
+        previous: Address,
+        version: u32,
+        source: Option<&V>,
+    ) -> bool {
         let value_size =
             source.map_or_else(|| ctx.initial_value_size(), |old| ctx.copy_value_size(old));
         let new_address = self.block_allocate(
@@ -662,8 +711,8 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
         );
         let record = self.record(new_address);
-        let info = RecordInfo::new(observed, mode.version, false);
-        // SAFETY: freshly allocated; disk source remains owned by the caller.
+        let info = RecordInfo::new(previous, version, false);
+        // SAFETY: freshly allocated; the source remains owned by the caller.
         unsafe {
             let value = record.initialize_key(ctx, value_size);
             match source {
@@ -673,15 +722,21 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             record.publish(info);
         };
         if slot.try_update(new_address) {
-            Outcome::Done(Status::Ok)
+            true
         } else {
             record.set_invalid();
-            self.internal_rmw::<CREATE, C>(slot_id, ctx, mode)
+            false
         }
     }
 
     #[inline(always)]
-    fn rmw_attempt<const REST: bool, const RC: bool, const CREATE: bool, C: RmwContext<K, V>>(
+    fn rmw_attempt<
+        const REST: bool,
+        const RC: bool,
+        const CREATE: bool,
+        const ABORT: bool,
+        C: RmwContext<K, V>,
+    >(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -740,7 +795,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 };
             }
         }
-        self.rmw_append::<CREATE, C>(
+        self.rmw_append::<CREATE, ABORT, C>(
             slot_id,
             ctx,
             slot,
@@ -754,7 +809,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     /// The caller retains its CPR guard until this attempt returns.
     #[cold]
     #[inline(never)]
-    fn rmw_append<const CREATE: bool, C: RmwContext<K, V>>(
+    fn rmw_append<const CREATE: bool, const ABORT: bool, C: RmwContext<K, V>>(
         &self,
         slot_id: &SlotId,
         ctx: &mut C,
@@ -763,13 +818,16 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         address: Address,
         head: Address,
     ) -> Attempt {
-        let source = (address >= head)
-            .then(|| self.record(address))
-            .filter(|record| !record.info().tombstone());
+        let record = (address >= head).then(|| self.record(address));
+        let source = record.as_ref().filter(|record| !record.info().tombstone());
         if !CREATE && source.is_none() {
-            return Attempt::Done(Status::NotFound);
+            return Attempt::Done(if ABORT && record.is_some() {
+                Status::Aborted
+            } else {
+                Status::NotFound
+            });
         }
-        let value_size = source.as_ref().map_or_else(
+        let value_size = source.map_or_else(
             || ctx.initial_value_size(),
             |old| {
                 // SAFETY: published source still protected before allocation.
@@ -987,7 +1045,7 @@ mod tests {
             holds_old: false,
         };
         assert!(matches!(
-            store.internal_rmw::<true, _>(&slot, &mut op, rest),
+            store.internal_rmw::<true, false, _>(&slot, &mut op, rest),
             Outcome::Done(Status::Ok)
         ));
         let locks = Box::into_raw(Box::new(CheckpointLocks::new(64)));
@@ -1005,7 +1063,7 @@ mod tests {
             holds_old: false,
         };
         assert!(matches!(
-            store.internal_rmw::<true, _>(&slot, &mut op, new),
+            store.internal_rmw::<true, false, _>(&slot, &mut op, new),
             Outcome::Done(Status::Ok)
         ));
         let newest = store.index.find(hash).unwrap().entry.address();
@@ -1027,12 +1085,12 @@ mod tests {
                 ..prepare
             };
             assert!(matches!(
-                store.rmw_from_disk::<true, _>(
+                store.rmw_from_disk::<true, false, _>(
                     &slot,
                     &mut op,
                     pending,
                     observed,
-                    Some(&disk_value)
+                    Some((&disk_value, false))
                 ),
                 Outcome::Done(Status::Ok)
             ));

@@ -9,6 +9,7 @@ pub mod config;
 pub mod cpr;
 pub mod device;
 pub mod epoch;
+pub mod f2;
 pub mod gc;
 pub mod grow;
 pub mod guid;
