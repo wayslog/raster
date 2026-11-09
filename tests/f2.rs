@@ -191,3 +191,96 @@ fn disk_hot_tombstones_stop_reads_and_seed_rmw_from_absence() {
     assert_eq!(pending.out.borrow_mut().take(), Some((Status::Ok, vec![])));
     assert_eq!(read(&mut session, 0, 3), (false, Status::Ok, vec![34]));
 }
+
+mod inline_value {
+    use super::TestDirectory;
+    use raster::core::{
+        FasterKv, KeyContext, RmwContext, Status, StoreConfig, UpsertContext, Value, ValueSlot,
+        cold_store::ColdStore, f2::F2Kv, hlog::LogConfig,
+    };
+
+    struct Inline(u64);
+    // SAFETY: The fixed header accepts all bit patterns, and initialization
+    // writes the header and the complete inline allocation.
+    unsafe impl Value for Inline {
+        fn size(&self) -> u32 {
+            16
+        }
+        fn initialize_empty(mut slot: ValueSlot<'_, Self>) {
+            // SAFETY: The store supplies a complete 16-byte value slot.
+            unsafe { slot.as_mut_ptr().cast::<[u64; 2]>().write([0, 1]) }
+        }
+    }
+
+    #[derive(Clone)]
+    struct Request(u64);
+    // SAFETY: The request owns a complete immutable u64 key.
+    unsafe impl KeyContext<u64> for Request {
+        fn key(&self) -> &u64 {
+            &self.0
+        }
+    }
+    // SAFETY: put initializes the full 16-byte allocation.
+    unsafe impl UpsertContext<u64, Inline> for Request {
+        fn value_size(&self) -> u32 {
+            16
+        }
+        fn put(&mut self, slot: ValueSlot<'_, Inline>) {
+            Inline::initialize_empty(slot);
+        }
+        fn put_atomic(&mut self, _: &Inline) -> bool {
+            false
+        }
+    }
+    // SAFETY: Both initialization paths write the complete 16-byte value.
+    unsafe impl RmwContext<u64, Inline> for Request {
+        fn copy_value_size(&self, _: &Inline) -> u32 {
+            16
+        }
+        fn initial_value_size(&self) -> u32 {
+            16
+        }
+        fn rmw_initial(&mut self, slot: ValueSlot<'_, Inline>) {
+            Inline::initialize_empty(slot);
+        }
+        fn rmw_copy(&mut self, old: &Inline, slot: ValueSlot<'_, Inline>) {
+            assert_eq!(old.0, 0);
+            Inline::initialize_empty(slot);
+        }
+        fn rmw_atomic(&mut self, _: &Inline) -> bool {
+            false
+        }
+        fn on_complete(&mut self, status: Status) {
+            assert_eq!(status, Status::Ok);
+        }
+    }
+
+    #[test]
+    fn copies_inline_allocation_from_cold_log() {
+        let dir = TestDirectory::new("f2-inline-allocation");
+        let log = LogConfig {
+            page_bits: 12,
+            memory_pages: 4,
+            mutable_fraction: 0.5,
+        };
+        let cold = ColdStore::open(&dir.0, 256, log, log).unwrap();
+        {
+            let mut session = cold.try_start_session().unwrap();
+            for key in 0..1024 {
+                let status = session.upsert(&mut Request(key), key + 1);
+                assert!(matches!(status, Status::Ok | Status::Pending));
+                assert!(session.complete_pending(true));
+            }
+        }
+        let hot = FasterKv::new(StoreConfig {
+            log,
+            index_buckets: 256,
+            ..StoreConfig::default()
+        });
+        let store = F2Kv::new(hot, cold);
+        let mut session = store.try_start_session().unwrap();
+        assert_eq!(session.rmw(&mut Request(1023), 1), Status::Ok);
+        assert_eq!(session.rmw(&mut Request(0), 2), Status::Pending);
+        assert!(session.complete_pending(true));
+    }
+}

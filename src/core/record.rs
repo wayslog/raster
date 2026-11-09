@@ -161,10 +161,16 @@ impl<K: Key, V: Value> Record<K, V> {
     /// The key and value header must be initialized and the payload available.
     #[inline(always)]
     pub unsafe fn value(&self) -> &V {
-        // SAFETY: initialized key and aligned value offset by contract.
+        // SAFETY: the initialized value at this address is protected by the caller.
+        unsafe { &*self.value_ptr() }
+    }
+    /// # Safety
+    /// The complete key must be initialized and the record allocation live.
+    #[inline(always)]
+    pub(crate) unsafe fn value_ptr(&self) -> *const V {
+        // SAFETY: the initialized key selects the aligned value offset.
         unsafe {
-            &*self
-                .ptr
+            self.ptr
                 .add(Layout::<K, V>::value_offset(self.key().size()))
                 .cast::<V>()
         }

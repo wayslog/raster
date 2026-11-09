@@ -123,19 +123,20 @@ pub(crate) trait PendingOp<K: Key, V: Value> {
 }
 
 /// Where a disk lookup for `key` landed.
-enum Lookup<'r, V> {
-    Found(&'r V, bool),
+enum Lookup<V> {
+    // The value pointer remains valid only while the disk record is borrowed.
+    Found(*const V, bool),
     Previous(Address),
     Missing,
     NeedMore(usize),
     Failed(Status),
 }
 
-fn lookup<'r, K: Key, V: Value, C: KeyContext<K>>(
+fn lookup<K: Key, V: Value, C: KeyContext<K>>(
     store: &FasterKv<K, V>,
     ctx: &C,
-    disk: &'r mut Option<DiskRecord>,
-) -> Lookup<'r, V> {
+    disk: &mut Option<DiskRecord>,
+) -> Lookup<V> {
     let record = match disk.as_mut() {
         None => return Lookup::Failed(Status::IoError),
         Some(disk) => match disk.record::<K, V>(store.hlog.page_size()) {
@@ -151,7 +152,7 @@ fn lookup<'r, K: Key, V: Value, C: KeyContext<K>>(
     // SAFETY: the record was fully written before its page was flushed.
     if ctx.key_equals(unsafe { record.key() }) {
         // SAFETY: as above; the buffer lives as long as `disk`.
-        let value: &'r V = unsafe { &*(record.value() as *const V) };
+        let value = unsafe { record.value_ptr() };
         return Lookup::Found(value, info.tombstone());
     }
     let previous = info.previous();
@@ -209,7 +210,8 @@ impl<K: Key, V: Value, C: ReadContext<K, V>, F: FnMut(&mut C, Status), const ABO
             }
             Lookup::Missing => Status::NotFound,
             Lookup::Found(value, false) => {
-                self.ctx.get(value);
+                // SAFETY: The disk buffer owns the complete immutable value.
+                unsafe { self.ctx.get_from_log(value, false) };
                 if store.read_cache.is_some()
                     && let Some(record) = disk
                         .as_mut()
@@ -276,13 +278,17 @@ impl<
     ) -> Step {
         let address = disk.as_ref().map_or(Address::INVALID, |disk| disk.address);
         let outcome = match lookup(store, &self.ctx, &mut disk) {
-            Lookup::Found(value, tombstone) => store.rmw_from_disk::<CREATE, ABORT, C>(
-                slot,
-                &mut self.ctx,
-                mode,
-                self.observed,
-                Some((value, tombstone)),
-            ),
+            Lookup::Found(value, tombstone) => {
+                // SAFETY: The disk buffer stays live through the append.
+                let value = unsafe { &*value };
+                store.rmw_from_disk::<CREATE, ABORT, C>(
+                    slot,
+                    &mut self.ctx,
+                    mode,
+                    self.observed,
+                    Some((value, tombstone)),
+                )
+            }
             Lookup::Missing => store.rmw_from_disk::<CREATE, ABORT, C>(
                 slot,
                 &mut self.ctx,

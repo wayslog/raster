@@ -79,14 +79,19 @@ unsafe impl<K: Key, C: KeyContext<K>, F> KeyContext<K> for ColdValueRead<C, F> {
 impl<K: Key, V: Value, C: KeyContext<K>, F: FnMut(&mut C, Vec<MaybeUninit<u64>>, Status)>
     ReadContext<K, V> for ColdValueRead<C, F>
 {
-    fn get(&mut self, value: &V) {
-        let len = value.size() as usize;
+    fn get(&mut self, _: &V) {
+        unreachable!("cold reads supply the complete record allocation");
+    }
+
+    unsafe fn get_from_log(&mut self, value: *const V, _: bool) {
+        // SAFETY: The caller protects the complete initialized value.
+        let len = unsafe { (*value).size() } as usize;
         self.words.resize(len.div_ceil(8), MaybeUninit::uninit());
         // SAFETY: The cold store only appends values. The complete immutable
         // allocation is readable during this callback and the buffers are disjoint.
         unsafe {
             std::ptr::copy_nonoverlapping(
-                std::ptr::from_ref(value).cast::<u8>(),
+                value.cast::<u8>(),
                 self.words.as_mut_ptr().cast::<u8>(),
                 len,
             );

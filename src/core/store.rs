@@ -400,16 +400,13 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                     Status::NotFound
                 });
             }
-            // SAFETY: published record; the value lives while we are protected.
-            let value = unsafe { record.value() };
             // safe_read_only never exceeds read_only. Mutable-tail reads can
             // use the inline boundary without following shared flush state;
             // the fuzzy region still needs the epoch-safe boundary.
-            if address >= self.hlog.read_only.load() || address >= self.hlog.safe_read_only.load() {
-                ctx.get_atomic(value);
-            } else {
-                ctx.get(value);
-            }
+            let atomic =
+                address >= self.hlog.read_only.load() || address >= self.hlog.safe_read_only.load();
+            // SAFETY: The complete published value stays live under the epoch.
+            unsafe { ctx.get_from_log(record.value_ptr(), atomic) };
             Outcome::Done(Status::Ok)
         } else if address < self.hlog.begin.load() {
             Outcome::Done(Status::NotFound)
