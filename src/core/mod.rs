@@ -3,6 +3,7 @@ pub mod auto_compact;
 pub mod checkpoint;
 pub mod checkpoint_locks;
 pub mod cold_index;
+pub mod cold_store;
 mod compact;
 pub mod config;
 pub mod cpr;

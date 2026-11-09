@@ -95,6 +95,14 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
         self.slot.as_ref().expect("live session")
     }
 
+    pub(crate) fn park_epoch(&self) {
+        self.store.epoch.unprotect(self.slot());
+    }
+
+    pub(crate) fn epoch_scope(&self) -> super::epoch::EpochGuard<'a> {
+        self.store.epoch.scoped_protection(self.slot())
+    }
+
     pub fn guid(&self) -> Guid {
         self.guid
     }
@@ -172,6 +180,53 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     );
                 }
             }
+        }
+    }
+
+    /// Reads a chain whose head was resolved by the cold index.
+    pub(crate) fn read_cold<C>(&mut self, ctx: &mut C, entry: Address) -> Status
+    where
+        C: ReadContext<K, V> + Clone + 'static,
+    {
+        let outcome = self.store.read_from_entry::<false, false, C>(
+            ctx,
+            self.mode(),
+            ctx.key_hash(),
+            entry,
+            entry,
+        );
+        match outcome {
+            Outcome::Done(status) => status,
+            Outcome::Disk { .. } => self.suspend(
+                outcome,
+                PendingRead::<C, false> {
+                    ctx: ctx.clone(),
+                    observed: entry,
+                    truncations: self
+                        .store
+                        .truncations
+                        .load(std::sync::atomic::Ordering::Acquire),
+                },
+            ),
+            _ => unreachable!("cold data checkpoints require drained sessions"),
+        }
+    }
+
+    pub(crate) fn append_cold_record<C: UpsertContext<K, V>>(
+        &self,
+        ctx: &mut C,
+        previous: Address,
+        tombstone: bool,
+    ) -> Address {
+        self.store
+            .append_upsert_record(self.slot(), ctx, previous, self.version, tombstone)
+    }
+
+    pub(crate) fn invalidate_cold_append(&self, address: Address) {
+        // A read-only record may already be the source of a device write.
+        // An unlinked copy there is ignored by chain-based compaction.
+        if address >= self.store.hlog.read_only.load() {
+            self.store.record(address).set_invalid();
         }
     }
 
