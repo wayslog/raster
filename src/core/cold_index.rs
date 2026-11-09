@@ -134,13 +134,25 @@ pub struct ColdIndexSession<'a> {
     mask: u64,
 }
 
-impl ColdIndexSession<'_> {
+impl<'a> ColdIndexSession<'a> {
     pub fn guid(&self) -> Guid {
         self.session.guid()
     }
 
     pub fn refresh(&mut self) {
         self.session.refresh();
+    }
+
+    pub(crate) fn park_epoch(&self) {
+        self.session.park_epoch();
+    }
+
+    pub(crate) fn epoch_scope(&self) -> super::epoch::EpochGuard<'a> {
+        self.session.epoch_scope()
+    }
+
+    pub(crate) fn pending_count(&self) -> usize {
+        self.session.pending_count()
     }
 
     pub fn complete_pending(&mut self, wait: bool) -> bool {
@@ -175,6 +187,7 @@ impl ColdIndexSession<'_> {
                 expected: expected.word()?,
                 desired: ColdIndexEntry::Published(address).word()?,
             },
+            ColdIndexUpdate::Set(Address::INVALID) => Change::Set(Address::INVALID.control()),
             ColdIndexUpdate::Set(address) => {
                 Change::Set(ColdIndexEntry::Published(address).word()?)
             }

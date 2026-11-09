@@ -366,8 +366,24 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 Err(address) => entry = address,
             }
         }
+        self.read_from_entry::<RC, ABORT, C>(ctx, mode, hash, entry, slot.entry.address())
+    }
+
+    #[inline(always)]
+    pub(crate) fn read_from_entry<
+        const CHECKPOINT: bool,
+        const ABORT: bool,
+        C: ReadContext<K, V>,
+    >(
+        &self,
+        ctx: &mut C,
+        mode: OpMode,
+        hash: u64,
+        entry: Address,
+        observed: Address,
+    ) -> Outcome {
         let head = self.hlog.head.load();
-        if RC
+        if CHECKPOINT
             && mode.phase == Phase::Prepare
             && !mode.holds_old
             && record_newer(self.latest_version(entry, head), mode.version)
@@ -397,17 +413,17 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             Outcome::Done(Status::Ok)
         } else if address < self.hlog.begin.load() {
             Outcome::Done(Status::NotFound)
-        } else if !RC {
+        } else if !CHECKPOINT {
             Outcome::Disk {
                 address,
-                observed: slot.entry.address(),
+                observed,
                 marked: mode.holds_old,
             }
         } else {
             match self.mark_pending(mode, hash, LockGuard::none()) {
                 Some(marked) => Outcome::Disk {
                     address,
-                    observed: slot.entry.address(),
+                    observed,
                     marked,
                 },
                 None => Outcome::Shift,
@@ -515,25 +531,38 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         previous: Address,
         version: u32,
     ) -> Attempt {
+        let new_address = self.append_upsert_record(slot_id, ctx, previous, version, false);
+        if slot.try_update(new_address) {
+            Attempt::Done(Status::Ok)
+        } else {
+            self.record(new_address).set_invalid();
+            Attempt::Retry
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn append_upsert_record<C: UpsertContext<K, V>>(
+        &self,
+        slot_id: &SlotId,
+        ctx: &mut C,
+        previous: Address,
+        version: u32,
+        tombstone: bool,
+    ) -> Address {
         let value_size = ctx.value_size();
         let new_address = self.block_allocate(
             slot_id,
             Layout::<K, V>::size(ctx.key_size(), value_size) as u64,
         );
         let record = self.record(new_address);
-        let info = RecordInfo::new(previous, version, false);
+        let info = RecordInfo::new(previous, version, tombstone);
         // SAFETY: freshly allocated and not yet published.
         unsafe {
             let value = record.initialize_key(ctx, value_size);
             ctx.put(value);
             record.publish(info);
         };
-        if slot.try_update(new_address) {
-            Attempt::Done(Status::Ok)
-        } else {
-            record.set_invalid();
-            Attempt::Retry
-        }
+        new_address
     }
 
     #[inline(always)]

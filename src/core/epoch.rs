@@ -52,6 +52,18 @@ unsafe impl Send for LightEpoch {}
 #[derive(Debug)]
 pub struct SlotId(usize);
 
+/// Protection for one operation of a session that is parked between calls.
+pub(crate) struct EpochGuard<'a> {
+    epoch: &'a LightEpoch,
+    slot: usize,
+}
+
+impl Drop for EpochGuard<'_> {
+    fn drop(&mut self) {
+        self.epoch.unprotect(&SlotId(self.slot));
+    }
+}
+
 impl Default for LightEpoch {
     fn default() -> Self {
         Self::new()
@@ -147,6 +159,15 @@ impl LightEpoch {
             self.drain(epoch);
         }
         epoch
+    }
+
+    pub(crate) fn scoped_protection(&self, id: &SlotId) -> EpochGuard<'_> {
+        let guard = EpochGuard {
+            epoch: self,
+            slot: id.0,
+        };
+        self.protect_and_drain(id);
+        guard
     }
 
     #[inline]

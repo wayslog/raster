@@ -22,6 +22,8 @@ pub struct RecoveryInfo {
 
 const INVALID_BIT: u64 = 1 << 61;
 
+type ReplayUpdate<'a> = dyn FnMut(u64, Address) -> Result<(), Status> + 'a;
+
 impl<K: Key, V: Value> FasterKv<K, V> {
     /// Restores a freshly created store, built on the same log device, from
     /// an index checkpoint and a hybrid-log checkpoint with the same version.
@@ -46,6 +48,15 @@ impl<K: Key, V: Value> FasterKv<K, V> {
     /// work. A failure once index loading starts leaves the store unavailable:
     /// new sessions and recovery retries are rejected. Use a fresh store.
     pub fn recover(&mut self, index_token: Guid, log_token: Guid) -> Result<RecoveryInfo, Status> {
+        self.recover_with_index(index_token, log_token, None)
+    }
+
+    pub(crate) fn recover_with_index(
+        &mut self,
+        index_token: Guid,
+        log_token: Guid,
+        mut replay: Option<&mut ReplayUpdate<'_>>,
+    ) -> Result<RecoveryInfo, Status> {
         let dirs = self.dirs.as_ref().ok_or(Status::IoError)?;
         let index_dir = dirs.index(index_token);
         let log_dir = dirs.log(log_token);
@@ -61,7 +72,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             return Err(Status::Aborted);
         }
         let mut index_load_started = false;
-        let result = self.recover_inner(index_dir, log_dir, &mut index_load_started);
+        let result = self.recover_inner(index_dir, log_dir, &mut index_load_started, &mut replay);
         let version = result
             .as_ref()
             .map_or(rest.version, |info| info.version + 1);
@@ -78,6 +89,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         index_dir: std::path::PathBuf,
         log_dir: std::path::PathBuf,
         index_load_started: &mut bool,
+        replay: &mut Option<&mut ReplayUpdate<'_>>,
     ) -> Result<RecoveryInfo, Status> {
         let io = |_| Status::IoError;
         let index_meta = IndexMetadata::read(&index_dir).map_err(io)?;
@@ -106,15 +118,17 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             return Err(Status::Corruption);
         }
         *index_load_started = true;
-        self.index
-            .read_checkpoint(&index_dir.join("ht.dat"), &index_dir.join("ofb.dat"))
-            .map_err(|_| Status::Corruption)?;
+        if replay.is_none() {
+            self.index
+                .read_checkpoint(&index_dir.join("ht.dat"), &index_dir.join("ofb.dat"))
+                .map_err(|_| Status::Corruption)?;
+        }
         // An empty replay interval has no records to read, even when its
         // address has a nonzero offset in a page that was never written.
         if start < end {
             let mut page = start.page();
             while Address::new(page, 0) < end {
-                self.recover_page(page, start, end, log_meta.version)?;
+                self.recover_page(page, start, end, log_meta.version, replay)?;
                 page += 1;
             }
         }
@@ -158,6 +172,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         start: Address,
         end: Address,
         version: u32,
+        replay: &mut Option<&mut ReplayUpdate<'_>>,
     ) -> Result<(), Status> {
         let mut input = self.read_page_prefix(page, end)?;
         let mut aligned = None;
@@ -198,17 +213,22 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             let info = RecordInfo::from_word(header);
             if !info.invalid() {
                 // SAFETY: the complete inline key is available in aligned memory.
-                let key = unsafe { record.key() };
+                let hash = unsafe { record.key() }.hash();
+                let slot = replay.is_none().then(|| self.index.find_or_create(hash));
                 let address = Address::new(page, offset as u64);
-                let slot = self.index.find_or_create(key.hash());
-                if !record_newer(info.version(), version) {
-                    slot.store(address);
+                let update = if !record_newer(info.version(), version) {
+                    Some(address)
                 } else {
                     let invalid = header | INVALID_BIT;
                     bytes[offset..offset + 8].copy_from_slice(&invalid.to_le_bytes());
                     changed = true;
-                    if info.previous() < start {
-                        slot.store(info.previous());
+                    (info.previous() < start).then_some(info.previous())
+                };
+                if let Some(address) = update {
+                    if let Some(slot) = slot {
+                        slot.store(address);
+                    } else if let Some(replay) = replay.as_deref_mut() {
+                        replay(hash, address)?;
                     }
                 }
             }
