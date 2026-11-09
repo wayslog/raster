@@ -341,7 +341,7 @@ impl<'a, K: Key, V: Value> super::session::Session<'a, K, V> {
     }
 
     /// Reject a caller-supplied partial record before copying any pages.
-    fn validate_compaction_boundary(&self, until: Address) -> Result<(), Status> {
+    pub(crate) fn validate_compaction_boundary(&self, until: Address) -> Result<(), Status> {
         let store = self.store();
         if until.offset() == 0 || until == store.hlog.begin.load() {
             return Ok(());

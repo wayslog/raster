@@ -366,7 +366,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
                 Err(address) => entry = address,
             }
         }
-        self.read_from_entry::<RC, ABORT, C>(ctx, mode, hash, entry, slot.entry.address())
+        self.read_from_entry::<RC, ABORT, C>(ctx, mode, hash, entry, slot.entry.address(), None)
     }
 
     #[inline(always)]
@@ -381,6 +381,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
         hash: u64,
         entry: Address,
         observed: Address,
+        cold_begin: Option<Address>,
     ) -> Outcome {
         let head = self.hlog.head.load();
         if CHECKPOINT
@@ -408,7 +409,7 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             // SAFETY: The complete published value stays live under the epoch.
             unsafe { ctx.get_from_log(record.value_ptr(), atomic) };
             Outcome::Done(Status::Ok)
-        } else if address < self.hlog.begin.load() {
+        } else if address < cold_begin.unwrap_or_else(|| self.hlog.begin.load()) {
             Outcome::Done(Status::NotFound)
         } else if !CHECKPOINT {
             Outcome::Disk {

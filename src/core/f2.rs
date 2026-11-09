@@ -11,16 +11,27 @@ use std::cell::RefCell;
 use std::mem::MaybeUninit;
 use std::ops::ControlFlow;
 use std::rc::Rc;
+use std::sync::{Mutex, RwLock};
+
+#[path = "f2_compact.rs"]
+mod compaction;
 
 pub struct F2Kv<K: Key, V: Value> {
     hot: FasterKv<K, V>,
     cold: ColdStore<K, V>,
+    maintenance: Mutex<()>,
+    hot_cut: RwLock<()>,
 }
 
 impl<K: Key, V: Value> F2Kv<K, V> {
     /// Combines a hot store with a cold data store.
     pub fn new(hot: FasterKv<K, V>, cold: ColdStore<K, V>) -> Self {
-        Self { hot, cold }
+        Self {
+            hot,
+            cold,
+            maintenance: Mutex::new(()),
+            hot_cut: RwLock::new(()),
+        }
     }
 
     pub fn try_start_session(&self) -> Option<F2Session<'_, K, V>> {
@@ -31,6 +42,7 @@ impl<K: Key, V: Value> F2Kv<K, V> {
         Some(F2Session {
             hot,
             cold,
+            hot_cut: &self.hot_cut,
             ready: Rc::default(),
         })
     }
@@ -41,7 +53,14 @@ type Continuation<K, V> = Box<dyn FnOnce(&mut F2Session<'_, K, V>)>;
 pub struct F2Session<'a, K: Key, V: Value> {
     hot: Session<'a, K, V>,
     cold: ColdStoreSession<'a, K, V>,
+    hot_cut: &'a RwLock<()>,
     ready: Rc<RefCell<Vec<Continuation<K, V>>>>,
+}
+
+#[derive(Clone, Copy)]
+struct HotSnapshot {
+    head: Address,
+    begin: Address,
 }
 
 #[derive(Clone)]
@@ -182,7 +201,10 @@ impl<K: Key, V: Value> F2Session<'_, K, V> {
         loop {
             let ready = self.ready.clone();
             let (expected, status) = self.with_hot(|hot| {
-                let expected = hot.rmw_head(ctx.key_hash());
+                let expected = HotSnapshot {
+                    begin: hot.store().hlog.begin.load(),
+                    head: hot.rmw_head(ctx.key_hash()),
+                };
                 let status =
                     hot.rmw_configured::<false, true, _, _>(ctx, serial, move |ctx, status| {
                         if !matches!(status, Status::NotFound | Status::Aborted) {
@@ -208,7 +230,7 @@ impl<K: Key, V: Value> F2Session<'_, K, V> {
         &mut self,
         ctx: &mut C,
         serial: u64,
-        expected: Address,
+        expected: HotSnapshot,
         status: Status,
     ) -> ControlFlow<Status>
     where
@@ -238,7 +260,7 @@ impl<K: Key, V: Value> F2Session<'_, K, V> {
     fn finish_cold_rmw<C: RmwContext<K, V>>(
         &mut self,
         ctx: &mut C,
-        expected: Address,
+        expected: HotSnapshot,
         status: Status,
         words: &[MaybeUninit<u64>],
     ) -> ControlFlow<Status> {
@@ -257,10 +279,17 @@ impl<K: Key, V: Value> F2Session<'_, K, V> {
     fn publish_rmw<C: RmwContext<K, V>>(
         &mut self,
         ctx: &mut C,
-        expected: Address,
+        expected: HotSnapshot,
         source: Option<&V>,
     ) -> ControlFlow<Status> {
-        match self.with_hot(|hot| hot.insert_rmw_if_head(ctx, expected, source)) {
+        let _cut = self.hot_cut.read().unwrap();
+        let status = self.with_hot(|hot| {
+            if hot.store().hlog.begin.load() != expected.begin {
+                return Status::Aborted;
+            }
+            hot.insert_rmw_if_head(ctx, expected.head, source)
+        });
+        match status {
             Status::Aborted => ControlFlow::Continue(()),
             status => ControlFlow::Break(status),
         }

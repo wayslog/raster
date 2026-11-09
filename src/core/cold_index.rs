@@ -98,6 +98,14 @@ impl ColdIndex {
         })
     }
 
+    /// Advances only past blocks no longer referenced by the in-memory index.
+    /// F2 serializes all cold writes with this pass.
+    pub(crate) fn reclaim_prefix(&self) {
+        let head = self.store.hlog.safe_head.load();
+        let begin = self.store.index.table().oldest_entry(head);
+        self.store.hlog.begin.monotonic_update(begin);
+    }
+
     pub fn try_start_session(&self) -> Option<ColdIndexSession<'_>> {
         Some(ColdIndexSession {
             session: self.store.try_start_session()?,

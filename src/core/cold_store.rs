@@ -51,6 +51,14 @@ impl<K: Key, V: Value> ColdStore<K, V> {
         })
     }
 
+    pub(crate) fn data_store(&self) -> &FasterKv<K, V> {
+        &self.data
+    }
+
+    pub(crate) fn reclaim_index_prefix(&self) {
+        self.index.reclaim_prefix();
+    }
+
     pub fn try_start_session(&self) -> Option<ColdStoreSession<'_, K, V>> {
         self.try_start_session_with_guid(Guid::new())
     }
@@ -173,8 +181,13 @@ impl<K: Key, V: Value> ColdStore<K, V> {
 #[derive(Clone, Copy)]
 enum Mutation {
     Upsert,
-    Delete { force: bool },
-    Conditional(ColdIndexEntry),
+    Delete {
+        force: bool,
+    },
+    Conditional {
+        expected: ColdIndexEntry,
+        tombstone: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -270,25 +283,30 @@ impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
+        // A compaction can move begin while the cold index lookup is pending.
+        // The retained source log keeps this lookup's chain readable.
+        let begin = self.data.store().hlog.begin.load();
         let ready = self.ready.clone();
         let mut pending = ctx.clone();
         let result = self.with_index(|index| {
             index.lookup(ctx.key_hash(), serial, move |result| {
                 ready.borrow_mut().push(Box::new(move |session| {
-                    let status = Self::read_index_result(&mut session.data, &mut pending, result);
+                    let status =
+                        Self::read_index_result(&mut session.data, &mut pending, result, begin);
                     if status != Status::Pending {
                         pending.on_complete(status);
                     }
                 }));
             })
         });
-        Self::read_index_result(&mut self.data, ctx, result)
+        Self::read_index_result(&mut self.data, ctx, result, begin)
     }
 
     fn read_index_result<C>(
         data: &mut Session<'_, K, V>,
         ctx: &mut C,
         result: ColdIndexResult,
+        begin: Address,
     ) -> Status
     where
         C: ReadContext<K, V> + Clone + 'static,
@@ -296,7 +314,7 @@ impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
         match result {
             Ok(ColdIndexOutcome::Entry(ColdIndexEntry::Published(entry))) => {
                 let _guard = data.epoch_scope();
-                data.read_cold(ctx, entry)
+                data.read_cold(ctx, entry, begin)
             }
             Ok(ColdIndexOutcome::Entry(ColdIndexEntry::Empty | ColdIndexEntry::Reserved)) => {
                 Status::NotFound
@@ -347,7 +365,31 @@ impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
     where
         C: UpsertContext<K, V> + Clone + 'static,
     {
-        self.mutate(ctx, serial, Mutation::Conditional(expected))
+        self.copy_if_head(ctx, expected, false, serial)
+    }
+
+    pub(crate) fn copy_if_head<C>(
+        &mut self,
+        ctx: &mut C,
+        expected: ColdIndexEntry,
+        tombstone: bool,
+        serial: u64,
+    ) -> Status
+    where
+        C: UpsertContext<K, V> + Clone + 'static,
+    {
+        self.mutate(
+            ctx,
+            serial,
+            Mutation::Conditional {
+                expected,
+                tombstone,
+            },
+        )
+    }
+
+    pub(crate) fn data_session(&self) -> &Session<'_, K, V> {
+        &self.data
     }
 
     fn mutate<C>(&mut self, ctx: &mut C, serial: u64, mutation: Mutation) -> Status
@@ -384,7 +426,8 @@ impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
                 Ok(ColdIndexOutcome::Entry(entry) | ColdIndexOutcome::Conflict(entry)) => entry,
                 Err(status) => return status,
             };
-            if matches!(mutation, Mutation::Conditional(snapshot) if expected != snapshot) {
+            if matches!(mutation, Mutation::Conditional { expected: snapshot, .. } if expected != snapshot)
+            {
                 return Status::Aborted;
             }
             if let Mutation::Delete { force: false } = mutation {
@@ -433,7 +476,10 @@ impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
                 }));
             },
         };
-        self.with_data(|data| data.read_cold(&mut probe, address))
+        self.with_data(|data| {
+            let begin = data.store().hlog.begin.load();
+            data.read_cold(&mut probe, address, begin)
+        })
     }
 
     fn publish_record<C>(
@@ -450,7 +496,14 @@ impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
             ColdIndexEntry::Published(address) => address,
             ColdIndexEntry::Empty | ColdIndexEntry::Reserved => Address::INVALID,
         };
-        let tombstone = matches!(mutation, Mutation::Delete { .. });
+        let tombstone = matches!(
+            mutation,
+            Mutation::Delete { .. }
+                | Mutation::Conditional {
+                    tombstone: true,
+                    ..
+                }
+        );
         let address = self.with_data(|data| data.append_cold_record(ctx, previous, tombstone));
         let ready = self.ready.clone();
         let mut pending = ctx.clone();

@@ -36,12 +36,45 @@ impl AutoCompactionConfig {
             threads: 4,
         }
     }
+
+    pub(crate) fn cutoff<K: Key, V: Value>(&self, store: &FasterKv<K, V>) -> Option<Address> {
+        let size = store.log_size();
+        if (size as f64) < self.log_size_budget as f64 * self.trigger_fraction {
+            return None;
+        }
+        let amount = ((size as f64 * self.compact_fraction) as u64).min(self.max_compacted_bytes);
+        let begin = store.hlog.begin.load();
+        let target = store.hlog.device_offset(begin) + amount;
+        let page_bits = store.hlog.page_size().trailing_zeros();
+        let until = Address::new(target >> page_bits, 0).min(store.hlog.safe_head.load());
+        (until > begin).then_some(until)
+    }
 }
 
 /// Stops the background compaction thread when dropped.
 pub struct AutoCompaction {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+}
+
+impl AutoCompaction {
+    pub(crate) fn spawn(interval: Duration, mut poll: impl FnMut() + Send + 'static) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let thread = std::thread::spawn(move || {
+            while !stopped.load(Ordering::Acquire) {
+                std::thread::park_timeout(interval);
+                if stopped.load(Ordering::Acquire) {
+                    break;
+                }
+                poll();
+            }
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
 }
 
 impl Drop for AutoCompaction {
@@ -67,38 +100,16 @@ impl<K: Key, V: Value> FasterKv<K, V> {
             "auto compaction needs a log size budget"
         );
         let store = self.clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopped = stop.clone();
-        let thread = std::thread::spawn(move || {
-            while !stopped.load(Ordering::Acquire) {
-                std::thread::park_timeout(config.check_interval);
-                if stopped.load(Ordering::Acquire) {
-                    break;
-                }
-                store.auto_compact_once(&config);
-            }
-        });
-        AutoCompaction {
-            stop,
-            thread: Some(thread),
-        }
+        AutoCompaction::spawn(config.check_interval, move || {
+            store.auto_compact_once(&config);
+        })
     }
 
     /// Compacts once if the log exceeds the trigger size; returns whether it did.
     pub fn auto_compact_once(&self, config: &AutoCompactionConfig) -> bool {
-        let size = self.log_size();
-        if (size as f64) < config.log_size_budget as f64 * config.trigger_fraction {
+        let Some(until) = config.cutoff(self) else {
             return false;
-        }
-        let amount =
-            ((size as f64 * config.compact_fraction) as u64).min(config.max_compacted_bytes);
-        let begin = self.hlog.begin.load();
-        let target = self.hlog.device_offset(begin) + amount;
-        let page_bits = self.hlog.page_size().trailing_zeros();
-        let until = Address::new(target >> page_bits, 0).min(self.hlog.safe_head.load());
-        if until <= begin {
-            return false;
-        }
+        };
         let Some(mut session) = self.try_start_session() else {
             return false;
         };
