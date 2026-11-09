@@ -162,8 +162,9 @@ fn lookup<'r, K: Key, V: Value, C: KeyContext<K>>(
     }
 }
 
-pub(crate) struct PendingRead<C, const ABORT: bool> {
+pub(crate) struct PendingRead<C, F, const ABORT: bool> {
     pub ctx: C,
+    pub complete: F,
     /// Index entry seen when the read went to the device; the record found
     /// is cached only if the entry is still unchanged.
     pub observed: Address,
@@ -173,8 +174,8 @@ pub(crate) struct PendingRead<C, const ABORT: bool> {
     pub truncations: u64,
 }
 
-impl<K: Key, V: Value, C: ReadContext<K, V>, const ABORT: bool> PendingOp<K, V>
-    for PendingRead<C, ABORT>
+impl<K: Key, V: Value, C: ReadContext<K, V>, F: FnMut(&mut C, Status), const ABORT: bool>
+    PendingOp<K, V> for PendingRead<C, F, ABORT>
 {
     fn hash(&self) -> u64 {
         self.ctx.key_hash()
@@ -234,7 +235,7 @@ impl<K: Key, V: Value, C: ReadContext<K, V>, const ABORT: bool> PendingOp<K, V>
             }
             Lookup::Failed(status) => status,
         };
-        self.ctx.on_complete(status);
+        (self.complete)(&mut self.ctx, status);
         Step::Done
     }
 
@@ -243,17 +244,24 @@ impl<K: Key, V: Value, C: ReadContext<K, V>, const ABORT: bool> PendingOp<K, V>
         if let Outcome::Disk { observed, .. } = outcome {
             self.observed = observed;
         }
-        Step::from_outcome::<K, V>(outcome, |status| self.ctx.on_complete(status))
+        Step::from_outcome::<K, V>(outcome, |status| (self.complete)(&mut self.ctx, status))
     }
 }
 
-pub(crate) struct PendingRmw<C, const CREATE: bool> {
+pub(crate) struct PendingRmw<C, F, const CREATE: bool, const ABORT: bool> {
     pub ctx: C,
+    pub complete: F,
     pub observed: Address,
 }
 
-impl<K: Key, V: Value, C: RmwContext<K, V>, const CREATE: bool> PendingOp<K, V>
-    for PendingRmw<C, CREATE>
+impl<
+    K: Key,
+    V: Value,
+    C: RmwContext<K, V>,
+    F: FnMut(&mut C, Status),
+    const CREATE: bool,
+    const ABORT: bool,
+> PendingOp<K, V> for PendingRmw<C, F, CREATE, ABORT>
 {
     fn hash(&self) -> u64 {
         self.ctx.key_hash()
@@ -268,13 +276,20 @@ impl<K: Key, V: Value, C: RmwContext<K, V>, const CREATE: bool> PendingOp<K, V>
     ) -> Step {
         let address = disk.as_ref().map_or(Address::INVALID, |disk| disk.address);
         let outcome = match lookup(store, &self.ctx, &mut disk) {
-            Lookup::Found(value, tombstone) => {
-                let source = (!tombstone).then_some(value);
-                store.rmw_from_disk::<CREATE, C>(slot, &mut self.ctx, mode, self.observed, source)
-            }
-            Lookup::Missing => {
-                store.rmw_from_disk::<CREATE, C>(slot, &mut self.ctx, mode, self.observed, None)
-            }
+            Lookup::Found(value, tombstone) => store.rmw_from_disk::<CREATE, ABORT, C>(
+                slot,
+                &mut self.ctx,
+                mode,
+                self.observed,
+                Some((value, tombstone)),
+            ),
+            Lookup::Missing => store.rmw_from_disk::<CREATE, ABORT, C>(
+                slot,
+                &mut self.ctx,
+                mode,
+                self.observed,
+                None,
+            ),
             Lookup::Previous(address) => {
                 return Step::Read {
                     address,
@@ -295,12 +310,14 @@ impl<K: Key, V: Value, C: RmwContext<K, V>, const CREATE: bool> PendingOp<K, V>
     }
 
     fn retry(&mut self, store: &FasterKv<K, V>, slot: &SlotId, mode: OpMode) -> Step {
-        let outcome = store.internal_rmw::<CREATE, C>(slot, &mut self.ctx, mode);
+        let outcome = store.internal_rmw::<CREATE, ABORT, C>(slot, &mut self.ctx, mode);
         self.step(outcome)
     }
 }
 
-impl<C, const CREATE: bool> PendingRmw<C, CREATE> {
+impl<C, F: FnMut(&mut C, Status), const CREATE: bool, const ABORT: bool>
+    PendingRmw<C, F, CREATE, ABORT>
+{
     fn step<K: Key, V: Value>(&mut self, outcome: Outcome) -> Step
     where
         C: RmwContext<K, V>,
@@ -308,7 +325,7 @@ impl<C, const CREATE: bool> PendingRmw<C, CREATE> {
         if let Outcome::Disk { observed, .. } = outcome {
             self.observed = observed;
         }
-        Step::from_outcome::<K, V>(outcome, |status| self.ctx.on_complete(status))
+        Step::from_outcome::<K, V>(outcome, |status| (self.complete)(&mut self.ctx, status))
     }
 }
 

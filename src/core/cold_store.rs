@@ -52,12 +52,19 @@ impl<K: Key, V: Value> ColdStore<K, V> {
     }
 
     pub fn try_start_session(&self) -> Option<ColdStoreSession<'_, K, V>> {
+        self.try_start_session_with_guid(Guid::new())
+    }
+
+    pub(crate) fn try_start_session_with_guid(
+        &self,
+        guid: Guid,
+    ) -> Option<ColdStoreSession<'_, K, V>> {
         if !self.ready {
             return None;
         }
         let index = self.index.try_start_session()?;
         index.park_epoch();
-        let data = self.data.try_start_session()?;
+        let data = Session::try_new(&self.data, guid, 0)?;
         data.park_epoch();
         Some(ColdStoreSession {
             index,
@@ -254,6 +261,10 @@ pub struct ColdStoreSession<'a, K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> ColdStoreSession<'_, K, V> {
+    pub fn guid(&self) -> Guid {
+        self.data.guid()
+    }
+
     /// Looks up the chain head, then reads the matching data record.
     pub fn read<C>(&mut self, ctx: &mut C, serial: u64) -> Status
     where
