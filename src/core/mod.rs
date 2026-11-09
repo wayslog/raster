@@ -2,6 +2,7 @@ pub mod address;
 pub mod auto_compact;
 pub mod checkpoint;
 pub mod checkpoint_locks;
+pub mod cold_index;
 mod compact;
 pub mod config;
 pub mod cpr;
