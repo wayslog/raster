@@ -1,5 +1,6 @@
-//! TOML configuration using the FASTER single-store field names.
+//! TOML configuration using the FASTER store field names.
 use super::auto_compact::AutoCompactionConfig;
+use super::f2::F2Config;
 use super::hlog::LogConfig;
 use super::read_cache::ReadCacheConfig;
 use super::store::StoreConfig;
@@ -25,6 +26,39 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 fn invalid(message: &str) -> ConfigError {
     ConfigError::Invalid(message.into())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct F2File {
+    f2: F2Tables,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct F2Tables {
+    filepath: PathBuf,
+    hot: ConfigFile,
+    cold: ColdTable,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColdTable {
+    filepath: PathBuf,
+    hlog: Hlog,
+    index: ColdIndexTable,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColdIndexTable {
+    table_size: u64,
+    in_mem_size_mb: u64,
+    #[serde(default = "mutable_fraction")]
+    mutable_fraction: f64,
+    #[serde(default, rename = "pre_allocate")]
+    _pre_allocate: bool,
 }
 
 #[derive(Deserialize)]
@@ -124,6 +158,62 @@ fn log_config(memory_mb: u64, fraction: f64) -> Result<LogConfig, ConfigError> {
         mutable_fraction: fraction,
     })
 }
+fn index_buckets(buckets: u64) -> Result<u64, ConfigError> {
+    if !buckets.is_power_of_two() || buckets > i32::MAX as u64 {
+        return Err(invalid(
+            "index.table_size must be a power of two no greater than i32::MAX",
+        ));
+    }
+    Ok(buckets)
+}
+
+fn compaction_config(
+    log: LogConfig,
+    policy: Option<Compaction>,
+) -> Result<Option<AutoCompactionConfig>, ConfigError> {
+    if policy
+        .as_ref()
+        .is_some_and(|config| config.hlog_size_budget_mb.is_none())
+    {
+        return Err(invalid("hlog.compaction requires hlog_size_budget_mb"));
+    }
+    match policy {
+        Some(compaction) if compaction.enabled => {
+            let budget = megabytes(
+                compaction
+                    .hlog_size_budget_mb
+                    .expect("required budget checked"),
+            )?;
+            let max_bytes = megabytes(compaction.max_compacted_size_mb)?;
+            if budget < log.memory_pages * (1 << log.page_bits)
+                || max_bytes == 0
+                || compaction.check_interval_ms == 0
+                || compaction.num_threads == 0
+                || compaction.num_threads > 64
+                || !compaction.trigger_pct.is_finite()
+                || !(0.0..=1.0).contains(&compaction.trigger_pct)
+                || compaction.trigger_pct == 0.0
+                || !compaction.compact_pct.is_finite()
+                || !(0.0..=1.0).contains(&compaction.compact_pct)
+                || compaction.compact_pct == 0.0
+            {
+                return Err(invalid(
+                    "enabled compaction requires a budget at least as large as the memory window, positive max size and interval, 1..64 threads and fractions in (0, 1]",
+                ));
+            }
+            Ok(Some(AutoCompactionConfig {
+                log_size_budget: budget,
+                check_interval: Duration::from_millis(compaction.check_interval_ms),
+                trigger_fraction: compaction.trigger_pct,
+                compact_fraction: compaction.compact_pct,
+                max_compacted_bytes: max_bytes,
+                threads: compaction.num_threads,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
 impl StoreConfig {
     /// Parses either [faster.hlog]/[faster.index] or top-level [hlog]/[index].
     /// F2 and unknown fields are rejected. Memory sizes use MiB and 32 MiB pages.
@@ -144,12 +234,11 @@ impl StoreConfig {
             value = table.remove("faster").expect("checked faster table");
         }
         let parsed: ConfigFile = value.try_into().map_err(ConfigError::Toml)?;
-        let buckets = parsed.index.table_size;
-        if !buckets.is_power_of_two() || buckets > i32::MAX as u64 {
-            return Err(invalid(
-                "index.table_size must be a power of two no greater than i32::MAX",
-            ));
-        }
+        Self::from_parsed(parsed)
+    }
+
+    fn from_parsed(parsed: ConfigFile) -> Result<Self, ConfigError> {
+        let buckets = index_buckets(parsed.index.table_size)?;
         let log = log_config(parsed.hlog.in_mem_size_mb, parsed.hlog.mutable_fraction)?;
         let read_cache = match parsed.read_cache {
             Some(cache) if cache.enabled => {
@@ -161,49 +250,7 @@ impl StoreConfig {
             }
             _ => None,
         };
-        if parsed
-            .hlog
-            .compaction
-            .as_ref()
-            .is_some_and(|c| c.hlog_size_budget_mb.is_none())
-        {
-            return Err(invalid("hlog.compaction requires hlog_size_budget_mb"));
-        }
-        let auto_compaction = match parsed.hlog.compaction {
-            Some(compaction) if compaction.enabled => {
-                let budget = megabytes(
-                    compaction
-                        .hlog_size_budget_mb
-                        .expect("required budget checked"),
-                )?;
-                let max_bytes = megabytes(compaction.max_compacted_size_mb)?;
-                if budget < log.memory_pages * (1 << log.page_bits)
-                    || max_bytes == 0
-                    || compaction.check_interval_ms == 0
-                    || compaction.num_threads == 0
-                    || compaction.num_threads > 64
-                    || !compaction.trigger_pct.is_finite()
-                    || !(0.0..=1.0).contains(&compaction.trigger_pct)
-                    || compaction.trigger_pct == 0.0
-                    || !compaction.compact_pct.is_finite()
-                    || !(0.0..=1.0).contains(&compaction.compact_pct)
-                    || compaction.compact_pct == 0.0
-                {
-                    return Err(invalid(
-                        "enabled compaction requires a budget at least as large as the memory window, positive max size and interval, 1..64 threads and fractions in (0, 1]",
-                    ));
-                }
-                Some(AutoCompactionConfig {
-                    log_size_budget: budget,
-                    check_interval: Duration::from_millis(compaction.check_interval_ms),
-                    trigger_fraction: compaction.trigger_pct,
-                    compact_fraction: compaction.compact_pct,
-                    max_compacted_bytes: max_bytes,
-                    threads: compaction.num_threads,
-                })
-            }
-            _ => None,
-        };
+        let auto_compaction = compaction_config(log, parsed.hlog.compaction)?;
         Ok(Self {
             index_buckets: buckets,
             log,
@@ -215,6 +262,52 @@ impl StoreConfig {
             auto_compaction,
         })
     }
+    pub fn from_toml_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        Self::from_toml_str(&std::fs::read_to_string(path).map_err(ConfigError::Io)?)
+    }
+}
+
+impl F2Config {
+    /// Parses the FASTER [f2.hot] and [f2.cold] tables. Layer paths are
+    /// relative to f2.filepath, and log memory sizes are in MiB.
+    pub fn from_toml_str(text: &str) -> Result<Self, ConfigError> {
+        let file: F2File = toml::from_str(text).map_err(ConfigError::Toml)?;
+        let F2Tables {
+            filepath,
+            hot,
+            cold,
+        } = file.f2;
+        if filepath.as_os_str().is_empty() {
+            return Err(invalid("f2.filepath must identify the storage root"));
+        }
+        if hot.checkpoint_dir.is_some() {
+            return Err(invalid(
+                "F2 places hot checkpoints beneath the hot directory",
+            ));
+        }
+        let hot = StoreConfig::from_parsed(hot)?;
+        let hot_dir = hot
+            .filepath
+            .ok_or_else(|| invalid("f2.hot.filepath is required"))?;
+        if cold.filepath.as_os_str().is_empty() {
+            return Err(invalid("f2.cold.filepath is required"));
+        }
+        let cold_log = log_config(cold.hlog.in_mem_size_mb, cold.hlog.mutable_fraction)?;
+        Ok(Self {
+            root: filepath,
+            hot_dir,
+            cold_dir: cold.filepath,
+            hot_index_buckets: hot.index_buckets,
+            cold_index_buckets: index_buckets(cold.index.table_size)?,
+            hot_log: hot.log,
+            cold_log,
+            cold_index_log: log_config(cold.index.in_mem_size_mb, cold.index.mutable_fraction)?,
+            hot_read_cache: hot.read_cache,
+            hot_compaction: hot.auto_compaction,
+            cold_compaction: compaction_config(cold_log, cold.hlog.compaction)?,
+        })
+    }
+
     pub fn from_toml_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         Self::from_toml_str(&std::fs::read_to_string(path).map_err(ConfigError::Io)?)
     }
