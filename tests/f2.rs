@@ -284,3 +284,242 @@ mod inline_value {
         assert!(session.complete_pending(true));
     }
 }
+
+#[test]
+fn hot_migration_and_cold_compaction_preserve_live_records_and_tombstones() {
+    let dir = TestDirectory::new("f2-compaction");
+    let store = seeded_store(&dir, false);
+    let mut session = store.try_start_session().unwrap();
+    let mut original = VarRequest::<false>::new(0, 73, 400);
+    original.data.fill(21);
+    assert_eq!(session.upsert(&mut original, 1), Status::Ok);
+    let deleted = VarRequest::<false>::new(1, 73, 0);
+    assert_eq!(session.delete(&deleted, 2), Status::Ok);
+    let mut shadowed = VarRequest::<false>::new(2, 73, 400);
+    shadowed.data.fill(31);
+    assert_eq!(session.upsert(&mut shadowed, 3), Status::Ok);
+    for id in 200..328 {
+        let mut filler = VarRequest::<false>::new(id, 73, 400);
+        assert_eq!(session.upsert(&mut filler, id), Status::Ok);
+    }
+    shadowed.data.fill(37);
+    assert_eq!(session.upsert(&mut shadowed, 329), Status::Ok);
+
+    let hot_cut = store.hot_compaction_limit();
+    assert!(hot_cut.page() > 0);
+    let result = store.compact_hot(hot_cut, 3).unwrap();
+    assert_eq!(result.begin_address, hot_cut);
+    assert_eq!(read(&mut session, 0, 330).1, Status::Ok);
+    assert_eq!(read(&mut session, 1, 331).1, Status::NotFound);
+    assert_eq!(
+        read(&mut session, 2, 332),
+        (false, Status::Ok, vec![37; 400])
+    );
+    assert_eq!(read(&mut session, 3, 333).2, vec![3; 400]);
+
+    let mut pending = VarRequest::<false>::new(3, 73, 0);
+    assert_eq!(session.read(&mut pending, 334), Status::Pending);
+    let cold_cut = store.cold_compaction_limit();
+    assert!(cold_cut.page() > 0);
+    let result = store.compact_cold(cold_cut, 3).unwrap();
+    assert_eq!(result.begin_address, cold_cut);
+    assert!(session.complete_pending(true));
+    assert_eq!(
+        pending.out.borrow_mut().take(),
+        Some((Status::Ok, vec![3; 400]))
+    );
+    assert_eq!(read(&mut session, 0, 335).2, vec![21; 400]);
+    assert_eq!(read(&mut session, 1, 336).1, Status::NotFound);
+    assert_eq!(read(&mut session, 3, 337).2, vec![3; 400]);
+}
+
+#[test]
+fn pending_rmw_restarts_when_migration_clears_its_hot_index_slot() {
+    let dir = TestDirectory::new("f2-rmw-migration");
+    let store = seeded_store(&dir, false);
+    let mut reader = store.try_start_session().unwrap();
+    let mut writer = store.try_start_session().unwrap();
+
+    let mut pending = VarRequest::<false>::new(0, 73, 0);
+    pending.suffix.push(7);
+    assert_eq!(reader.rmw(&mut pending, 1), Status::Pending);
+    let mut replacement = VarRequest::<false>::new(0, 73, 400);
+    replacement.data.fill(42);
+    assert_eq!(writer.upsert(&mut replacement, 1), Status::Ok);
+    for key in 200..328 {
+        let mut filler = VarRequest::<false>::new(key, 73, 400);
+        assert_eq!(writer.upsert(&mut filler, key), Status::Ok);
+    }
+
+    let until = store.hot_compaction_limit();
+    assert!(until.page() > 0);
+    assert_eq!(store.compact_hot(until, 2).unwrap().begin_address, until);
+    assert!(reader.complete_pending(true));
+    assert_eq!(pending.out.borrow_mut().take(), Some((Status::Ok, vec![])));
+    let mut expected = vec![42; 400];
+    expected.push(7);
+    assert_eq!(read(&mut reader, 0, 2), (false, Status::Ok, expected));
+}
+
+#[test]
+fn failed_migration_keeps_the_source_boundary_and_can_retry() {
+    use raster::core::address::Address;
+    use raster::core::device::{Device, FileDevice, ReadCallback, WriteCallback};
+    use std::io;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct ScanFailure {
+        inner: FileDevice,
+        enabled: AtomicBool,
+    }
+
+    impl Device for ScanFailure {
+        unsafe fn write_async(
+            &self,
+            offset: u64,
+            data: *const u8,
+            len: usize,
+            done: WriteCallback,
+        ) {
+            // SAFETY: The underlying device gets the same write request.
+            unsafe { self.inner.write_async(offset, data, len, done) };
+        }
+
+        fn read_async(&self, offset: u64, len: usize, done: ReadCallback) {
+            if offset == 4096 && len == 4096 && self.enabled.load(Ordering::Acquire) {
+                done(Err(io::Error::other("compaction scan failure")));
+            } else {
+                self.inner.read_async(offset, len, done);
+            }
+        }
+    }
+
+    let dir = TestDirectory::new("f2-migration-retry");
+    let log = LogConfig {
+        page_bits: 12,
+        memory_pages: 4,
+        mutable_fraction: 0.5,
+    };
+    let device = Arc::new(ScanFailure {
+        inner: FileDevice::open_with(dir.0.join("hot"), 30, 2, false).unwrap(),
+        enabled: AtomicBool::new(true),
+    });
+    let hot = FasterKv::with_device(
+        StoreConfig {
+            index_buckets: 256,
+            log,
+            ..StoreConfig::default()
+        },
+        device.clone(),
+    );
+    let begin = hot.hlog.begin.load();
+    let store = F2Kv::new(hot, ColdStore::open(&dir.0, 256, log, log).unwrap());
+    let mut session = store.try_start_session().unwrap();
+    for key in 0..128 {
+        let mut request = VarRequest::<false>::new(key, 73, 400);
+        request.data.fill(key as u8);
+        assert_eq!(session.upsert(&mut request, key + 1), Status::Ok);
+    }
+    let until = store.hot_compaction_limit();
+    assert!(until.page() > 1);
+    assert_eq!(store.compact_hot(until, 1), Err(Status::IoError));
+    assert_eq!(
+        store
+            .compact_hot(Address::default(), 1)
+            .unwrap()
+            .begin_address,
+        begin
+    );
+    assert_eq!(read(&mut session, 0, 129).2, vec![0; 400]);
+
+    device.enabled.store(false, Ordering::Release);
+    assert_eq!(store.compact_hot(until, 2).unwrap().begin_address, until);
+    assert_eq!(read(&mut session, 0, 130).2, vec![0; 400]);
+    assert_eq!(read(&mut session, 25, 131).2, vec![25; 400]);
+}
+
+#[test]
+fn background_compaction_advances_both_configured_layers() {
+    use raster::core::address::Address;
+    use raster::core::auto_compact::AutoCompactionConfig;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let dir = TestDirectory::new("f2-background-compaction");
+    let store = Arc::new(seeded_store(&dir, false));
+    let mut session = store.try_start_session().unwrap();
+    for key in 200..328 {
+        let mut request = VarRequest::<false>::new(key, 73, 400);
+        request.data.fill(12);
+        assert_eq!(session.upsert(&mut request, key), Status::Ok);
+    }
+    let config = AutoCompactionConfig {
+        check_interval: Duration::from_millis(5),
+        threads: 2,
+        ..AutoCompactionConfig::with_budget(16 << 10)
+    };
+    let worker = store.spawn_auto_compaction(Some(config), Some(config));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let hot = store.compact_hot(Address::default(), 1);
+        let cold = store.compact_cold(Address::default(), 1);
+        if hot.is_ok_and(|result| result.begin_address.page() > 0)
+            && cold.is_ok_and(|result| result.begin_address.page() > 0)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "F2 compaction did not advance");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(worker);
+    assert_eq!(read(&mut session, 200, 328).2, vec![12; 400]);
+    assert_eq!(read(&mut session, 3, 329).2, vec![3; 400]);
+}
+
+#[test]
+fn pending_cold_collision_chain_survives_compaction_cutoff() {
+    let dir = TestDirectory::new("f2-cold-collision-compaction");
+    let log = LogConfig {
+        page_bits: 12,
+        memory_pages: 4,
+        mutable_fraction: 0.5,
+    };
+    let cold = ColdStore::<VarKey<true>, VarValue>::open(&dir.0, 1, log, log).unwrap();
+    {
+        let mut session = cold.try_start_session().unwrap();
+        for key in 0..40 {
+            let mut request = VarRequest::<true>::new(key, 73, 400);
+            request.data.fill(key as u8);
+            assert_eq!(session.upsert(&mut request, key + 1), Status::Ok);
+        }
+    }
+    let hot = FasterKv::new(StoreConfig {
+        log,
+        index_buckets: 1,
+        ..StoreConfig::default()
+    });
+    let store = F2Kv::new(hot, cold);
+    let mut session = store.try_start_session().unwrap();
+    let mut old = VarRequest::<true>::new(1, 73, 0);
+    assert_eq!(session.read(&mut old, 1), Status::Pending);
+    let until = store.cold_compaction_limit();
+    assert!(until.page() > 0);
+    assert_eq!(store.compact_cold(until, 3).unwrap().begin_address, until);
+    assert!(session.complete_pending(true));
+    assert_eq!(
+        old.out.borrow_mut().take(),
+        Some((Status::Ok, vec![1; 400]))
+    );
+
+    let status = session.read(&mut old, 2);
+    if status == Status::Pending {
+        assert!(session.complete_pending(true));
+    } else {
+        ReadContext::on_complete(&mut old, status);
+    }
+    assert_eq!(
+        old.out.borrow_mut().take(),
+        Some((Status::Ok, vec![1; 400]))
+    );
+}

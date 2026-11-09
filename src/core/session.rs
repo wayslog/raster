@@ -183,6 +183,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                             ctx: ctx.clone(),
                             complete,
                             observed,
+                            cold_begin: None,
                             truncations: self
                                 .store
                                 .truncations
@@ -195,7 +196,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
     }
 
     /// Reads a chain whose head was resolved by the cold index.
-    pub(crate) fn read_cold<C>(&mut self, ctx: &mut C, entry: Address) -> Status
+    pub(crate) fn read_cold<C>(&mut self, ctx: &mut C, entry: Address, begin: Address) -> Status
     where
         C: ReadContext<K, V> + Clone + 'static,
     {
@@ -205,6 +206,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
             ctx.key_hash(),
             entry,
             entry,
+            Some(begin),
         );
         match outcome {
             Outcome::Done(status) => status,
@@ -214,6 +216,7 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                     ctx: ctx.clone(),
                     complete: C::on_complete,
                     observed: entry,
+                    cold_begin: Some(begin),
                     truncations: self
                         .store
                         .truncations

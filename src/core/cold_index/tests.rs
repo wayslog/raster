@@ -309,3 +309,44 @@ fn read_only_resident_chunk_is_copied_on_update() {
         Ok(ColdIndexOutcome::Entry(entry(72)))
     );
 }
+
+#[test]
+fn reclaim_prefix_stops_at_the_earliest_live_chunk() {
+    let dir = TempDir::new();
+    let index = ColdIndex::open(&dir.0, 256, LOG).unwrap();
+    let mut session = index.try_start_session().unwrap();
+    fill(&mut session);
+    let original = index.store.hlog.begin.load();
+    index.reclaim_prefix();
+    assert_eq!(index.store.hlog.begin.load(), original);
+
+    for hash in 1..=128 {
+        let completed = Rc::new(Cell::new(None));
+        let result = session.update(
+            hash,
+            ColdIndexUpdate::Set(Address::new(0, 72)),
+            hash + 129,
+            {
+                let completed = completed.clone();
+                move |result| completed.set(Some(result))
+            },
+        );
+        let result = if result == Err(Status::Pending) {
+            assert!(session.complete_pending(true));
+            completed.take().expect("chunk update completed")
+        } else {
+            result
+        };
+        assert_eq!(result, Ok(ColdIndexOutcome::Entry(entry(72))));
+    }
+    let earliest = index.store.index.table().oldest_entry(Address::MAX);
+    assert!(earliest > original);
+    index.reclaim_prefix();
+    assert_eq!(index.store.hlog.begin.load(), earliest);
+    assert_eq!(
+        deferred_result(&mut session, |session, completed| {
+            session.lookup(1, 258, move |result| record_completion(&completed, result))
+        }),
+        Ok(ColdIndexOutcome::Entry(entry(72)))
+    );
+}

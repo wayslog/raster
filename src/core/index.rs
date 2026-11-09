@@ -239,6 +239,24 @@ impl Table {
         self.buckets().div_ceil(CHUNK_BUCKETS)
     }
 
+    /// Finds the earliest published entry below `limit`.
+    pub(crate) fn oldest_entry(&self, mut limit: Address) -> Address {
+        for bucket in &self.buckets {
+            let mut current = Some(bucket);
+            while let Some(bucket) = current {
+                for word in &bucket.entries {
+                    let entry = Entry(word.load(Ordering::Acquire));
+                    if !entry.unused() && !entry.tentative() && entry.address() != Address::INVALID
+                    {
+                        limit = limit.min(entry.address());
+                    }
+                }
+                current = Self::next(bucket);
+            }
+        }
+        limit
+    }
+
     /// Clears entries of chunk `chunk` that point below `begin`
     /// (FASTER `GarbageCollect`). An entry a writer replaced meanwhile is
     /// left alone; entries being created or still tentative are skipped.

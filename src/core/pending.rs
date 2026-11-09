@@ -136,6 +136,7 @@ fn lookup<K: Key, V: Value, C: KeyContext<K>>(
     store: &FasterKv<K, V>,
     ctx: &C,
     disk: &mut Option<DiskRecord>,
+    begin: Address,
 ) -> Lookup<V> {
     let record = match disk.as_mut() {
         None => return Lookup::Failed(Status::IoError),
@@ -156,7 +157,7 @@ fn lookup<K: Key, V: Value, C: KeyContext<K>>(
         return Lookup::Found(value, info.tombstone());
     }
     let previous = info.previous();
-    if previous >= store.hlog.begin.load() {
+    if previous >= begin {
         Lookup::Previous(previous)
     } else {
         Lookup::Missing
@@ -173,6 +174,8 @@ pub(crate) struct PendingRead<C, F, const ABORT: bool> {
     /// runs off the log after a shift, compaction may have moved the record
     /// to the tail, so the read restarts from the index.
     pub truncations: u64,
+    /// A cold read keeps the data-log boundary paired with its index lookup.
+    pub cold_begin: Option<Address>,
 }
 
 impl<K: Key, V: Value, C: ReadContext<K, V>, F: FnMut(&mut C, Status), const ABORT: bool>
@@ -190,8 +193,11 @@ impl<K: Key, V: Value, C: ReadContext<K, V>, F: FnMut(&mut C, Status), const ABO
         mut disk: Option<DiskRecord>,
     ) -> Step {
         let address = disk.as_ref().map_or(Address::INVALID, |disk| disk.address);
-        let lookup = lookup(store, &self.ctx, &mut disk);
-        if matches!(lookup, Lookup::Missing | Lookup::Failed(Status::IoError)) {
+        let begin = self.cold_begin.unwrap_or_else(|| store.hlog.begin.load());
+        let lookup = lookup(store, &self.ctx, &mut disk, begin);
+        if self.cold_begin.is_none()
+            && matches!(lookup, Lookup::Missing | Lookup::Failed(Status::IoError))
+        {
             let truncations = store.truncations.load(std::sync::atomic::Ordering::Acquire);
             if truncations != self.truncations {
                 self.truncations = truncations;
@@ -277,7 +283,7 @@ impl<
         mut disk: Option<DiskRecord>,
     ) -> Step {
         let address = disk.as_ref().map_or(Address::INVALID, |disk| disk.address);
-        let outcome = match lookup(store, &self.ctx, &mut disk) {
+        let outcome = match lookup(store, &self.ctx, &mut disk, store.hlog.begin.load()) {
             Lookup::Found(value, tombstone) => {
                 // SAFETY: The disk buffer stays live through the append.
                 let value = unsafe { &*value };
