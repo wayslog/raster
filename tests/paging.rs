@@ -211,6 +211,37 @@ fn concurrent_rmw_over_disk() {
 mod common;
 use common::varlen::{self as variable, TestDirectory, VarRequest, VarValue};
 
+#[test]
+fn buffered_variable_reads_drain_ready_continuations() {
+    let dir = TestDirectory::new("buffered-variable-ready");
+    let store = variable::store(&dir, false, false);
+    let mut session = store.start_session();
+    for id in 0..800 {
+        let mut op = variable::request(id, 1024);
+        assert_eq!(session.upsert(&mut op, id), Status::Ok);
+    }
+    let mut read = variable::request(0, 0);
+    assert_eq!(session.read(&mut read, 800), Status::Pending);
+    assert!(session.complete_pending(false));
+    assert_eq!(session.pending_count(), 0);
+    assert_eq!(*read.out.borrow(), Some((Status::Ok, vec![88; 1024])));
+
+    let mut rmw = variable::request(1, 0);
+    rmw.increment = 1;
+    rmw.suffix = vec![99; 8];
+    assert_eq!(session.rmw(&mut rmw, 801), Status::Pending);
+    assert!(session.complete_pending(false));
+    assert_eq!(session.pending_count(), 0);
+    assert!(rmw.out.borrow().is_some());
+    let (status, bytes, _) = variable::request(1, 0).read(&mut session, 802);
+    assert_eq!(status, Status::Ok);
+    assert_eq!(
+        u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+        u64::from_le_bytes([88; 8]) + 1
+    );
+    assert_eq!(&bytes[1024..], &[99; 8]);
+}
+
 fn variable_paging(threads: u64, rmw: bool, large: bool, name: &str) {
     let dir = TestDirectory::new(name);
     let store = variable::store(&dir, false, false);

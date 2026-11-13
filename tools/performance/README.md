@@ -506,3 +506,80 @@ The Read hit path is unchanged since `a6a3d2b`. The difference comes from code l
 Whole-run checkpoint throughput also cannot resolve 2% differences with the current method. Two same-binary A/A controls gave [0.99730, 1.03945] and [0.97436, 1.00362]. `cae705f` passed H5 (lower bound 0.983432); `4ced43b` did not (0.972539).
 
 Decision: merge `cae705f` without extra build flags. These Rust-vs-Rust deviations are recorded as known deviations. A fair rerun should rebuild both baseline and candidate with the same alignment option, or use a non-Skylake host. Evidence: `.perf-baseline/pr1-final-resident-20261029/`, `pr1-read-layout-20261029/`, `pr1-read-alignment-20261029/`, `pr1-checkpoint-cause-20261030/`.
+
+## Buffered F2 acceptance on one worker
+
+The measured engines were RasterKV `d8e7937fdfb063e8f9705b174f66d98f37bbcd91`
+and FASTER `321d872eabda6a0345c8bd76419f89723ed864ae`. Build the paired drivers
+on Linux with Rust 1.98.1 and GCC. Use a buffered log directory on the same
+filesystem for both.
+
+```sh
+mkdir -p target/f2-bench
+upstream=../FASTER
+test "$(git -C "$upstream" rev-parse HEAD)" = 321d872eabda6a0345c8bd76419f89723ed864ae
+g++ -std=c++17 -O3 -DNDEBUG -pthread -I"$upstream/cc/src" \
+  tools/performance/f2.cc "$upstream/cc/src/core/address.cc" \
+  "$upstream/cc/src/core/lss_allocator.cc" "$upstream/cc/src/core/thread.cc" \
+  "$upstream/cc/src/environment/file_linux.cc" -laio -luuid -ltbb -lstdc++fs \
+  -o target/f2-bench/faster-f2
+cargo build --release --locked --example f2_bench
+python3 tools/performance/f2_run.py target/f2-bench/measurements \
+  target/f2-bench/faster-f2 target/release/examples/f2_bench --cpu 0
+```
+
+The runner uses one warm-up pair and six measured pairs, alternating order and
+pinning both engines to the same logical CPU. The measured Ubuntu 24.04 arm64
+guest had two vCPUs. Both engines used 256 MiB windows for the hot log, cold
+data log, and cold index log, with 262,144 buckets in each primary hash table.
+The drivers check every returned value. P99 covers submission through terminal
+completion, including both index and data I/O.
+
+The predeclared gates for these workloads were a Rust/C++ median paired
+throughput ratio of at least 0.98 and a P99 ratio of at most 1.05. Migration
+and recovery duration ratios had to be at most 1.05. Every pair matched on
+checked values and on the expected number of Pending operations.
+
+| Workload | C++ Mops/s | Rust Mops/s | Throughput ratio | C++ P99 (ns) | Rust P99 (ns) | P99 ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| Cold index and data resident | 18.23 | 41.95 | 2.318 | 125 | 84 | 0.747 |
+| Cold index paged, data resident | 1.30 | 2.53 | 1.959 | 1271 | 667 | 0.525 |
+| Cold index and data paged | 0.69 | 1.32 | 1.899 | 2271 | 1167 | 0.569 |
+| Cross-layer RMW, both paged | 0.65 | 0.85 | 1.333 | 3646 | 1750 | 0.677 |
+
+The migration workload loaded 81,920 records with 4 KiB values and moved the
+same first two hot pages using one worker. Recovery timed the restore of the
+joint generation and verified the same sampled keys afterwards. The Rust
+checkpoint syncs its buffered devices and catalog, while the C++ checkpoint
+includes the wait for its background worker. Checkpoint time is reported
+separately from the timing gates.
+
+| Operation | C++ median (ms) | Rust median (ms) | Rust/C++ paired ratio |
+|---|---:|---:|---:|
+| Hot-to-cold migration | 11.66 | 8.09 | 0.724 |
+| Joint checkpoint | 484.10 | 84.54 | 0.175 |
+| Joint recovery | 223.67 | 11.78 | 0.054 |
+
+Both engines appended 67,108,288 logical cold data bytes. The cold index log
+added 5,222,400 bytes in C++ and 4,439,040 bytes in Rust. Including the index
+log, logical write amplification was 1.078 and 1.066 respectively, relative
+to the source prefix bytes occupied by records.
+
+Separate diagnostic runs traced 1,024 requests with `strace` and sampled
+the cold index log frames with `mincore` after loading. The primary cold
+index table allocated another 16 MiB on both engines. The Rust index allocates its configured window at startup. In this environment
+all of its frames were resident after loading. FASTER populates frames as
+needed, so the smaller resident workload uses less memory there.
+
+| Workload | C++ index frame RSS (MiB) | Rust index frame RSS (MiB) | Read requests per operation, both engines |
+|---|---:|---:|---:|
+| Cold index and data resident | 64.01 | 256.00 | 0 |
+| Cold index paged, data resident | 256.03 | 256.00 | 1 |
+| Cold index and data paged | 256.03 | 256.00 | 2 |
+| Cross-layer RMW, both paged | 256.03 | 256.00 | 2 |
+
+The single-store four-worker acceptance remains separate. An exploratory
+macOS run against pre-F2 RasterKV `ae48caf` measured 0.893 for four-worker
+uniform RMW. A separate RMW-only driver measured 0.971 at the same sampling
+stride. The two-vCPU Linux guest produced oversubscribed four-worker
+samples and cannot meet the benchmark's four-worker affinity requirements.
