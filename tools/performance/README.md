@@ -583,3 +583,48 @@ macOS run against pre-F2 RasterKV `ae48caf` measured 0.893 for four-worker
 uniform RMW. A separate RMW-only driver measured 0.971 at the same sampling
 stride. The two-vCPU Linux guest produced oversubscribed four-worker
 samples and cannot meet the benchmark's four-worker affinity requirements.
+
+## Repaired runtime acceptance on Linux x86-64 (`8626f63`, 2026-11-27)
+
+After `8626f63` drained ready staged disk reads inside `complete_pending`, the
+full single-store and buffered F2 suites were measured on a 48-CPU Linux x86-64
+Skylake-SP host (Intel Xeon Silver 4116, NUMA 0, `/dev/shm` tmpfs, Rust 1.98.1,
+GCC 13.3.0) with `libpin_threads.so` role pinning (`workers=4–7`,
+`coordinator=8`, `io=9`). References were FASTER C++ `321d872e` (with a
+separate copy applying `cpp-pending-retry.patch` only for `faster-checkpoint`),
+pre-F2 `main` (`ae48caf`), and historical Rust `9379a71`. Every `varlen` (72)
+and `disk` (168) output matched the independent `oracle` model (240/240).
+
+All three previously open C++ gates passed:
+
+| Workload / Metric | C++ | Rust (`8626f63`) | Rust/C++ ratio | Gate |
+|---|---:|---:|---:|---|
+| Single-store checkpoint median | 273.39 ms | 263.33 ms | 1.039x faster (CI 1.036–1.048) | Pass |
+| Variable-length disk Upsert, 4 workers P99 | 1025 ns | 845 ns | 0.824 (throughput 1.129x) | Pass |
+| Variable-length disk RMW, 4 workers P99 | 2026.42 µs | 976.40 µs | 0.482 (throughput 1.683x) | Pass |
+
+Full single-store summary on `8626f63`:
+
+- **Variable-length (12/12 pass)**: resident throughput `1.283–1.720x` C++, P99 `0.716–0.870x` (zero Pending); disk throughput `1.079–1.712x` C++, P99 `0.350–0.985x`.
+- **Fixed disk and read cache (8/8 pass vs C++ and `ae48caf`)**: throughput `2.034–2.514x` C++ (`0.984–0.999x` `ae48caf`); end-to-end P99 `0.195–0.349x` C++ (`1.006–1.017x` `ae48caf`).
+- **Fixed compaction (4 workers, pass)**: `1.949 s` vs C++ `7.463 s` (`3.829x`) and `9379a71` `1.964 s` (`1.008x`).
+- **Single-store checkpoint (64-pair A/A control pass, 36-round compare)**: all four C++ gates passed (whole-run throughput `1.630x`, checkpoint duration `1.039x` faster, throughput during checkpoint `1.308x`, recovery duration `1.541x` faster). Against `9379a71`, checkpoint duration (`0.998x`), throughput during checkpoint (`0.993x`), and recovery duration (`1.000x`) passed; whole-run throughput was `0.9787` (CI `0.9645–0.9860`), within the recorded Skylake deviation band.
+- **Fixed resident (18/18 pass vs C++ throughput)**: throughput `1.344–2.938x` C++; 16/16 non-exempt P99 ratios were `0.572–0.754x` C++ (`upsert/shared-hot/4` and `rmw/shared-hot/4` remain record-only per `docs/08`). Against `9379a71`, four Read cases were `0.955–0.980x` (within the recorded Skylake branch-alignment band), and the other 14/18 cases were `0.996–1.121x`.
+
+Buffered F2 one-worker workloads on the same x86-64 host (CPU 4, `/dev/shm`, 5/5 pass):
+
+| Workload | C++ Mops/s | Rust Mops/s | Throughput ratio | C++ P99 (ns) | Rust P99 (ns) | P99 ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| Cold index and data resident | 4.68 | 8.89 | 1.905 | 284 | 180 | 0.634 |
+| Cold index paged, data resident | 0.28 | 0.48 | 1.746 | 4400 | 2700 | 0.616 |
+| Cold index and data paged | 0.15 | 0.27 | 1.787 | 7690 | 4279 | 0.564 |
+| Cross-layer RMW, both paged | 0.14 | 0.18 | 1.348 | 10490 | 6222 | 0.597 |
+
+| Operation | C++ median (ms) | Rust median (ms) | Rust/C++ paired ratio |
+|---|---:|---:|---:|
+| Hot-to-cold migration | 166.54 | 139.00 | 0.834 |
+| Joint checkpoint | 603.09 | 157.89 | 0.262 |
+| Joint recovery | 555.84 | 180.33 | 0.324 |
+
+Logical migration sizes matched the earlier run (`data_bytes` ratio `1.000`, `index_bytes` ratio `0.850`).
+
