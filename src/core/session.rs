@@ -706,16 +706,23 @@ impl<'a, K: Key, V: Value> Session<'a, K, V> {
                 // Completions may touch the index; wait for growth to end.
                 self.heavy_enter();
             }
-            let batch = std::mem::take(&mut *self.responses.lock().unwrap());
-            for (id, result) in batch {
-                let disk = result
-                    .ok()
-                    .map(|bytes| DiskRecord::new(bytes, self.pending[&id].address));
-                let mode = self.entry_mode(&self.pending[&id]);
-                let slot = self.slot.as_ref().expect("live session");
-                let entry = self.pending.get_mut(&id).expect("pending entry");
-                let step = entry.op.resume(self.store, slot, mode, disk);
-                self.advance(id, step);
+            loop {
+                let batch = std::mem::take(&mut *self.responses.lock().unwrap());
+                if batch.is_empty() {
+                    break;
+                }
+                // Staged record reads can complete synchronously. Drain their
+                // ready continuations before returning to the caller's work.
+                for (id, result) in batch {
+                    let disk = result
+                        .ok()
+                        .map(|bytes| DiskRecord::new(bytes, self.pending[&id].address));
+                    let mode = self.entry_mode(&self.pending[&id]);
+                    let slot = self.slot.as_ref().expect("live session");
+                    let entry = self.pending.get_mut(&id).expect("pending entry");
+                    let step = entry.op.resume(self.store, slot, mode, disk);
+                    self.advance(id, step);
+                }
             }
             self.refresh();
             if self.growing() {

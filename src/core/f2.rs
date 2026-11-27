@@ -13,14 +13,20 @@ use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::{Mutex, RwLock};
 
+#[path = "f2_checkpoint.rs"]
+mod checkpoint;
 #[path = "f2_compact.rs"]
 mod compaction;
+
+pub use checkpoint::F2Config;
 
 pub struct F2Kv<K: Key, V: Value> {
     hot: FasterKv<K, V>,
     cold: ColdStore<K, V>,
     maintenance: Mutex<()>,
     hot_cut: RwLock<()>,
+    persistent: Option<checkpoint::Persistence>,
+    ready: bool,
 }
 
 impl<K: Key, V: Value> F2Kv<K, V> {
@@ -31,20 +37,42 @@ impl<K: Key, V: Value> F2Kv<K, V> {
             cold,
             maintenance: Mutex::new(()),
             hot_cut: RwLock::new(()),
+            persistent: None,
+            ready: true,
         }
     }
 
     pub fn try_start_session(&self) -> Option<F2Session<'_, K, V>> {
-        let guid = Guid::new();
-        let hot = Session::try_new(&self.hot, guid, 0)?;
+        self.start_session(Guid::new(), 0, true)
+    }
+
+    fn start_session(&self, guid: Guid, serial: u64, user: bool) -> Option<F2Session<'_, K, V>> {
+        if !self.ready {
+            return None;
+        }
+        let hot = Session::try_new(&self.hot, guid, serial)?;
         hot.park_epoch();
         let cold = self.cold.try_start_session_with_guid(guid)?;
         Some(F2Session {
             hot,
             cold,
             hot_cut: &self.hot_cut,
+            history: self
+                .persistent
+                .as_ref()
+                .filter(|_| user)
+                .map(|p| &p.sessions),
             ready: Rc::default(),
         })
+    }
+
+    /// Resumes a user session from the recovered checkpoint prefix.
+    pub fn continue_session(&self, guid: Guid) -> Option<(F2Session<'_, K, V>, u64)> {
+        let mut history = self.persistent.as_ref()?.sessions.lock().unwrap();
+        let serial = *history.resumable.get(&guid)?;
+        let session = self.start_session(guid, serial, true)?;
+        history.resumable.remove(&guid);
+        Some((session, serial))
     }
 }
 
@@ -54,6 +82,7 @@ pub struct F2Session<'a, K: Key, V: Value> {
     hot: Session<'a, K, V>,
     cold: ColdStoreSession<'a, K, V>,
     hot_cut: &'a RwLock<()>,
+    history: Option<&'a Mutex<checkpoint::SessionHistory>>,
     ready: Rc<RefCell<Vec<Continuation<K, V>>>>,
 }
 
@@ -349,5 +378,12 @@ impl<K: Key, V: Value> F2Session<'_, K, V> {
 impl<K: Key, V: Value> Drop for F2Session<'_, K, V> {
     fn drop(&mut self) {
         self.complete_pending(true);
+        if let Some(history) = self.history {
+            history
+                .lock()
+                .unwrap()
+                .completed
+                .insert(self.guid(), self.serial());
+        }
     }
 }

@@ -22,6 +22,14 @@ pub trait Device: Send + Sync + 'static {
     /// Completes with exactly len initialized bytes, or an I/O error. The
     /// engine treats a successful short read as UnexpectedEof, not a retry.
     fn read_async(&self, offset: u64, len: usize, done: ReadCallback);
+    /// Makes completed writes durable before publishing a joint checkpoint.
+    fn sync(&self) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "device cannot sync writes",
+        ))
+    }
+
     /// Drops storage below `offset`; `done` receives the offset actually
     /// truncated to (it may be lower, e.g. a segment boundary). Callers must
     /// ensure no I/O below `offset` is in flight.
@@ -265,6 +273,13 @@ impl Device for FileDevice {
                 file.write_all_at(&bytes[from..from + piece], at)
             }));
         }));
+    }
+
+    fn sync(&self) -> io::Result<()> {
+        for segment in self.inner.segments.lock().unwrap().values() {
+            segment.sync_all()?;
+        }
+        std::fs::File::open(&self.inner.directory)?.sync_all()
     }
 
     fn truncate(&self, offset: u64, done: Box<dyn FnOnce(u64) + Send>) {

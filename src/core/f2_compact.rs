@@ -1,6 +1,8 @@
 //! Explicit F2 log compaction and migration.
 
-use super::{Address, F2Kv, F2Session, Key, KeyContext, Session, Status, UpsertContext, Value};
+use super::{
+    Address, F2Kv, F2Session, Guid, Key, KeyContext, Session, Status, UpsertContext, Value,
+};
 use crate::core::auto_compact::{AutoCompaction, AutoCompactionConfig};
 use crate::core::cold_index::{ColdIndexEntry, ColdIndexOutcome};
 use crate::core::maintenance::CompactionWork;
@@ -90,6 +92,9 @@ impl<K: Key, V: Value> F2Kv<K, V> {
         hot_source: bool,
         threads: usize,
     ) -> Result<CompactionResult, Status> {
+        if !self.ready {
+            return Err(Status::Aborted);
+        }
         let _maintenance = self.maintenance.try_lock().map_err(|_| Status::Aborted)?;
         let source = if hot_source {
             &self.hot
@@ -105,7 +110,9 @@ impl<K: Key, V: Value> F2Kv<K, V> {
                 checkpoint: None,
             });
         }
-        let mut session = self.try_start_session().ok_or(Status::OutOfMemory)?;
+        let mut session = self
+            .start_session(Guid::new(), 0, false)
+            .ok_or(Status::OutOfMemory)?;
         let source_session = if hot_source {
             &session.hot
         } else {
@@ -120,7 +127,7 @@ impl<K: Key, V: Value> F2Kv<K, V> {
             for _ in 1..threads {
                 let work = &work;
                 scope.spawn(move || {
-                    if let Some(mut session) = self.try_start_session()
+                    if let Some(mut session) = self.start_session(Guid::new(), 0, false)
                         && let Err(status) = copy_pages(&mut session, source, work, hot_source)
                     {
                         work.fail(status);

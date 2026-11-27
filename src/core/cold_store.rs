@@ -55,6 +55,23 @@ impl<K: Key, V: Value> ColdStore<K, V> {
         &self.data
     }
 
+    pub(crate) fn cold_index(&self) -> &ColdIndex {
+        &self.index
+    }
+
+    pub(crate) fn paired_index_token(&self, data_token: Guid) -> Result<Guid, Status> {
+        let dirs = self
+            .data
+            .dirs
+            .as_ref()
+            .expect("cold data checkpoint directories");
+        let bytes = std::fs::read(dirs.index(data_token).join("cold-index-token"))
+            .map_err(|_| Status::IoError)?;
+        Ok(Guid(u128::from_le_bytes(
+            bytes.try_into().map_err(|_| Status::Corruption)?,
+        )))
+    }
+
     pub(crate) fn reclaim_index_prefix(&self) {
         self.index.reclaim_prefix();
     }
@@ -136,16 +153,7 @@ impl<K: Key, V: Value> ColdStore<K, V> {
         if !self.ready || !self.data.hlog.recovery_ready() {
             return Err(Status::Aborted);
         }
-        let dirs = self
-            .data
-            .dirs
-            .as_ref()
-            .expect("cold data checkpoint directories");
-        let bytes = std::fs::read(dirs.index(token).join("cold-index-token"))
-            .map_err(|_| Status::IoError)?;
-        let index_token = Guid(u128::from_le_bytes(
-            bytes.try_into().map_err(|_| Status::Corruption)?,
-        ));
+        let index_token = self.paired_index_token(token)?;
         self.ready = false;
         self.index.recover(index_token)?;
         let mut index = self.index.try_start_session().ok_or(Status::Aborted)?;

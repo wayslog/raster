@@ -1,6 +1,6 @@
 # RasterKV
 
-RasterKV is a Rust implementation of the FASTER single-store contract: inline fixed-size and variable-size records, session-level epoch protection, Pending operations, CPR fold-over checkpoints, recovery, compaction, index growth, and an optional read cache. In-place concurrency belongs to the value type. The C++ reference is commit `321d872eabda6a0345c8bd76419f89723ed864ae`.
+RasterKV implements the FASTER single-store contract in Rust with inline fixed-size and variable-size records, session-level epoch protection, Pending operations, CPR fold-over checkpoints, recovery, compaction, index growth, and an optional read cache. F2 adds a hot store, a cold data log, and a disk-backed cold index. In-place concurrency belongs to the value type. The C++ reference is commit `321d872eabda6a0345c8bd76419f89723ed864ae`.
 
 Rust **1.98.1** is required. The file device supports Unix development hosts; benchmark acceptance runs on Linux. Configuration parsing uses Serde and TOML.
 
@@ -48,4 +48,16 @@ A session protects log memory until its next `refresh`. Call `refresh` periodica
 - [Benchmark pairs and results](tools/performance/README.md)
 - [Document index](docs/README.md)
 
-F2 and a native asynchronous O_DIRECT backend remain deferred. Azure tiered storage is outside scope. Buffered tmpfs benchmarks do not establish real SSD performance parity. Current acceptance evidence and any remaining gates are recorded in the plan.
+## F2
+
+`F2Kv::open` opens buffered storage using `F2Config`. Run the counter example twice against the same directory to exercise checkpoint and reopen.
+
+```sh
+cargo run --example f2 -- /tmp/raster-f2-example
+```
+
+`F2Config::from_toml_str` and `from_toml_file` accept `[f2]`, `[f2.hot]`, and `[f2.cold]` tables. Set the root with `f2.filepath` and choose separate child directories with each layer's `filepath`. Configure the hot log and index under `f2.hot.hlog` and `f2.hot.index`. Configure the cold data log under `f2.cold.hlog` and the disk-backed index under `f2.cold.index`. The cold index uses 32 slots per block. Its `table_size` sizes the in-memory hash table, and its `in_mem_size_mb` sets the memory window for index blocks. Each layer can set an optional `hlog.compaction` budget.
+
+Drop user sessions and stop background compaction before taking a joint checkpoint. On reopen, obtain the token with `latest_checkpoint`, then call `recover` before starting sessions. `continue_session` returns the serial recorded for a recovered session. The catalog keeps the current and previous complete generations. Recovering the previous token makes it current before new writes can reuse log space.
+
+F2 uses buffered file devices.

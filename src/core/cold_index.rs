@@ -98,6 +98,17 @@ impl ColdIndex {
         })
     }
 
+    pub(crate) fn checkpoint_dirs(&self) -> &super::checkpoint::CheckpointDirs {
+        self.store
+            .dirs
+            .as_ref()
+            .expect("cold index checkpoint directories")
+    }
+
+    pub(crate) fn log(&self) -> &super::hlog::HybridLog {
+        &self.store.hlog
+    }
+
     /// Advances only past blocks no longer referenced by the in-memory index.
     /// F2 serializes all cold writes with this pass.
     pub(crate) fn reclaim_prefix(&self) {

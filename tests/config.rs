@@ -159,3 +159,56 @@ fn toml_and_direct_configuration_share_preallocation_defaults() {
         raster::core::ReadCacheConfig::default().pre_allocate
     );
 }
+
+#[test]
+fn parses_f2_log_geometry_and_compaction_budgets() {
+    use raster::core::f2::F2Config;
+
+    let text = r#"
+[f2]
+filepath = "f2_store"
+
+[f2.hot]
+filepath = "hot"
+
+[f2.hot.hlog]
+in_mem_size_mb = 128
+
+[f2.hot.index]
+table_size = 256
+
+[f2.cold]
+filepath = "cold"
+
+[f2.cold.hlog]
+in_mem_size_mb = 256
+mutable_fraction = 0
+
+[f2.cold.hlog.compaction]
+enabled = true
+hlog_size_budget_mb = 512
+num_threads = 2
+
+[f2.cold.index]
+table_size = 1024
+in_mem_size_mb = 128
+mutable_fraction = 0.5
+"#;
+    let config = F2Config::from_toml_str(text).unwrap();
+    assert_eq!(config.root, std::path::Path::new("f2_store"));
+    assert_eq!(config.hot_dir, std::path::Path::new("hot"));
+    assert_eq!(config.cold_dir, std::path::Path::new("cold"));
+    assert_eq!(config.hot_index_buckets, 256);
+    assert_eq!(config.cold_index_buckets, 1024);
+    assert_eq!(config.hot_log.memory_pages, 4);
+    assert_eq!(config.cold_log.memory_pages, 8);
+    assert_eq!(config.cold_index_log.memory_pages, 4);
+    assert_eq!(config.cold_index_log.mutable_fraction, 0.5);
+    let cold_policy = config.cold_compaction.unwrap();
+    assert_eq!(cold_policy.log_size_budget, 512 << 20);
+    assert_eq!(cold_policy.threads, 2);
+    assert!(config.hot_compaction.is_none());
+    assert!(
+        F2Config::from_toml_str(&text.replace("table_size = 1024", "table_size = 17")).is_err()
+    );
+}

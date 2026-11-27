@@ -66,23 +66,31 @@ impl CheckpointDirs {
     }
 }
 
-struct Encoder(Vec<u8>);
+pub(crate) struct Encoder(Vec<u8>);
 impl Encoder {
-    fn new(magic: u64) -> Self {
+    pub(crate) fn new(magic: u64) -> Self {
         Self(magic.to_le_bytes().to_vec())
     }
-    fn u64(mut self, v: u64) -> Self {
+    pub(crate) fn u64(mut self, v: u64) -> Self {
         self.0.extend_from_slice(&v.to_le_bytes());
         self
     }
-    fn u128(mut self, v: u128) -> Self {
+    pub(crate) fn u128(mut self, v: u128) -> Self {
         self.0.extend_from_slice(&v.to_le_bytes());
         self
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.0
     }
 }
 
-struct Decoder<'a>(&'a [u8]);
-impl Decoder<'_> {
+pub(crate) struct Decoder<'a>(&'a [u8]);
+impl<'a> Decoder<'a> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+        Self(bytes)
+    }
+
     fn take<const N: usize>(&mut self) -> io::Result<[u8; N]> {
         if self.0.len() < N {
             return Err(invalid("truncated checkpoint file"));
@@ -91,20 +99,20 @@ impl Decoder<'_> {
         self.0 = rest;
         Ok(head.try_into().expect("length checked"))
     }
-    fn u64(&mut self) -> io::Result<u64> {
+    pub(crate) fn u64(&mut self) -> io::Result<u64> {
         self.take::<8>().map(u64::from_le_bytes)
     }
-    fn u128(&mut self) -> io::Result<u128> {
+    pub(crate) fn u128(&mut self) -> io::Result<u128> {
         self.take::<16>().map(u128::from_le_bytes)
     }
-    fn magic(&mut self, magic: u64) -> io::Result<()> {
+    pub(crate) fn magic(&mut self, magic: u64) -> io::Result<()> {
         if self.u64()? == magic {
             Ok(())
         } else {
             Err(invalid("unexpected checkpoint file type"))
         }
     }
-    fn finish(self) -> io::Result<()> {
+    pub(crate) fn finish(self) -> io::Result<()> {
         if self.0.is_empty() {
             Ok(())
         } else {

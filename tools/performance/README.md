@@ -506,3 +506,125 @@ The Read hit path is unchanged since `a6a3d2b`. The difference comes from code l
 Whole-run checkpoint throughput also cannot resolve 2% differences with the current method. Two same-binary A/A controls gave [0.99730, 1.03945] and [0.97436, 1.00362]. `cae705f` passed H5 (lower bound 0.983432); `4ced43b` did not (0.972539).
 
 Decision: merge `cae705f` without extra build flags. These Rust-vs-Rust deviations are recorded as known deviations. A fair rerun should rebuild both baseline and candidate with the same alignment option, or use a non-Skylake host. Evidence: `.perf-baseline/pr1-final-resident-20261029/`, `pr1-read-layout-20261029/`, `pr1-read-alignment-20261029/`, `pr1-checkpoint-cause-20261030/`.
+
+## Buffered F2 acceptance on one worker
+
+The measured engines were RasterKV `d8e7937fdfb063e8f9705b174f66d98f37bbcd91`
+and FASTER `321d872eabda6a0345c8bd76419f89723ed864ae`. Build the paired drivers
+on Linux with Rust 1.98.1 and GCC. Use a buffered log directory on the same
+filesystem for both.
+
+```sh
+mkdir -p target/f2-bench
+upstream=../FASTER
+test "$(git -C "$upstream" rev-parse HEAD)" = 321d872eabda6a0345c8bd76419f89723ed864ae
+g++ -std=c++17 -O3 -DNDEBUG -pthread -I"$upstream/cc/src" \
+  tools/performance/f2.cc "$upstream/cc/src/core/address.cc" \
+  "$upstream/cc/src/core/lss_allocator.cc" "$upstream/cc/src/core/thread.cc" \
+  "$upstream/cc/src/environment/file_linux.cc" -laio -luuid -ltbb -lstdc++fs \
+  -o target/f2-bench/faster-f2
+cargo build --release --locked --example f2_bench
+python3 tools/performance/f2_run.py target/f2-bench/measurements \
+  target/f2-bench/faster-f2 target/release/examples/f2_bench --cpu 0
+```
+
+The runner uses one warm-up pair and six measured pairs, alternating order and
+pinning both engines to the same logical CPU. The measured Ubuntu 24.04 arm64
+guest had two vCPUs. Both engines used 256 MiB windows for the hot log, cold
+data log, and cold index log, with 262,144 buckets in each primary hash table.
+The drivers check every returned value. P99 covers submission through terminal
+completion, including both index and data I/O.
+
+The predeclared gates for these workloads were a Rust/C++ median paired
+throughput ratio of at least 0.98 and a P99 ratio of at most 1.05. Migration
+and recovery duration ratios had to be at most 1.05. Every pair matched on
+checked values and on the expected number of Pending operations.
+
+| Workload | C++ Mops/s | Rust Mops/s | Throughput ratio | C++ P99 (ns) | Rust P99 (ns) | P99 ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| Cold index and data resident | 18.23 | 41.95 | 2.318 | 125 | 84 | 0.747 |
+| Cold index paged, data resident | 1.30 | 2.53 | 1.959 | 1271 | 667 | 0.525 |
+| Cold index and data paged | 0.69 | 1.32 | 1.899 | 2271 | 1167 | 0.569 |
+| Cross-layer RMW, both paged | 0.65 | 0.85 | 1.333 | 3646 | 1750 | 0.677 |
+
+The migration workload loaded 81,920 records with 4 KiB values and moved the
+same first two hot pages using one worker. Recovery timed the restore of the
+joint generation and verified the same sampled keys afterwards. The Rust
+checkpoint syncs its buffered devices and catalog, while the C++ checkpoint
+includes the wait for its background worker. Checkpoint time is reported
+separately from the timing gates.
+
+| Operation | C++ median (ms) | Rust median (ms) | Rust/C++ paired ratio |
+|---|---:|---:|---:|
+| Hot-to-cold migration | 11.66 | 8.09 | 0.724 |
+| Joint checkpoint | 484.10 | 84.54 | 0.175 |
+| Joint recovery | 223.67 | 11.78 | 0.054 |
+
+Both engines appended 67,108,288 logical cold data bytes. The cold index log
+added 5,222,400 bytes in C++ and 4,439,040 bytes in Rust. Including the index
+log, logical write amplification was 1.078 and 1.066 respectively, relative
+to the source prefix bytes occupied by records.
+
+Separate diagnostic runs traced 1,024 requests with `strace` and sampled
+the cold index log frames with `mincore` after loading. The primary cold
+index table allocated another 16 MiB on both engines. The Rust index allocates its configured window at startup. In this environment
+all of its frames were resident after loading. FASTER populates frames as
+needed, so the smaller resident workload uses less memory there.
+
+| Workload | C++ index frame RSS (MiB) | Rust index frame RSS (MiB) | Read requests per operation, both engines |
+|---|---:|---:|---:|
+| Cold index and data resident | 64.01 | 256.00 | 0 |
+| Cold index paged, data resident | 256.03 | 256.00 | 1 |
+| Cold index and data paged | 256.03 | 256.00 | 2 |
+| Cross-layer RMW, both paged | 256.03 | 256.00 | 2 |
+
+The single-store four-worker acceptance remains separate. An exploratory
+macOS run against pre-F2 RasterKV `ae48caf` measured 0.893 for four-worker
+uniform RMW. A separate RMW-only driver measured 0.971 at the same sampling
+stride. The two-vCPU Linux guest produced oversubscribed four-worker
+samples and cannot meet the benchmark's four-worker affinity requirements.
+
+## Repaired runtime acceptance on Linux x86-64 (`8626f63`, 2026-11-27)
+
+After `8626f63` drained ready staged disk reads inside `complete_pending`, the
+full single-store and buffered F2 suites were measured on a 48-CPU Linux x86-64
+Skylake-SP host (Intel Xeon Silver 4116, NUMA 0, `/dev/shm` tmpfs, Rust 1.98.1,
+GCC 13.3.0) with `libpin_threads.so` role pinning (`workers=4–7`,
+`coordinator=8`, `io=9`). References were FASTER C++ `321d872e` (with a
+separate copy applying `cpp-pending-retry.patch` only for `faster-checkpoint`),
+pre-F2 `main` (`ae48caf`), and historical Rust `9379a71`. Every `varlen` (72)
+and `disk` (168) output matched the independent `oracle` model (240/240).
+
+All three previously open C++ gates passed:
+
+| Workload / Metric | C++ | Rust (`8626f63`) | Rust/C++ ratio | Gate |
+|---|---:|---:|---:|---|
+| Single-store checkpoint median | 273.39 ms | 263.33 ms | 1.039x faster (CI 1.036–1.048) | Pass |
+| Variable-length disk Upsert, 4 workers P99 | 1025 ns | 845 ns | 0.824 (throughput 1.129x) | Pass |
+| Variable-length disk RMW, 4 workers P99 | 2026.42 µs | 976.40 µs | 0.482 (throughput 1.683x) | Pass |
+
+Full single-store summary on `8626f63`:
+
+- **Variable-length (12/12 pass)**: resident throughput `1.283–1.720x` C++, P99 `0.716–0.870x` (zero Pending); disk throughput `1.079–1.712x` C++, P99 `0.350–0.985x`.
+- **Fixed disk and read cache (8/8 pass vs C++ and `ae48caf`)**: throughput `2.034–2.514x` C++ (`0.984–0.999x` `ae48caf`); end-to-end P99 `0.195–0.349x` C++ (`1.006–1.017x` `ae48caf`).
+- **Fixed compaction (4 workers, pass)**: `1.949 s` vs C++ `7.463 s` (`3.829x`) and `9379a71` `1.964 s` (`1.008x`).
+- **Single-store checkpoint (64-pair A/A control pass, 36-round compare)**: all four C++ gates passed (whole-run throughput `1.630x`, checkpoint duration `1.039x` faster, throughput during checkpoint `1.308x`, recovery duration `1.541x` faster). Against `9379a71`, checkpoint duration (`0.998x`), throughput during checkpoint (`0.993x`), and recovery duration (`1.000x`) passed; whole-run throughput was `0.9787` (CI `0.9645–0.9860`), within the recorded Skylake deviation band.
+- **Fixed resident (18/18 pass vs C++ throughput)**: throughput `1.344–2.938x` C++; 16/16 non-exempt P99 ratios were `0.572–0.754x` C++ (`upsert/shared-hot/4` and `rmw/shared-hot/4` remain record-only per `docs/08`). Against `9379a71`, four Read cases were `0.955–0.980x` (within the recorded Skylake branch-alignment band), and the other 14/18 cases were `0.996–1.121x`.
+
+Buffered F2 one-worker workloads on the same x86-64 host (CPU 4, `/dev/shm`, 5/5 pass):
+
+| Workload | C++ Mops/s | Rust Mops/s | Throughput ratio | C++ P99 (ns) | Rust P99 (ns) | P99 ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| Cold index and data resident | 4.68 | 8.89 | 1.905 | 284 | 180 | 0.634 |
+| Cold index paged, data resident | 0.28 | 0.48 | 1.746 | 4400 | 2700 | 0.616 |
+| Cold index and data paged | 0.15 | 0.27 | 1.787 | 7690 | 4279 | 0.564 |
+| Cross-layer RMW, both paged | 0.14 | 0.18 | 1.348 | 10490 | 6222 | 0.597 |
+
+| Operation | C++ median (ms) | Rust median (ms) | Rust/C++ paired ratio |
+|---|---:|---:|---:|
+| Hot-to-cold migration | 166.54 | 139.00 | 0.834 |
+| Joint checkpoint | 603.09 | 157.89 | 0.262 |
+| Joint recovery | 555.84 | 180.33 | 0.324 |
+
+Logical migration sizes matched the earlier run (`data_bytes` ratio `1.000`, `index_bytes` ratio `0.850`).
+
